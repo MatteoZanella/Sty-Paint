@@ -7,11 +7,16 @@ class Node:
 
     def __init__(self, features):
         self.position = features[:2]
+        self.w = features[3]
+        self.h = features[4]
         self.color = features[5:11]
         self.alpha = features[-1]
 
         self.incoming_edges = 0
+        self.lam = None
 
+    def area(self):
+        return self.h * self.w
 
 class Graph:
 
@@ -48,11 +53,17 @@ class Graph:
         if ref is None:
             return 0
 
-        lam = 0.1
+        flag = False
         pos = np.sum((self.nodes[ref].position - self.nodes[c].position) ** 2)
         col = np.sum((self.nodes[ref].color - self.nodes[c].color) ** 2)
+        res = (1 - self.lam) * pos + self.lam * col
 
-        return (1 - lam) * pos + lam * col
+        if flag:
+            return res
+        else:
+            return res / (0.5 * self.nodes[c].area())
+
+
 
     def select_next(self, reference, candidates):
         if reference is None:
@@ -68,8 +79,8 @@ class Graph:
         min_score = np.min(scores)
         return candidates[idx], min_score
 
-    def sort(self):
-
+    def sort(self, lam):
+        self.lam = lam
         unvisited_nodes = copy(self.adjlist)
         topo_order = []
         ref = None
@@ -84,4 +95,5 @@ class Graph:
             topo_order.append(src)
             unvisited_nodes.pop(src)
             ref = src
+        self.lam = None
         return topo_order, tot_score

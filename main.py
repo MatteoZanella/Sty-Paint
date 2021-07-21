@@ -3,8 +3,6 @@ from graph import Graph
 import torch
 torch.cuda.current_device()
 import torch.optim as optim
-# Decide which device we want to run on
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 import numpy as np
 import utils
@@ -12,6 +10,7 @@ import torch
 from collections import defaultdict
 from new_painter_renderer import NewPainter
 import os
+import pickle
 
 
 def check_storkes(s, renderer):
@@ -32,8 +31,6 @@ def build_graph(transparency):
 
     adj_list = defaultdict(list)
     for i in range(n):
-        print('Processing: {}/{}'.format(i, n))
-
         curr = transparency[i]
         next_strokes = transparency[i + 1:]
         overlap = np.logical_and(curr, next_strokes).sum(axis=(1, 2)) / c_size ** 2
@@ -42,7 +39,7 @@ def build_graph(transparency):
     return adj_list
 
 
-def optimize_x(pt):
+def optimize_x(pt, clamp_w_h):
     pt._load_checkpoint()
     pt.net_G.eval()
     pt._make_output_dir()
@@ -79,7 +76,13 @@ def optimize_x(pt):
                 # update x
                 pt.optimizer_x.zero_grad()
 
-                pt.x_ctt.data = torch.clamp(pt.x_ctt.data, 0.1, 1 - 0.1)
+                # Modification, use a different clamp for width and height
+                pos = torch.clamp(pt.x_ctt.data[:, :, :2], 0.1, 1 - 0.1)
+                size = torch.clamp(pt.x_ctt.data[:, :, 2:4], 0.1, clamp_w_h)
+                theta = torch.clamp(pt.x_ctt.data[:, :, 4], 0.1, 1 - 0.1)
+
+                # Put all back together
+                pt.x_ctt.data = torch.cat([pos, size, theta.unsqueeze(-1)], dim=-1)
                 pt.x_color.data = torch.clamp(pt.x_color.data, 0, 1)
                 pt.x_alpha.data = torch.clamp(pt.x_alpha.data, 0, 1)
 
@@ -95,13 +98,13 @@ def optimize_x(pt):
                 pt.step_id += 1
 
         v = pt._normalize_strokes(pt.x)
-        v = pt._shuffle_strokes_and_reshape(v)  # Note remove the shuffle
+        v = pt._shuffle_strokes_and_reshape(v)
         PARAMS = np.concatenate([PARAMS, v], axis=1)
         CANVAS_tmp, _ = pt._render(PARAMS, save_jpgs=False, save_video=False)
         CANVAS_tmp = utils.img2patches(CANVAS_tmp, pt.m_grid + 1, pt.net_G.out_size).to(device)
 
-    pt._save_stroke_params(PARAMS)
     PARAMS = pt.get_checked_strokes(PARAMS)
+    pt._save_stroke_params(PARAMS)
     final_rendered_image, alphas = pt._render(PARAMS, save_jpgs=False, save_video=True)
 
     return final_rendered_image, alphas, PARAMS
@@ -109,45 +112,55 @@ def optimize_x(pt):
 def get_args():
     # settings
     parser = argparse.ArgumentParser(description='STYLIZED NEURAL PAINTING')
-    args = parser.parse_args(args=[])
-    args.img_path_base = './test_images'  # path to input photo
-    args.img_path = None
-    args.renderer = 'oilpaintbrush'  # [watercolor, markerpen, oilpaintbrush, rectangle]
-    args.canvas_color = 'black'  # [black, white]
-    args.canvas_size = 512  # size of the canvas for stroke rendering'
-    args.keep_aspect_ratio = False  # whether to keep input aspect ratio when saving outputs
-    args.max_m_strokes = 500  # max number of strokes
-    args.max_divide = 5  # divide an image up-to max_divide x max_divide patches
-    args.beta_L1 = 1.0  # weight for L1 loss
-    args.with_ot_loss = False  # set True for imporving the convergence by using optimal transportation loss, but will slow-down the speed
-    args.beta_ot = 0.1  # weight for optimal transportation loss
-    args.net_G = 'zou-fusion-net'  # renderer architecture
-    args.renderer_checkpoint_dir = './checkpoints_G_oilpaintbrush'  # dir to load the pretrained neu-renderer
-    args.lr = 0.005  # learning rate for stroke searching
-    args.output_dir = './imagenet_output'  # dir to save painting results
-    args.disable_preview = True  # disable cv2.imshow, for running remotely without x-display
-
-    return args
+    parser.add_argument('--data_path', default='./test_images')
+    parser.add_argument('--renderer', default='oilpaintbrush')
+    parser.add_argument('--canvas_color', default='black')
+    parser.add_argument('--canvas_size', default=512)
+    parser.add_argument('--keep_aspect_ratio', default=False, type=bool)
+    parser.add_argument('--max_m_strokes', default=500, type=int)
+    parser.add_argument('--max_divide', default=5, type=int)
+    parser.add_argument('--beta_L1', default=1.0, type=float)
+    parser.add_argument('--with_ot_loss', default=False, type=bool)
+    parser.add_argument('--beta_ot', default=0.1, type=float)
+    parser.add_argument('--net_G', default='zou-fusion-net', type=str)
+    parser.add_argument('--renderer_checkpoint_dir', default='./checkpoints_G_oilpaintbrush', type=str)
+    parser.add_argument('--lr', default=0.005, type=float)
+    parser.add_argument('--output_dir', default='./imagenet_output', type=str)
+    parser.add_argument('--disable_preview', default=True, type=bool)
+    parser.add_argument('--clamp_w_h', default=0.9, type=float)
+    parser.add_argument('--gpu_id', default=0, type=int)
+    #parser.add_argument('--alpha_spacing', default=0.2)
+    return parser.parse_args()
 
 if __name__ == '__main__':
 
     args = get_args()
-    source_images = [f for f in os.listdir(args.img_path_base) if f.endswith(('.jpg', '.png'))]
 
+    # Decide which device we want to run on
+    if args.gpu_id >= 0 and torch.cuda.is_available():
+        device = torch.device("cuda:{}".format(args.gpu_id))
+    else:
+        device = torch.device('cpu')
+
+    source_images = [f for f in os.listdir(args.data_path) if f.endswith(('.jpg', '.png'))]
+    alphas = [0, 0.2, 0.4, 0.6, 0.8, 1]
+    k = 1
     for source_image in source_images:
-        args.img_path = os.path.join(args.img_path_base, source_image)
+        print('Processing image: {}, {}/{}'.format(source_image, k, len(source_images)))
+        k += 1
+        args.img_path = os.path.join(args.data_path, source_image)
         pt = NewPainter(args=args)
-        final_rendered_image, alpha_transparency, strokes = optimize_x(pt)
+        final_rendered_image, alpha_transparency, strokes = optimize_x(pt, args.clamp_w_h)
 
         n = strokes.shape[1]
         adj_list = build_graph(alpha_transparency)
 
         assert n == len(adj_list)
-
         g = Graph(n, adj_list, strokes)
 
-        idx_sort, score = g.sort()
-
-        sort_final_result, _ = pt._render(strokes[:, idx_sort, :], 'sorted', save_video=True, save_jpgs=False)
-
-        assert (sort_final_result == final_rendered_image).all()
+        for alpha in alphas:
+            idx_sort, score = g.sort(alpha)
+            sort_final_result, _ = pt._render(strokes[:, idx_sort, :], 'sorted_lam_{}'.format(alpha), save_video=True, save_jpgs=False)
+            assert (sort_final_result == final_rendered_image).all()
+            with open(os.path.join(args.output_path, source_image[:-3], 'idx_lam_{}.pkl'.format(alpha)), 'wb') as f:
+                pickle.dump(idx_sort, f)

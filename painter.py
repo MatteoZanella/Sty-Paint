@@ -97,7 +97,7 @@ class PainterBase():
         x_color = v[:, :, d_shape:d_shape+d_color]
         x_alpha = v[:, :, d_shape+d_color:d_shape+d_color+d_alpha]
         print('saving stroke parameters...')
-        np.savez(os.path.join(self.output_dir, '_strokes.npz'), x_ctt=x_ctt,
+        np.savez(os.path.join(self.output_dir, 'strokes_params.npz'), x_ctt=x_ctt,
                  x_color=x_color, x_alpha=x_alpha)
 
     def _shuffle_strokes_and_reshape(self, v):

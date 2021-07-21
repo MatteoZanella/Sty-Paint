@@ -2,3 +2,5 @@ checkpoints_G_oilpaintbrush/*
 gallery/*
 style_images/*
 gallery/*
+.idea/*
+__pycache__/*
