@@ -146,7 +146,6 @@ class NewPainter(PainterBase):
 
         return final_rendered_image, np.concatenate(alphas)
 
-
     def get_checked_strokes(self, v):
         v = v[0, :, :]
         checked_strokes = []
