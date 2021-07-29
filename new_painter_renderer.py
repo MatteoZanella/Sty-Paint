@@ -59,7 +59,9 @@ class NewPainter(PainterBase):
 
         self.max_m_strokes = args.max_m_strokes
 
-        self.m_strokes_per_block = self.stroke_parser()
+        # allocate more storkes at the beginning
+        self.manual_strokes_per_block = {2:50, 3:30, 4:15, 5:10}
+        self.m_strokes_per_block = None #self.stroke_parser()
 
         self.m_grid = 1
 
@@ -70,6 +72,9 @@ class NewPainter(PainterBase):
         self.img_ = cv2.resize(self.img_, (self.net_G.out_size * args.max_divide,
                                            self.net_G.out_size * args.max_divide), cv2.INTER_AREA)
 
+
+    def manual_set_number_strokes_per_block(self, id):
+        self.m_strokes_per_block = self.manual_strokes_per_block[id]
 
     def stroke_parser(self):
 
