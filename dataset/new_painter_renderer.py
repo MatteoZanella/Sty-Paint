@@ -154,7 +154,7 @@ class NewPainter(PainterBase):
             cv2.waitKey(1)
 
 
-    def _render(self, v, filename='original', save_jpgs=True, save_video=True):
+    def _render(self, v, path, save_jpgs=True, save_video=True):
 
         v = v[0,:,:self.rderr.d]   # if we add additional information, make sure to use only needed parms
         if self.args.keep_aspect_ratio:
@@ -168,12 +168,9 @@ class NewPainter(PainterBase):
             out_h = self.args.canvas_size
             out_w = self.args.canvas_size
 
-        file_name = os.path.join(
-            self.output_dir, filename)
-
         if save_video:
             video_writer = cv2.VideoWriter(
-                file_name + '_animated.mp4', cv2.VideoWriter_fourcc(*'MP4V'), 20,
+                path + '_animated.avi', cv2.VideoWriter_fourcc(*'MPEG'), 20,
                 (out_w, out_h))
 
         print('rendering canvas...')
@@ -187,7 +184,7 @@ class NewPainter(PainterBase):
             this_frame = self.rderr.canvas
             this_frame = cv2.resize(this_frame, (out_w, out_h), cv2.INTER_AREA)
             if save_jpgs:
-                plt.imsave(file_name + '_rendered_stroke_' + str((i+1)).zfill(4) +
+                plt.imsave(path + '_rendered_stroke_' + str((i+1)).zfill(4) +
                            '.png', this_frame)
             if save_video:
                 video_writer.write((this_frame[:,:,::-1] * 255.).astype(np.uint8))
@@ -195,12 +192,12 @@ class NewPainter(PainterBase):
         if save_jpgs:
             print('saving input photo...')
             out_img = cv2.resize(self.img_, (out_w, out_h), cv2.INTER_AREA)
-            plt.imsave(file_name + '_input.png', out_img)
+            plt.imsave(path + '_input.png', out_img)
 
         final_rendered_image = np.copy(this_frame)
         if save_jpgs:
             print('saving final rendered result...')
-            plt.imsave(file_name + '_final.png', final_rendered_image)
+            plt.imsave(path + '_final.png', final_rendered_image)
 
         return final_rendered_image, np.concatenate(alphas)
 

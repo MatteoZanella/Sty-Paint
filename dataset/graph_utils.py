@@ -39,36 +39,59 @@ def clear_adj(x, hidden=False):
     return out
 
 
+def compute_total_cost(graph, tour):
+    i = tour[0]
+    cost = 0
+    for j in tour[1:]:
+        cost += graph.compute_metric(i,j)
+        i = j
+
+    return cost
+
+def check_correctness(graph, tour):
+    # Check
+    all_good = True
+    for i in range(len(tour)):
+        curr = tour[i]
+        following = tour[i + 1:]
+
+
+        for x in following:
+            if curr in graph.adjlist[x]:
+                all_good = False
+                print('Following: {} should be before: {}'.format(x, curr))
+
+    if all_good:
+        print('--> Precedence Constraints are satisfied')
+
+
+
+
+
 def lkh_cost_matrix(graph, start):
-    # Create the cost matrix of size (n+1) x (n+1)
+    scale = 100
     C = np.zeros((graph.n_nodes + 1, graph.n_nodes + 1))
 
     # Populte the matrix
-    for i in range(graph.n_nodes):
-        for j in range(i + 1, graph.n_nodes):
+    for i in range(1, graph.n_nodes):
+        for j in range(1, graph.n_nodes):
             # Keep the convention of the documentation
-            C[j, i] = graph.compute_metric(i, j)
+            if i == j:
+                C[j, i] = 0
+            else:
+                C[j, i] = graph.compute_metric(i, j)
 
-    # The matrix is symetric
-    C = C + np.transpose(C)
-
-    # LKH requires integers, keep 3 decimals (maybe change this)
-    C = np.rint(C * 1000)
-
-    # Precedence
-    for i, elems in graph.adjlist.items():
-        for j in elems:
-            C[j, i] = -1  # node i comes before j
-            C[i, j] = 0
-
-    # Swap rows and columns with the element in position start
-    C[:, [0, start]] = C[:, [start, 0]]
-    C[[0, start], :] = C[[start, 0], :]
+    # scale
+    C = C * scale
+    C[0, -1] = 32767
+    C = np.rint(C).astype('int16')
 
     # Other requirements by lkh solver
-    C[0, :-1] = 0
-    C[0, -1] = 1000000  # Huge cost between first and last, from an example
     C[1:, 0] = -1  # First node comes before all the others
     C[-1, :-1] = -1  # Last node comes after all the others
+
+    for i, adj_i in graph.adjlist.items():
+        for j in adj_i:
+            C[j, i] = -1
 
     return C

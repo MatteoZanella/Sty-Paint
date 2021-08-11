@@ -9,9 +9,10 @@ import torch
 from new_painter_renderer import NewPainter
 import os
 
-from graph_utils import clear_adj, dfs_paths, lkh_cost_matrix
+from graph_utils import clear_adj, dfs_paths, lkh_cost_matrix, compute_total_cost, check_correctness
 import subprocess
 import pickle
+import misc
 
 def load_segmentation(path, cw):
     sm = cv2.imread(path)
@@ -103,12 +104,11 @@ if __name__ == '__main__':
 
     source_images = os.listdir(args.data_path)
     k = 1
-    for source_image in source_images:
+    for source_image in source_images[2:3]:
         print('Processing image: {}, {}/{}'.format(source_image, k, len(source_images)))
         k += 1
-        args.output_dir = os.path.join(args.output_path, source_image)  # used by painter to save
-        if not os.path.exists(args.output_dir):
-            os.makedirs(args.output_dir)
+        output_dir = os.path.join(args.output_path, source_image)  # used by painter to save
+        misc.make_dir_tree(output_dir)
 
         # --------------------------------------------------------------------------------------------------------------
         # Load images and add info about segmentaiton and saliency of different stokes
@@ -122,7 +122,7 @@ if __name__ == '__main__':
         saliency = extract_salient(args.img_path, args.canvas_size)
         graph_features = add_segmentation_saliency(strokes, sm, saliency, args.canvas_size)
 
-        cv2.imwrite(os.path.join(args.output_dir, 'saliency_map.png'), saliency * 255)
+        cv2.imwrite(os.path.join(output_dir, 'saliency_map.png'), saliency * 255)
         #cv2.imwrite(os.path.join(args.output_dir, 'segmentation_map.png'), sm * 255)
         # --------------------------------------------------------------------------------------------------------------
         # Create the adj list and add precedence based on layers
@@ -141,39 +141,40 @@ if __name__ == '__main__':
             adj_list[ii] = s
 
         adj_list = dfs_paths(adj_list)
-        with open(os.path.join(args.output_dir, 'adjlist.pkl'), 'wb') as f:
-            pickle.dump(adj_list, f)
-        # -------------------------------------------------------------------------------------------------------------
+        misc.save_pickle(adj_list,
+                    path = os.path.join(output_dir, 'adjlist'))
+
+        # -----------------------------------------------------------------------------
         # Build the graph and order with the greedy policy
         print('***   Greedy policy   ***')
         graph = Graph(adj_list, graph_features)
 
         weights = [
-            {'color': 1, 'area': 1, 'pos': 0, 'class': 5, 'sal': 0},
-            {'color': 1, 'area': 1, 'pos': 0, 'class': 5, 'sal': 5}]
+            {'color': 1, 'area': 1, 'pos': 0, 'class': 5, 'sal': 0}]
 
-
-        graph.reset_weights()
         for w in weights:
-            graph.set_weights(w)
-            idx = graph.sort()
-            _ = pt._render(strokes[:, idx, :], 'greedy_cl_{}_sal_{}'.format(w['class'], w['sal']), save_video=True, save_jpgs=False)
             graph.reset_weights()
+            graph.set_weights(w)
 
-            with open(os.path.join(args.output_dir, 'idx_greedy_cl_{}_sal_{}.pkl'.format(w['class'], w['sal'])), 'wb') as f:
-                pickle.dump(idx, f)
+            name = "lkh_" + f"col{w['color']}_area{w['area']}_pos{w['pos']}_cl{w['class']}_sal{w['sal']}"
+            idx = graph.sort()
+            _ = pt._render(strokes[:, idx, :], path= os.path.join(output_dir, 'greedy', 'videos', name),
+                           save_video=True, save_jpgs=False)
 
+            misc.save_pickle(idx,
+                        path=os.path.join(output_dir, 'greedy', 'index', name))
+
+            check_correctness(graph, idx)
+            c = compute_total_cost(graph, idx)
+            print(f'--> Greedy costs: {c}')
         # --------------------------------------------------------------------------------------------------------------
         # Run LKH solver
-        print('***   LKH policy   ***')
-        path_lkh_files = os.path.join(args.output_dir, 'lkh_files')
+        print('*'*40)
+        print('LKH policy')
+        path_lkh_files = os.path.join(output_dir, 'lkh', 'lkh_files')
         graph = Graph(adj_list, graph_features)
 
-        if not os.path.exists(path_lkh_files):
-            os.makedirs(path_lkh_files)
-
         for w in weights:
-            print('New iterations')
             graph.reset_weights()
             graph.set_weights(w)
             start = graph.starting_node()
@@ -182,61 +183,31 @@ if __name__ == '__main__':
             C = lkh_cost_matrix(graph, start)
 
             # Creat the configuration file
-            sop_name = 'lkh_cl_{}_sal_{}'.format(w['class'], w['sal'])
-            with open('lkh_configuration/problem_file.pkl', 'rb') as f:
-                problem_file = pickle.load(f)
-            problem_file['NAME'] = ' {}.sop'.format(sop_name)
-            problem_file['DIMENSION'] = graph.n_nodes+1
-            problem_file['EDGE_WEIGHT_SECTION'] = graph.n_nodes + 1
+            name = "lkh_" + f"col{w['color']}_area{w['area']}_pos{w['pos']}_cl{w['class']}_sal{w['sal']}"
 
-            with open('lkh_configuration/conf_file.pkl', 'rb') as f:
-                conf_file = pickle.load(f)
-            conf_file['PROBLEM_FILE'] = os.path.join(path_lkh_files, sop_name + '.sop')
-            conf_file['TOUR_FILE'] = os.path.join(path_lkh_files, sop_name + '_solution.txt')
-            # -------------------------------------------
-            # Write configuration files and run the LKH solver
-            conf_file_path = os.path.join(path_lkh_files, 'config_' + sop_name + '.par')
-
-            with open(os.path.join(path_lkh_files, sop_name + '.sop'), 'w') as f:
-                for key, item in problem_file.items():
-                    if key == 'EDGE_WEIGHT_SECTION':
-                        f.write(key + '\n')
-                        f.write(str(item))
-                    else:
-                        f.write(key + ': ' + str(item))
-                    f.write('\n')
-
-                # save the weight matrix
-                np.savetxt(f, C, fmt='%d')
-                f.write('\nEOF')
-
-            with open(conf_file_path, 'w') as f:
-                for key, item in conf_file.items():
-                    f.write(key + '= ' + str(item))
-                    f.write('\n')
-
-
+            lkh_config = misc.LKHConfig(default_config_path='./lkh_configuration',
+                                        name=name,
+                                        num_nodes=graph.n_nodes+1,
+                                        output_path=os.path.join(output_dir, 'lkh', 'lkh_files'))
+            lkh_config.parse_files(cost_matrix=C)
             # -------------------------------------------------------
             # Run LKH
-            cmd = [args.lkh_solver, conf_file_path]
+            cmd = [args.lkh_solver, lkh_config.conf_file_path]
             x = subprocess.run(cmd, capture_output=True, text=True)
-            with open(conf_file_path[:-4] + 'stout.txt', 'w') as f:
+            with open(lkh_config.output_path + '_stout.txt', 'w') as f:
                 f.write(x.stdout.strip("\n"))
 
             # Open the file just saved restore the order and save the indexes
-            with open(conf_file['TOUR_FILE'], 'r') as f:
+            with open(lkh_config.conf_file['TOUR_FILE'], 'r') as f:
                 sol = f.readlines()
+                idx = [int(i) - 1 for i in sol[6:-3]]   # 1 based index
 
-                ids = [int(i) for i in sol[6:-3]]
-                ids = np.array(ids) - 1  # LKH is 1 based index
+            # Save
+            _ = pt._render(strokes[:, idx, :], path=os.path.join(output_dir, 'lkh', 'videos', name), save_video=True, save_jpgs=False)
 
-            # switch start with zero
-            ids[ids==start] = 0
-            ids[0] = start
+            misc.save_pickle(idx,
+                             path=os.path.join(output_dir, 'lkh', 'index', name))
 
-            # Write it to pickle
-            with open(os.path.join(args.output_dir, 'idx_' + sop_name + '.pkl'), 'wb') as f:
-                pickle.dump(ids, f)
-
-            _ = pt._render(strokes[:, ids, :], 'lkh_cl_{}_sal_{}'.format(w['class'], w['sal']), save_video=True,
-                           save_jpgs=False)
+            check_correctness(graph, idx)
+            c = compute_total_cost(graph, idx)
+            print(f'--> LKH costs: {c}')

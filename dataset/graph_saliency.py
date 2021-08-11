@@ -87,16 +87,20 @@ class Graph:
     def starting_node(self):
         """
         This can be used also by LKH
-        """
+
         incoming_edges_count = counter(self.adjlist)
         zero_incoming_edges = find_zero(incoming_edges_count)
 
         scores = []
         for c in zero_incoming_edges:
-            scores.append(-len(self.adjlist[c]))
+            #scores.append(-len(self.adjlist[c]))
+            scores.append((1-self.nodes[c].is_salient))
 
         idx = np.argmin(scores)
         return zero_incoming_edges[idx]
+        """
+
+        return 0
 
     def select_next(self, reference, candidates):
         scores = []
