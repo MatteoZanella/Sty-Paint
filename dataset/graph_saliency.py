@@ -85,8 +85,7 @@ class Graph:
         return cost
 
     def starting_node(self):
-        """
-        This can be used also by LKH
+        #This can be used also by LKH
 
         incoming_edges_count = counter(self.adjlist)
         zero_incoming_edges = find_zero(incoming_edges_count)
@@ -98,9 +97,8 @@ class Graph:
 
         idx = np.argmin(scores)
         return zero_incoming_edges[idx]
-        """
 
-        return 0
+        #return 0
 
     def select_next(self, reference, candidates):
         scores = []

@@ -72,14 +72,18 @@ def lkh_cost_matrix(graph, start):
     scale = 100
     C = np.zeros((graph.n_nodes + 1, graph.n_nodes + 1))
 
+    idx = np.arange(graph.n_nodes)
+    idx[0] = start
+    idx[start] = 0
+
     # Populte the matrix
-    for i in range(1, graph.n_nodes):
-        for j in range(1, graph.n_nodes):
+    for i in range(len(idx)):
+        for j in range(len(idx)):
             # Keep the convention of the documentation
             if i == j:
                 C[j, i] = 0
             else:
-                C[j, i] = graph.compute_metric(i, j)
+                C[j, i] = graph.compute_metric(idx[i], idx[j])
 
     # scale
     C = C * scale

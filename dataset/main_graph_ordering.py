@@ -201,7 +201,10 @@ if __name__ == '__main__':
             with open(lkh_config.conf_file['TOUR_FILE'], 'r') as f:
                 sol = f.readlines()
                 idx = [int(i) - 1 for i in sol[6:-3]]   # 1 based index
+                idx = np.array(idx)
 
+            idx[0] = start
+            idx[idx==start] = 0
             # Save
             _ = pt._render(strokes[:, idx, :], path=os.path.join(output_dir, 'lkh', 'videos', name), save_video=True, save_jpgs=False)
 
