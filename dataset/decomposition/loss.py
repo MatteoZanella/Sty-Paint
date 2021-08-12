@@ -1,11 +1,8 @@
 import torch
 import torch.nn as nn
 import torchvision
-import utils
-import matplotlib.pyplot as plt
-import numpy as np
 import random
-import pytorch_batch_sinkhorn as spc
+import decomposition.pytorch_batch_sinkhorn as spc
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

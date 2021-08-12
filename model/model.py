@@ -19,8 +19,8 @@ class ImageEmbedder(nn.Module):
                         nn.ReflectionPad2d(1),
                         nn.Conv2d(64, 128, 3, 2),
                         nn.BatchNorm2d(128),
-                        nn.AvgPool2d(kernel_size=8),
-                        nn.ReLU(True))
+                        nn.AdaptiveAvgPool2d(1))
+                        #nn.ReLU(True))
         self.enc_canvas = nn.Sequential(    # taken from https://arxiv.org/abs/2108.03798
                         nn.ReflectionPad2d(1),
                         nn.Conv2d(3, 32, 3, 1),
@@ -33,9 +33,8 @@ class ImageEmbedder(nn.Module):
                         nn.ReflectionPad2d(1),
                         nn.Conv2d(64, 128, 3, 2),
                         nn.BatchNorm2d(128),
-                        nn.AvgPool2d(kernel_size=8),
-                        nn.ReLU(True),
-                        )
+                        nn.AdaptiveAvgPool2d(1))
+                        #nn.ReLU(True)
 
         self.conv = nn.Conv2d(128 * 2, 512, 1)  # merge features form the two source images
         self.encoder = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=512, nhead=2),

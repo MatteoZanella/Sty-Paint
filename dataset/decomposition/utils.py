@@ -1,20 +1,17 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import cv2
 from skimage.metrics import structural_similarity as sk_cpt_ssim
-
-
 import os
-import glob
-import random
 
+import random
 import torch
 import torchvision.transforms.functional as TF
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
-import renderer
-
-
+from decomposition import renderer
+import yaml
+from types import SimpleNamespace
+import matplotlib.pyplot as plt
 
 M_RENDERING_SAMPLES_PER_EPOCH = 50000
 
@@ -351,5 +348,27 @@ def build_transformation_matrix(transform):
 
     return transform_matrix
 
+
+def load_painter_config(path):
+    with open(path, 'r') as f:
+        config = yaml.safe_load(f)
+    """
+    See https://stackoverflow.com/questions/52570869/load-yaml-as-nested-objects-instead-of-dictionary-in-python nested namespace
+    dict = yaml.safe_load(definition)
+    obj = json.loads(json.dumps(dict), object_hook=lambda d: SimpleNamespace(**d))
+    """
+    return SimpleNamespace(**config)
+
+def plot_loss_curves(data, path):
+
+    for elem, vals in data.items():
+        if elem == 'elapsed_time':
+            continue
+        f = plt.figure(figsize=(10, 10))
+        plt.plot(vals, color='green')
+        plt.xlabel('iters')
+        plt.ylabel(elem)
+        plt.savefig(os.path.join(path, elem + '.png'))
+        plt.close(f)
 
 

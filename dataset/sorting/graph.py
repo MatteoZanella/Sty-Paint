@@ -2,6 +2,29 @@ from collections import defaultdict
 from copy import copy
 import numpy as np
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Helper functions
+def dfs(visited, graph, node):
+    if node not in visited:
+        visited.add(node)
+        for neighbour in graph[node]:
+            dfs(visited, graph, neighbour)
+
+    return visited
+
+
+def dfs_paths(graph):
+    out = {}
+
+    for node in graph.keys():
+        path = set()
+        path = dfs(path, graph, node)
+        path = list(path)
+        path.remove(node)
+        path.sort()
+        out[node] = path
+
+    return out
 
 def counter(adjlist):
     output = defaultdict(list)
@@ -37,6 +60,9 @@ class Node:
     def area(self):
         return self.h * self.w
 
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Graph
 
 class Graph:
 
@@ -85,6 +111,7 @@ class Graph:
         return cost
 
     def starting_node(self):
+        """
         #This can be used also by LKH
 
         incoming_edges_count = counter(self.adjlist)
@@ -97,8 +124,8 @@ class Graph:
 
         idx = np.argmin(scores)
         return zero_incoming_edges[idx]
-
-        #return 0
+        """
+        return 0
 
     def select_next(self, reference, candidates):
         scores = []
@@ -133,6 +160,9 @@ class Graph:
 
         return topo_order
 
+
+# ----------------------------------------------------------------------------------------------------------------------
+
 class GraphBuilder:
 
     def __init__(self, transparency, hidden=True):
@@ -160,7 +190,7 @@ class GraphBuilder:
             adj_list[adj_id]['to_remove'] = to_remove
             adj_list[adj_id]['all_edges'] = overlap_id + (adj_id+1)
 
-        return adj_list
+        self.adj_list = adj_list
 
     def unimportant_overlaps(self, overlap_area, overlap_id, base_id):
         """
@@ -177,3 +207,26 @@ class GraphBuilder:
                     break
         return to_remove
 
+    def get_adjlist(self, hidden=False):
+        '''
+        hidden = True remove the to_remove nodes from the adj list
+        '''
+        out = defaultdict(list)
+
+        for k, elem in self.adj_list.items():
+            if hidden:
+                out[k] = [e for e in elem['all_edges'] if e not in elem['to_remove']]
+            else:
+                out[k] = [e for e in elem['all_edges']]
+        return out
+
+    def layer_precedence(self, adj, layer):
+        # Add layer information
+        id_first = list(np.nonzero(layer[0, :, 0] == 2)[0])
+        id_second = list(np.nonzero(layer[0, :, 0] != 2)[0])
+        for ii in id_first:
+            s = adj[ii]
+            s.extend(x for x in id_second if x not in s)
+            s.sort()
+            adj[ii] = s
+        return adj

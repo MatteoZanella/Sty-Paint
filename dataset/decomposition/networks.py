@@ -6,7 +6,7 @@ from torchvision import models
 import torch.nn.functional as F
 from torch.optim import lr_scheduler
 import math
-import utils
+from decomposition import utils
 import matplotlib.pyplot as plt
 import numpy as np
 

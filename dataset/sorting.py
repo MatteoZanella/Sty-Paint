@@ -1,68 +1,13 @@
 import argparse
-from graph_saliency import Graph, GraphBuilder
 import cv2
 import torch
-
-torch.cuda.current_device()
-import numpy as np
-import torch
-from new_painter_renderer import NewPainter
 import os
-
-from graph_utils import clear_adj, dfs_paths, lkh_cost_matrix, compute_total_cost, check_correctness
+from datetime import datetime
 import subprocess
-import pickle
-import misc
 
-def load_segmentation(path, cw):
-    sm = cv2.imread(path)
-    sm = cv2.resize(sm, (cw, cw), interpolation=cv2.INTER_NEAREST)
-    sm = sm[:, :, 0]
-
-    return sm
-
-def extract_salient(img_path, size):
-    img = cv2.imread(img_path)
-    img = cv2.resize(img, (size, size))
-
-    saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
-    (success, saliencyMap) = saliency.computeSaliency(img)
-    sal = saliencyMap > 0.75 * saliencyMap.mean()
-
-    return sal
-
-def add_segmentation_saliency(strokes, seg_map, sal_map, size):
-    n = strokes.shape[1]
-    segm_info = np.zeros((1, n, 1))
-    sal_info = np.zeros((1, n, 1))
-
-    # Assing a class to each stroke
-    for i in range(n):
-        x0, y0 = strokes[0, i, :2]
-        x0 = _normalize(x0, size)
-        y0 = _normalize(y0, size)
-
-        segm_info[0, i, 0] = seg_map[y0, x0]
-        sal_info[0, i, 0] = sal_map[y0, x0]
-
-    return np.concatenate([strokes, segm_info, sal_info], axis=-1)
-
-def load_strokes(path):
-    path = os.path.join(path, 'strokes_params.npz')
-
-    x_ctt = np.load(path)['x_ctt']
-    x_color = np.load(path)['x_color']
-    x_alpha = np.load(path)['x_alpha']
-    x_layer = np.load(path)['x_layer']
-
-    strokes = np.concatenate([x_ctt, x_color, x_alpha], axis=-1)
-
-    return strokes, x_layer
-
-
-def _normalize(x, width):
-    return (int)(x * (width - 1) + 0.5)
-
+from sorting.graph import Graph, GraphBuilder, dfs_paths
+import sorting.utils as utils
+from decomposition.painter import Painter
 
 def get_args():
     # settings
@@ -104,23 +49,27 @@ if __name__ == '__main__':
 
     source_images = os.listdir(args.data_path)
     k = 1
-    for source_image in source_images[2:3]:
+    for source_image in source_images:
         print('Processing image: {}, {}/{}'.format(source_image, k, len(source_images)))
         k += 1
         output_dir = os.path.join(args.output_path, source_image)  # used by painter to save
-        misc.make_dir_tree(output_dir)
+        utils.make_dir_tree(output_dir)
 
         # --------------------------------------------------------------------------------------------------------------
         # Load images and add info about segmentaiton and saliency of different stokes
         args.img_path = os.path.join(args.imgs_path, source_image + '.jpg' )
-        strokes, layer_info = load_strokes(os.path.join(args.data_path, source_image))
-        pt = NewPainter(args=args)
+        src_path = os.path.join(args.data_path, source_image)
+        strokes_loader = utils.StrokesLoader(path=src_path)
+        strokes, layer = strokes_loader.load_strokes()
+
+        print(strokes.shape)
+        pt = Painter(args=args)
         _, alphas = pt._render(strokes, '', save_video=False, save_jpgs=False)  # no needed later
 
         annotation_path = os.path.join(args.annotations_path, source_image + '.png')
-        sm = load_segmentation(annotation_path, args.canvas_size)
-        saliency = extract_salient(args.img_path, args.canvas_size)
-        graph_features = add_segmentation_saliency(strokes, sm, saliency, args.canvas_size)
+        sm = utils.load_segmentation(annotation_path, args.canvas_size)
+        saliency = utils.extract_salient(args.img_path, args.canvas_size)
+        graph_features = strokes_loader.add_segmentation_saliency(sm, saliency, args.canvas_size)
 
         cv2.imwrite(os.path.join(output_dir, 'saliency_map.png'), saliency * 255)
         #cv2.imwrite(os.path.join(args.output_dir, 'segmentation_map.png'), sm * 255)
@@ -128,45 +77,45 @@ if __name__ == '__main__':
         # Create the adj list and add precedence based on layers
         print('Building graph ...')
         gb = GraphBuilder(alphas, 0)
-        adj = gb.build_graph()
+        gb.build_graph()
 
-        # Add layer information
-        id_first = list(np.nonzero(layer_info[0, :, 0] == 2)[0])
-        id_second = list(np.nonzero(layer_info[0, :, 0] != 2)[0])
-        adj_list = clear_adj(adj, hidden=False)  # list, without unimportant overlaps
-        for ii in id_first:
-            s = adj_list[ii]
-            s.extend(x for x in id_second if x not in s)
-            s.sort()
-            adj_list[ii] = s
+        adj_list = gb.get_adjlist(hidden=True)
+        #adj_list = gb.layer_precedence(adj_list, layer)
 
         adj_list = dfs_paths(adj_list)
-        misc.save_pickle(adj_list,
-                    path = os.path.join(output_dir, 'adjlist'))
-
+        utils.save_pickle(adj_list,
+                         path = os.path.join(output_dir, 'adjlist'))
         # -----------------------------------------------------------------------------
         # Build the graph and order with the greedy policy
         print('***   Greedy policy   ***')
         graph = Graph(adj_list, graph_features)
 
         weights = [
-            {'color': 1, 'area': 1, 'pos': 0, 'class': 5, 'sal': 0}]
+            {'color': 1, 'area': 1, 'pos': 0, 'class': 5, 'sal': 0},
+            {'color': 1, 'area': 1, 'pos': 0, 'class': 5, 'sal': 2.5}]
+            #{'color': 1, 'area': 1, 'pos': 0, 'class': 5, 'sal': 5},
+            #{'color': 1, 'area': 1, 'pos': 2, 'class': 0, 'sal': 0}]
+
 
         for w in weights:
+            start_time = datetime.now()
             graph.reset_weights()
             graph.set_weights(w)
 
-            name = "lkh_" + f"col{w['color']}_area{w['area']}_pos{w['pos']}_cl{w['class']}_sal{w['sal']}"
+            name = "greedy_" + f"col{w['color']}_area{w['area']}_pos{w['pos']}_cl{w['class']}_sal{w['sal']}"
             idx = graph.sort()
             _ = pt._render(strokes[:, idx, :], path= os.path.join(output_dir, 'greedy', 'videos', name),
                            save_video=True, save_jpgs=False)
 
-            misc.save_pickle(idx,
-                        path=os.path.join(output_dir, 'greedy', 'index', name))
+            utils.save_pickle(idx,
+                             path=os.path.join(output_dir, 'greedy', 'index', name))
 
-            check_correctness(graph, idx)
-            c = compute_total_cost(graph, idx)
-            print(f'--> Greedy costs: {c}')
+            logs = utils.check_tour(graph, idx)
+            time = datetime.now() - start_time
+
+            with open(os.path.join(output_dir, 'greedy', 'log_' + name + '.txt'), 'w') as file:
+                file.write(logs)
+                file.write('Elapsed time: %s' % time)
         # --------------------------------------------------------------------------------------------------------------
         # Run LKH solver
         print('*'*40)
@@ -175,20 +124,21 @@ if __name__ == '__main__':
         graph = Graph(adj_list, graph_features)
 
         for w in weights:
+            start_time = datetime.now()
             graph.reset_weights()
             graph.set_weights(w)
             start = graph.starting_node()
 
             # Cost matrix
-            C = lkh_cost_matrix(graph, start)
+            C = utils.lkh_cost_matrix(graph, start)
 
             # Creat the configuration file
             name = "lkh_" + f"col{w['color']}_area{w['area']}_pos{w['pos']}_cl{w['class']}_sal{w['sal']}"
 
-            lkh_config = misc.LKHConfig(default_config_path='./lkh_configuration',
-                                        name=name,
-                                        num_nodes=graph.n_nodes+1,
-                                        output_path=os.path.join(output_dir, 'lkh', 'lkh_files'))
+            lkh_config = utils.LKHConfig(default_config_path='sorting/lkh_configuration',
+                                         name=name,
+                                         num_nodes=graph.n_nodes+1,
+                                         output_path=os.path.join(output_dir, 'lkh', 'lkh_files'))
             lkh_config.parse_files(cost_matrix=C)
             # -------------------------------------------------------
             # Run LKH
@@ -201,16 +151,17 @@ if __name__ == '__main__':
             with open(lkh_config.conf_file['TOUR_FILE'], 'r') as f:
                 sol = f.readlines()
                 idx = [int(i) - 1 for i in sol[6:-3]]   # 1 based index
-                idx = np.array(idx)
 
-            idx[0] = start
-            idx[idx==start] = 0
             # Save
             _ = pt._render(strokes[:, idx, :], path=os.path.join(output_dir, 'lkh', 'videos', name), save_video=True, save_jpgs=False)
 
-            misc.save_pickle(idx,
+            utils.save_pickle(idx,
                              path=os.path.join(output_dir, 'lkh', 'index', name))
 
-            check_correctness(graph, idx)
-            c = compute_total_cost(graph, idx)
-            print(f'--> LKH costs: {c}')
+
+            logs = utils.check_tour(graph, idx)
+            time = datetime.now() - start_time
+
+            with open(os.path.join(output_dir, 'lkh', 'log_' + name + '.txt'), 'w') as file:
+                file.write(logs)
+                file.write('\nElapsed time: %s' % time)
