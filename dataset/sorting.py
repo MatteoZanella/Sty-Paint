@@ -8,6 +8,7 @@ import subprocess
 from sorting.graph import Graph, GraphBuilder, dfs_paths
 import sorting.utils as utils
 from decomposition.painter import Painter
+from decomposition.utils import load_painter_config
 
 def get_args():
     # settings
@@ -16,23 +17,7 @@ def get_args():
     parser.add_argument('--output_path', default='/home/eperuzzo/brushstrokes/comparison_results/')
     parser.add_argument('--imgs_path', default='/home/eperuzzo/ade20k_outdoors/images/training/')
     parser.add_argument('--annotations_path', default='/home/eperuzzo/ade20k_outdoors/annotations/training/')
-    parser.add_argument('--renderer', default='oilpaintbrush')
-    parser.add_argument('--canvas_color', default='black')
-    parser.add_argument('--canvas_size', default=512)
-    parser.add_argument('--keep_aspect_ratio', default=False, type=bool)
-    parser.add_argument('--max_m_strokes', default=500, type=int)
-    parser.add_argument('--max_divide', default=5, type=int)
-    parser.add_argument('--beta_L1', default=1.0, type=float)
-    parser.add_argument('--with_ot_loss', default=False, type=bool)
-    parser.add_argument('--beta_ot', default=0.1, type=float)
-    parser.add_argument('--net_G', default='zou-fusion-net', type=str)
-    parser.add_argument('--renderer_checkpoint_dir', default='/home/eperuzzo/checkpoints_G_oilpaintbrush', type=str)
-    parser.add_argument('--lr', default=0.005, type=float)
-    parser.add_argument('--output_dir', default='./original_algorithm', type=str)
-    parser.add_argument('--disable_preview', default=True, type=bool)
-    parser.add_argument('--clamp_w_h', default=0.9, type=float)
     parser.add_argument('--gpu_id', default=0, type=int)
-    parser.add_argument('--plot_losses', default=True, type=bool)
     parser.add_argument('--lkh_solver', default='/home/eperuzzo/brushstrokes/solver/LKH-3.0.6/LKH', type=str)
     return parser.parse_args()
 
@@ -49,6 +34,10 @@ if __name__ == '__main__':
 
     source_images = os.listdir(args.data_path)
     k = 1
+
+    painter_config = load_painter_config(args.painter_config)
+    pt = Painter(args=painter_config)
+
     for source_image in source_images:
         print('Processing image: {}, {}/{}'.format(source_image, k, len(source_images)))
         k += 1
@@ -63,8 +52,7 @@ if __name__ == '__main__':
         strokes, layer = strokes_loader.load_strokes()
 
         print(strokes.shape)
-        pt = Painter(args=args)
-        _, alphas = pt._render(strokes, '', save_video=False, save_jpgs=False)  # no needed later
+        _, alphas = pt.inference(strokes)
 
         annotation_path = os.path.join(args.annotations_path, source_image + '.png')
         sm = utils.load_segmentation(annotation_path, args.canvas_size)
@@ -80,7 +68,7 @@ if __name__ == '__main__':
         gb.build_graph()
 
         adj_list = gb.get_adjlist(hidden=True)
-        #adj_list = gb.layer_precedence(adj_list, layer)
+        adj_list = gb.layer_precedence(adj_list, layer)
 
         adj_list = dfs_paths(adj_list)
         utils.save_pickle(adj_list,

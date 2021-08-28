@@ -275,6 +275,9 @@ class Painter(PainterBase):
         super(Painter, self).__init__(args=args)
         self.args = args
 
+        self._load_checkpoint()
+        self.net_G.eval()
+        print(f'Painter created, weights form: {args.renderer_checkpoint_dir}, eval mode: True')
 
     def load_style_image(self):
         style_img = cv2.imread(self.img_path, cv2.IMREAD_COLOR)
@@ -484,10 +487,8 @@ class Painter(PainterBase):
         self.loss_dict = {'pixel_loss': [],
                           'style_loss': [],
                           'content_loss': []}
-        # --------------------------------------------------------------------------------------------------------------
-        self._load_checkpoint()
-        self.net_G.eval()
         self.load_style_image()
+        # --------------------------------------------------------------------------------------------------------------
         print('begin drawing...')
 
         clamp_schedule = self.args.clamp_schedule
@@ -556,7 +557,7 @@ class Painter(PainterBase):
             strokes = strokes[:, order, :]
 
         if output_path is None:
-            img, _ = self._render(strokes, output_path, save_jpgs=save_jpgs, save_video=save_video)
-            return img
+            img, alphas = self._render(strokes, output_path, save_jpgs=save_jpgs, save_video=save_video)
+            return img, alphas
         else:
             _ = self._render(strokes, output_path, save_jpgs=save_jpgs, save_video=save_video)
