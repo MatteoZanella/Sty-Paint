@@ -14,7 +14,7 @@ def _normalize(x, width):
 
 class Renderer():
 
-    def __init__(self, renderer='oilpaintbrush', CANVAS_WIDTH=128, train=False, canvas_color='black'):
+    def __init__(self, brush_paths, renderer='oilpaintbrush', CANVAS_WIDTH=128, train=False, canvas_color='black'):
 
         self.CANVAS_WIDTH = CANVAS_WIDTH
         self.renderer = renderer
@@ -41,14 +41,10 @@ class Renderer():
             self.d_shape = 5
             self.d_color = 6
             self.d_alpha = 1
-            self.brush_small_vertical = cv2.imread(
-                '/home/eperuzzo/brushstrokes/dataset/decomposition/brushes/brush_fromweb2_small_vertical.png', cv2.IMREAD_GRAYSCALE)
-            self.brush_small_horizontal = cv2.imread(
-                '/home/eperuzzo/brushstrokes/dataset/decomposition/brushes/brush_fromweb2_small_horizontal.png', cv2.IMREAD_GRAYSCALE)
-            self.brush_large_vertical = cv2.imread(
-                '/home/eperuzzo/brushstrokes/dataset/decomposition/brushes/brush_fromweb2_large_vertical.png', cv2.IMREAD_GRAYSCALE)
-            self.brush_large_horizontal = cv2.imread(
-                '/home/eperuzzo/brushstrokes/dataset/decomposition/brushes/brush_fromweb2_large_horizontal.png', cv2.IMREAD_GRAYSCALE)
+            self.brush_small_vertical = cv2.imread(brush_paths['small_vertical'],cv2.IMREAD_GRAYSCALE)
+            self.brush_small_horizontal = cv2.imread(brush_paths['small_horizontal'], cv2.IMREAD_GRAYSCALE)
+            self.brush_large_vertical = cv2.imread(brush_paths['large_vertical'], cv2.IMREAD_GRAYSCALE)
+            self.brush_large_horizontal = cv2.imread(brush_paths['large_horizontal'], cv2.IMREAD_GRAYSCALE)
         elif self.renderer in ['rectangle']:
             self.d = 9 # xc, yc, w, h, theta, R, G, B, A
             self.d_shape = 5

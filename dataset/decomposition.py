@@ -8,6 +8,7 @@ from decomposition.painter import Painter
 import pickle
 from datetime import datetime
 import pandas as pd
+import numpy as np
 
 
 def get_args():
@@ -16,7 +17,7 @@ def get_args():
     parser.add_argument('--output_path', required=True, type=str, help='output')
     parser.add_argument('--csv_file', required=True, type=str, help='Image path')
     parser.add_argument('--painter_config', default='./decomposition/painter_config.yaml')
-    parser.add_argument('--plot_loss', default=True)
+    parser.add_argument('--plot_loss', default=False)
     parser.add_argument('--gpu_id', default=0, type=int, help='GPU index')
     return parser.parse_args()
 
@@ -45,14 +46,13 @@ if __name__ == '__main__':
         name = os.path.basename(img_path).split('.')[0]
         tmp_output_path = os.path.join(args.output_path, name)
         os.makedirs(tmp_output_path, exist_ok=True)
-
         # --------------------------------------------------------------------------------------------------------------
         # Decomposition
         painter_config.img_path = img_path
         strokes = pt.train()
         pt._save_stroke_params(strokes, path=tmp_output_path)
-        pt.inference(strokes, output_path=os.path.join(tmp_output_path, 'original'), save_video=True)
-
+        final_img, alphas = pt.inference(strokes)
+        np.savez_compressed(os.path.join(tmp_output_path, 'alpha.npz'), alpha=alphas)
         # --------------------------------------------------------------------------------------------------------------
         # Save loss curves dictonary and figures
         elapsed = datetime.now() - start

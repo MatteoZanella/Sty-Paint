@@ -19,8 +19,11 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 class PainterBase():
     def __init__(self, args):
         self.args = args
-        self.rderr = renderer.Renderer(renderer=args.renderer,
-                                       CANVAS_WIDTH=args.canvas_size, canvas_color=args.canvas_color)
+        self.rderr = renderer.Renderer(brush_paths=args.brush_paths,
+                                       renderer=args.renderer,
+                                       CANVAS_WIDTH=args.canvas_size,
+                                       canvas_color=args.canvas_color,
+                                       )
 
         # define G
         self.net_G = define_G(rdrr=self.rderr, netG=args.net_G).to(device)
@@ -294,32 +297,32 @@ class Painter(PainterBase):
             self.G_loss += self.args.beta_ot * self._sinkhorn_loss(
                 self.G_final_pred_canvas, self.img_batch)
 
-        with torch.no_grad():
-            canvas = utils.patches2img(
-                self.G_final_pred_canvas, self.m_grid, to_numpy=False).to(device)
-            style_img = utils.patches2img(self.img_batch, self.m_grid, to_numpy=False).to(device)
-
-            assert canvas.shape == style_img.shape
-            content_loss = self._content_loss(canvas, style_img)
-            style_loss = self._style_loss(canvas, style_img)
-
-            """
-            style_loss = 0.0
-            content_loss = 0.0
-            N = self.G_final_pred_canvas.shape[0]
-            for i in range(N):
-                gi = self.G_final_pred_canvas[i].unsqueeze(0)
-                ii = self.img_batch[i].unsqueeze(0)
-                style_loss += self._style_loss(gi, ii)
-                content_loss += self._content_loss(gi, ii)
-            style_loss /= N
-            content_loss /= N
-            #style_loss = self._style_loss(canvas, self.style_img)
-            #content_loss = self._content_loss(canvas, self.style_img)
-            """
-        self.loss_dict['pixel_loss'].append(self.G_loss.item())
-        self.loss_dict['style_loss'].append(style_loss.item())
-        self.loss_dict['content_loss'].append(content_loss.item())
+        # with torch.no_grad():
+        #     canvas = utils.patches2img(
+        #         self.G_final_pred_canvas, self.m_grid, to_numpy=False).to(device)
+        #     style_img = utils.patches2img(self.img_batch, self.m_grid, to_numpy=False).to(device)
+        #
+        #     assert canvas.shape == style_img.shape
+        #     content_loss = self._content_loss(canvas, style_img)
+        #     style_loss = self._style_loss(canvas, style_img)
+        #
+        #     """
+        #     style_loss = 0.0
+        #     content_loss = 0.0
+        #     N = self.G_final_pred_canvas.shape[0]
+        #     for i in range(N):
+        #         gi = self.G_final_pred_canvas[i].unsqueeze(0)
+        #         ii = self.img_batch[i].unsqueeze(0)
+        #         style_loss += self._style_loss(gi, ii)
+        #         content_loss += self._content_loss(gi, ii)
+        #     style_loss /= N
+        #     content_loss /= N
+        #     #style_loss = self._style_loss(canvas, self.style_img)
+        #     #content_loss = self._content_loss(canvas, self.style_img)
+        #     """
+        # self.loss_dict['pixel_loss'].append(self.G_loss.item())
+        # self.loss_dict['style_loss'].append(style_loss.item())
+        # self.loss_dict['content_loss'].append(content_loss.item())
 
         self.G_loss.backward()
 
@@ -385,20 +388,14 @@ class Painter(PainterBase):
             this_frame = self.rderr.canvas
             this_frame = cv2.resize(this_frame, (out_w, out_h), cv2.INTER_AREA)
             if save_jpgs:
-                plt.imsave(path + '_rendered_stroke_' + str((i+1)).zfill(4) +
-                           '.png', this_frame)
+                plt.imsave(os.path.join(path, str(i) + '.jpg'), this_frame)
             if save_video:
                 video_writer.write((this_frame[:,:,::-1] * 255.).astype(np.uint8))
 
-        if save_jpgs:
-            print('saving input photo...')
-            out_img = cv2.resize(self.img_, (out_w, out_h), cv2.INTER_AREA)
-            plt.imsave(path + '_input.png', out_img)
-
         final_rendered_image = np.copy(this_frame)
-        if save_jpgs:
-            print('saving final rendered result...')
-            plt.imsave(path + '_final.png', final_rendered_image)
+        # if save_jpgs:
+        #     print('saving final rendered result...')
+        #     plt.imsave(path + '_final.png', final_rendered_image)
 
         return final_rendered_image, np.concatenate(alphas)
 
@@ -481,13 +478,13 @@ class Painter(PainterBase):
         self.img_ = cv2.resize(self.img_, (self.net_G.out_size * self.max_divide,
                                            self.net_G.out_size * self.max_divide), cv2.INTER_AREA)
 
-        self._style_loss = loss.VGGStyleLoss(transfer_mode=1,
-                                             resize=False)  # 0 to transfer only color, > 0 texture and color
-        self._content_loss = loss.VGGPerceptualLoss(resize=False)
+        # self._style_loss = loss.VGGStyleLoss(transfer_mode=1,
+        #                                      resize=False)  # 0 to transfer only color, > 0 texture and color
+        # self._content_loss = loss.VGGPerceptualLoss(resize=False)
         self.loss_dict = {'pixel_loss': [],
                           'style_loss': [],
                           'content_loss': []}
-        self.load_style_image()
+        #self.load_style_image()
         # --------------------------------------------------------------------------------------------------------------
         print('begin drawing...')
 
