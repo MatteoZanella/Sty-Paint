@@ -32,14 +32,12 @@ class StrokesDataset(Dataset):
         self.context_length = config["dataset"]["context_length"]
         self.sequence_length = config["dataset"]["sequence_length"]
         self.heuristic = config["dataset"]["heuristic"]
+        self.img_size = config["dataset"]["resize"]
+
         self.img_transform = transforms.Compose([
-            transforms.Resize((512, 512)),
+            transforms.Resize((self.img_size, self.img_size)),
             transforms.ToTensor(),
             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
-        self.canvas_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-        ])
 
     def __len__(self):
         return len(self.filenames)
@@ -69,7 +67,7 @@ class StrokesDataset(Dataset):
         canvas = []
         for i in range(t_C, t_T):
             img = Image.open(os.path.join(tmp_path, f'{i}.jpg'))
-            img = self.canvas_transform(img)
+            img = self.img_transform(img)
             canvas.append(img)
 
         canvas = torch.stack(canvas)
@@ -134,11 +132,7 @@ if __name__ == '__main__':
     c_parser.parse_config()
     config = c_parser.get_config()
 
-    img_transform = transforms.Compose([transforms.Resize((512,512)), transforms.ToTensor()])
-    c_transform = transforms.Compose([transforms.ToTensor()])
-    dataset = StrokesDataset(config=config,
-                             img_transform=img_transform,
-                             canvas_transform=c_transform)
+    dataset = StrokesDataset(config=config)
 
     dataloader = DataLoader(dataset, batch_size=2)
 

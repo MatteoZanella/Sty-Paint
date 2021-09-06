@@ -24,49 +24,39 @@ class PositionalEncoding(nn.Module):
 
         return torch.FloatTensor(sinusoid_table).unsqueeze(0)
 
-    def forward(self, x, idx=None):
+    def forward(self, x, offset=0):
         """
         :param x: tensor of size bs x length x features to add positional emebddings
         """
-        if idx is None:
-            return x + self.pos_table.clone().detach()
-        else:
-            return x + self.pos_table[:, idx:, :].clone().detach()
+        pe = self.pos_table.clone().detach().to(x.device)
+        return x[:, offset:, :] + pe
 
 # ----------------------------------------------------------------------------------------------------------------------
 
-class Merger(nn.Module):
+class SequenceMerger(nn.Module):
 
     def __init__(self, config):
-        super(Merger, self).__init__()
+        super(SequenceMerger, self).__init__()
 
-        self.type = config["model"]["merge_type"]
-        self.n_strokes_params = config["model"]["n_strokes_params"]
-        self.padding_value = 0
+        self.d_model = config["model"]["d_model"]
+        self.s_params = config["model"]["n_strokes_params"]
 
-        if self.type == "sum":
-            self.s_params_proj = nn.Linear(self.n_strokes_params, 512)
+        self.img_proj = nn.Linear(512, self.d_model)  # project image features to lower dimension
+        self.seq_proj = nn.Linear(512 + self.s_params, self.d_model)
 
 
-    def merge_strokes_canvas(self, strokes_params, canvas_feat):
-        if self.type == "concat":
-            out = torch.cat([canvas_feat, strokes_params], dim=2)  # concatenate on the feature dimension
-            return out
-        elif self.type == "sum":
-            strokes_proj = self.s_params_proj(strokes_params)
-            out = canvas_feat + strokes_proj
-            return out
+    def forward(self, strokes_params, canvas_feat, img_feat=None):
+        # Project img features
+        if img_feat is not None:
+            img_feat = self.img_proj(img_feat)
+            img_feat = img_feat.unsqueeze(1)
+
+        # Concatenate canvas and strokes and project
+        x = torch.cat([canvas_feat, strokes_params], dim=-1)  # concatenate along feature dim
+        x = self.seq_proj(x)
+
+        if img_feat is not None:
+            return torch.cat([img_feat, x], dim=1)  # concatenate along length dim
         else:
-            raise Exception
-
-    def pad_img_features(self, x):
-        if self.type == 'concat':
-            bs = x.size(0)
-            x = torch.cat([x, torch.full([bs, self.n_strokes_params], self.padding_value,device=x.device)], dim=-1)
-            return x.unsqueeze(1)
-        elif self.type == 'sum':
-            return x.unsqueeze(1)
-        else:
-            raise Exception
-
+            return x
 

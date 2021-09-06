@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from networks.image_encoders import ResNetEncoder
-from networks.layers import PositionalEncoding, Merger
+from networks.layers import PositionalEncoding, SequenceMerger
 
 
 class Embedder(nn.Module):
 
-    def __init__(self, config, PE):
+    def __init__(self, config):
         super(Embedder, self).__init__()
 
         self.s_params = config["model"]["n_strokes_params"]
@@ -19,13 +19,18 @@ class Embedder(nn.Module):
 
         # Networks
         self.img_encoder = ResNetEncoder()
-        self.canvas_encoder = ResNetEncoder()
-
-        self.PE = PE
+        self.context_PE = PositionalEncoding(self.d_model, n_position=self.context_length)
+        self.sequence_PE = PositionalEncoding(self.d_model, n_position=self.seq_length)
 
         # Merger
-        self.merge = Merger(config)
+        self.SM = SequenceMerger(config)
 
+    def encode_canvas(self, x):
+        L = x.size(1)
+        x = rearrange(x, 'bs L c h w -> (bs L) c h w')
+        x = self.img_encoder(x)
+        x = rearrange(x, '(bs L) n_feat -> bs L n_feat', L=L)
+        return x
 
     def forward(self, data):
         # Unpack data
@@ -33,29 +38,28 @@ class Embedder(nn.Module):
         context = data['context']
         imgs = data['ref_img']
 
-        # Encode reference images
+        ## Context
         img_feat = self.img_encoder(imgs)
-        img_feat = self.merge.pad_img_features(img_feat)
+        # Encode canvas images
+        ctx_canvas_feat = self.encode_canvas(context['canvas'])
+        # Create context seq
+        ctx_sequence = self.SM(strokes_params=context['strokes'],
+                               canvas_feat=ctx_canvas_feat,
+                               img_feat=img_feat)
 
-        # Concatenate all the canvas and compute the features
-        canvas = torch.cat([context['canvas'], x['canvas']], dim=1)   # bs x (context_length+seq_length) x 3 x 512 x 512
-        canvas = rearrange(canvas, 'bs L c h w -> (bs L) c h w')
-        canvas_feat = self.canvas_encoder(canvas)
-        canvas_feat = rearrange(canvas_feat, '(bs L) n_feat -> bs L n_feat', L=self.L)
+        ## Sequence
+        # Encode canvas images
+        x_canvas_feat = self.encode_canvas(x['canvas'])
+        # Create context seq
+        x_sequence = self.SM(strokes_params=x['strokes'],
+                               canvas_feat=x_canvas_feat,
+                               img_feat=None)
 
-        # Concatenate all the strokes
-        strokes = torch.cat([context['strokes'], x['strokes']], dim=1) # bs x L x 12
+        # Add positional encodings to the sequences
+        ctx_sequence = self.context_PE(ctx_sequence, offset=1)
+        x_sequence = self.sequence_PE(x_sequence)
 
-        feat = self.merge.merge_strokes_canvas(strokes, canvas_feat)
-        feat = self.PE(feat)
-
-        # Split context form the sequence
-        context = feat[:, :self.context_length, :]
-        context = torch.cat([img_feat, context], dim=1)     # concatenate on seq dimension the reference images
-
-        sequence = feat[:, self.context_length:, :]
-
-        return context, sequence
+        return ctx_sequence, x_sequence
 # ----------------------------------------------------------------------------------------------------------------------
 
 class ContextEncoder(nn.Module):
@@ -78,7 +82,7 @@ class ContextEncoder(nn.Module):
 # ----------------------------------------------------------------------------------------------------------------------
 
 class TransformerVAE(nn.Module):
-    def __init__(self, config, PE):
+    def __init__(self, config):
         super().__init__()
 
         self.s_params = config["model"]["n_strokes_params"]
@@ -86,19 +90,13 @@ class TransformerVAE(nn.Module):
         self.seq_length = config["dataset"]["sequence_length"]
         self.context_length = config["dataset"]["context_length"]
 
+        self.PE = PositionalEncoding(self.d_model, self.seq_length)
 
-        self.PE = PE
-        # Here is enough to compute cross attention probably
-        self.pe_embedder = nn.TransformerDecoder(
-                        decoder_layer=nn.TransformerDecoderLayer(
-                                    d_model=self.d_model,
-                                    nhead=config["model"]["vae_encoder"]["n_heads"],
-                                    batch_first=True
-                        ),
-                        num_layers=1)
+        #
+        self.proj_z_context = nn.Linear(256 + 256, 256)
 
         # Define Encoder and Decoder
-        self.encoder = nn.TransformerDecoder(
+        self.vae_encoder = nn.TransformerDecoder(
                             decoder_layer=nn.TransformerDecoderLayer(
                                                                     d_model=self.d_model,
                                                                      nhead=config["model"]["vae_encoder"]["n_heads"],
@@ -106,7 +104,7 @@ class TransformerVAE(nn.Module):
                                                                      ),
                             num_layers=config["model"]["vae_encoder"]["n_layers"])
 
-        self.decoder = nn.TransformerDecoder(
+        self.vae_decoder = nn.TransformerDecoder(
                             decoder_layer=nn.TransformerDecoderLayer(
                                                                      d_model=self.d_model,
                                                                      nhead=config["model"]["vae_decoder"]["n_heads"],
@@ -128,15 +126,13 @@ class TransformerVAE(nn.Module):
         x = torch.cat([mu_x, log_var_x, x], dim=1)  # batch_size x (T+2) x d_model
 
         # Encode the input
-        x = self.encoder(x, context)
+        x = self.vae_encoder(x, context)
         mu = x[:, 0, :]     # first element of the seq
         log_var = x[:, 1, :]   # second element of the seq
 
         return mu, log_var
 
     def sample_latent_z(self, mu, log_sigma):
-        mu = repeat(mu, 'bs n_feat -> bs seq_len n_feat', seq_len=self.seq_length)
-        log_sigma = repeat(log_sigma, 'bs n_feat -> bs seq_len n_feat', seq_len=self.seq_length)
 
         sigma = torch.exp(0.5 * log_sigma)
         eps = torch.randn_like(sigma)
@@ -144,20 +140,24 @@ class TransformerVAE(nn.Module):
         z = mu + (eps * sigma)
         return z
 
-    def decode(self, z, context):
-        # Mix the latent vector with positional embeddings
-        positional_encodings = self.PE(torch.zeros_like(z), idx=self.context_length)
-        z = self.pe_embedder(positional_encodings, z)
+    def decode(self, size, z, context):
+        positional_encodings = self.PE(torch.zeros(size)).to(z.device)
 
-        # Decode
-        out = self.decoder(z, context)
+        # Fuse z and context
+        z = repeat(z, 'bs n_feat -> bs ctx_len n_feat', ctx_len=self.context_length)
+        z_ctx = torch.cat([context, z], dim=-1)
+        z_ctx = self.proj_z_context(z_ctx)
+
+        out = self.vae_decoder(positional_encodings, z_ctx)
         return out
 
     def forward(self, seq, context):
 
         mu, log_sigma = self.encode(seq, context)
         z = self.sample_latent_z(mu, log_sigma)
-        out = self.decode(z, context)   # z is the input, context comes from the other branch
+
+        # Replicate z and decode
+        out = self.decode(seq.size(), z, context)   # z is the input, context comes from the other branch
 
         # Linear proj
         out = rearrange(out, 'bs seq_len n_feat -> (bs seq_len) n_feat')
@@ -174,12 +174,9 @@ class InteractivePainter(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.PE = PositionalEncoding(d_hid=config["model"]["d_model"],
-                                     n_position=config["dataset"]["total_length"])
-
-        self.embedder = Embedder(config, self.PE)
+        self.embedder = Embedder(config)
         self.context_encoder = ContextEncoder(config)
-        self.transformer_vae = TransformerVAE(config, self.PE)
+        self.transformer_vae = TransformerVAE(config)
 
     def forward(self, data):
 
@@ -209,8 +206,7 @@ if __name__ == '__main__':
     c_parser.parse_config()
     config = c_parser.get_config()
 
-    img_transform = transforms.Compose([transforms.Resize((512, 512)), transforms.ToTensor()])
-    c_transform = transforms.Compose([transforms.ToTensor()])
+
     dataset = StrokesDataset(config=config)
 
     dataloader = DataLoader(dataset, batch_size=2)

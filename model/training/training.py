@@ -10,6 +10,7 @@ class Trainer:
     def __init__(self, config, model, dataloader, device):
 
         self.checkpoint_path = config["train"]["checkpoint_path"]
+        self.kl_lambda = config["train"]["kl_lambda"]
         self.optimizer = AdamW(params=model.parameters(), lr=config["train"]["lr"], weight_decay=config["train"]['wd'])
         self.dataloader = dataloader
         self.MSELoss = nn.MSELoss()
@@ -50,10 +51,7 @@ class Trainer:
             mse_loss = self.MSELoss(predictions, labels)
             kl_div = self.KLDivergence(mu, log_sigma)
 
-            import pdb
-            pdb.set_trace()
-
-            loss = mse_loss + kl_div
+            loss = mse_loss + kl_div * self.kl_lambda
 
             self.optimizer.zero_grad()
             loss.backward()

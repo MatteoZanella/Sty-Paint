@@ -1,30 +1,29 @@
 dataset :
   root_dir : '/home/eperuzzo/brushstrokes/tiny_dataset/'
   heuristic : 'lkh_col1_area2_pos0_cl10_sal0'
-  resize : 512
-  context_length : 10
-  sequence_length : 30
+  resize : 256
+  context_length : 5
+  sequence_length : 10
 model:
+  d_model : 256
   img_encoder: 'resnet18'
   n_strokes_params : 12
   merge_type : 'sum'
   encoder:
-    d_model : 0
     n_heads : 4
     n_layers : 3
   vae_encoder:
-    d_model : 0
     n_heads : 4
     n_layers : 3
   vae_decoder:
-    d_model : 0
     n_heads : 4
     n_layers : 3
 train:
   n_epochs : 50
   gpu_id : 0
-  batch_size : 1
+  batch_size : 4
   checkpoint_path : '/home/eperuzzo/brushstrokes/ckpt/'
+  kl_lambda : 0.0001
   lr :  0.0005
   wd : 0.000001
   save_freq : 20

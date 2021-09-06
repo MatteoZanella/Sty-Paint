@@ -11,15 +11,6 @@ class ConfigParser:
 
     def parse_config(self):
 
-        # Check concat type
-        tmp = self.config["model"]["merge_type"]
-        if tmp == 'concat':
-            self.config['model']['d_model'] = 512 + self.config['model']['n_strokes_params']
-        elif tmp == 'sum':
-            self.config['model']['d_model'] = 512
-        else:
-            raise Exception('Merge type should be either sum or concat')
-
         print(f'Model features  : {self.config["model"]["d_model"]}')
         # Add total sequence length
         self.config['dataset']['total_length'] = self.config["dataset"]["sequence_length"] + self.config["dataset"]["context_length"]
