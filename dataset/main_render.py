@@ -1,6 +1,5 @@
 import argparse
 import os
-import torch
 
 from decomposition.painter import Painter
 import torch
@@ -17,7 +16,7 @@ def get_args():
     parser.add_argument('--index_path', required=True)
     parser.add_argument('--strokes_path', required=True)
 
-    parser.add_argument('--images_path', default='/home/eperuzzo/ade20koutooors/images/training/')
+    parser.add_argument('--images_path', default='/home/eperuzzo/ade20k_outooors/images/training/')
     parser.add_argument('--painter_config', default='./decomposition/painter_config.yaml')
 
     return parser.parse_args()
@@ -69,12 +68,8 @@ if __name__ == '__main__':
 
             pt.inference(strokes, order=idx,
                          output_path=os.path.join(tmp_path, f'render_{name}'),
-                         save_video=False,
+                         save_video=True,
                          save_jpgs=True)
 
             shutil.copy(src=os.path.join(idx_path),
                         dst=os.path.join(tmp_path, name + '.pkl'))
-
-
-
-

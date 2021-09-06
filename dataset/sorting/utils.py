@@ -73,8 +73,8 @@ def extract_salient(img_path, size):
 def make_dir_tree(base_path):
     os.makedirs(base_path, exist_ok=True)
 
-    types = ['greedy', 'lkh']
-    tmp = ['index', 'videos']
+    types = ['lkh']
+    tmp = ['index']
 
     for t in types:
         os.makedirs(os.path.join(base_path, t), exist_ok=True)
