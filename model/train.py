@@ -14,11 +14,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", required=True)
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--debug", action='store_true')
     args = parser.parse_args()
 
     # Create config
     c_parser = ConfigParser(args)
-    c_parser.parse_config()
+    c_parser.parse_config(args)
     c_parser.crate_directory_output()
     config = c_parser.get_config()
 
@@ -61,7 +62,7 @@ if __name__ == '__main__':
             tot[k].append(mean.item())
             print(f'{k} = {mean.item()}')
 
-    with open(os.path.join(config["train"]["checkpoint_path"] ,'logs.pkl'), 'wb') as f:
+    with open(os.path.join(config["train"]["checkpoint_path"],'logs.pkl'), 'wb') as f:
         pickle.dump(tot, f)
     trainer.save_checkpoint(model)
 

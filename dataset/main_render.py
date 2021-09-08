@@ -12,11 +12,11 @@ import pickle
 def get_args():
     # settings
     parser = argparse.ArgumentParser(description='STYLIZED NEURAL PAINTING')
-    parser.add_argument('--dataset_path', required=True)
-    parser.add_argument('--index_path', required=True)
-    parser.add_argument('--strokes_path', required=True)
+    parser.add_argument('--dataset_path', required=True, help='where the dataset will be stored')
+    parser.add_argument('--index_path', default='/data/eperuzzo/brushstrokes-ade/brushstrokes-sorting/', help='base folder with sorting results')
+    parser.add_argument('--strokes_path', default='/data/eperuzzo/brushstrokes-ade/brushstrokes-decomposition/', help='base folder with decomposition results')
 
-    parser.add_argument('--images_path', default='/home/eperuzzo/ade20k_outooors/images/training/')
+    parser.add_argument('--images_path', default='/data/eperuzzo/ade20k_outdoors/images/training/')
     parser.add_argument('--painter_config', default='./decomposition/painter_config.yaml')
 
     return parser.parse_args()
@@ -68,7 +68,7 @@ if __name__ == '__main__':
 
             pt.inference(strokes, order=idx,
                          output_path=os.path.join(tmp_path, f'render_{name}'),
-                         save_video=True,
+                         save_video=False,
                          save_jpgs=True)
 
             shutil.copy(src=os.path.join(idx_path),

@@ -10,17 +10,19 @@ import queue
 import threading
 
 import numpy as np
+import pandas as pd
 
 def get_args():
     # settings
     parser = argparse.ArgumentParser(description='STYLIZED NEURAL PAINTING')
-    parser.add_argument('--data_path', default='/home/eperuzzo/brushstorkes/test/')
-    parser.add_argument('--output_path', default='/home/eperuzzo/brushstrokes/test_res/')
-    parser.add_argument('--imgs_path', default='/home/eperuzzo/ade20k_outdoors/images/training/')
-    parser.add_argument('--annotations_path', default='/home/eperuzzo/ade20k_outdoors/annotations/training/')
-    parser.add_argument('--n_threads', default=5, type=int)
+    parser.add_argument('--csv_file', default='/data/eperuzzo/brushstrokes-generation/code/dataset/chunks/todi.csv')
+    parser.add_argument('--data_path', default='/data/eperuzzo/ade_v1/')
+    parser.add_argument('--output_path', default='/data/eperuzzo/sorting_ade_v2/')
+    parser.add_argument('--imgs_path', default='/data/eperuzzo/ade20k_outdoors/images/training/')
+    parser.add_argument('--annotations_path', default='/data/eperuzzo/ade20k_outdoors/annotations/training/')
+    parser.add_argument('--n_threads', default=20, type=int)
     parser.add_argument('--gpu_id', default=0, type=int)
-    parser.add_argument('--lkh_solver', default='/home/eperuzzo/brushstrokes/solver/LKH-3.0.6/LKH', type=str)
+    parser.add_argument('--lkh_solver', default='/data/eperuzzo/brushstrokes-generation/code/solver/LKH-3.0.6/LKH', type=str)
     parser.add_argument('--canvas_size', default=512, type=int)
     return parser.parse_args()
 
@@ -118,7 +120,8 @@ def worker():
 if __name__ == '__main__':
 
     args = get_args()
-    source_images = os.listdir(args.data_path)
+    source_images = list(pd.read_csv(args.csv_file)['Images'])
+    #source_images = os.listdir(args.data_path)
 
     q = queue.Queue()
     N_THREADS = args.n_threads

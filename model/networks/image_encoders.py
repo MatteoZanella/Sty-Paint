@@ -35,10 +35,10 @@ class Identity(nn.Module):
 
 class ResNetEncoder(nn.Module):
 
-    def __init__(self, type='resnet18'):
+    def __init__(self, pretrained):
         super(ResNetEncoder, self).__init__()
 
-        self.net = models.resnet18(pretrained=False)
+        self.net = models.resnet18(pretrained=pretrained)
         self.net.fc = Identity()
 
     def forward(self, x):

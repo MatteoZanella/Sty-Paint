@@ -4,32 +4,23 @@ import numpy as np
 
 
 class PositionalEncoding(nn.Module):
-
-    def __init__(self, d_hid, n_position=200):
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
 
-        # Not a parameter
-        self.register_buffer('pos_table', self._get_sinusoid_encoding_table(n_position, d_hid))
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
 
-    def _get_sinusoid_encoding_table(self, n_position, d_hid):
-        ''' Sinusoid position encoding table '''
-        # TODO: make it with torch instead of numpy
+        self.register_buffer('pe', pe)
 
-        def get_position_angle_vec(position):
-            return [position / np.power(10000, 2 * (hid_j // 2) / d_hid) for hid_j in range(d_hid)]
-
-        sinusoid_table = np.array([get_position_angle_vec(pos_i) for pos_i in range(n_position)])
-        sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])  # dim 2i
-        sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])  # dim 2i+1
-
-        return torch.FloatTensor(sinusoid_table).unsqueeze(0)
-
-    def forward(self, x, offset=0):
-        """
-        :param x: tensor of size bs x length x features to add positional emebddings
-        """
-        pe = self.pos_table.clone().detach().to(x.device)
-        return x[:, offset:, :] + pe
+    def forward(self, x):
+        # not used in the final model
+        x = x + self.pe[:x.shape[0], :]
+        return self.dropout(x)
 
 # ----------------------------------------------------------------------------------------------------------------------
 

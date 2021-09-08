@@ -1,8 +1,8 @@
 import torch
-from torch.optim import AdamW
+from torch.optim import AdamW, Adam
 import torch.nn as nn
 from dataset import ToDevice
-from training.losses import KLDivergence
+from training.losses import KLDivergence, L2Loss
 import os
 
 class Trainer:
@@ -11,7 +11,7 @@ class Trainer:
 
         self.checkpoint_path = config["train"]["checkpoint_path"]
         self.kl_lambda = config["train"]["kl_lambda"]
-        self.optimizer = AdamW(params=model.parameters(), lr=config["train"]["lr"], weight_decay=config["train"]['wd'])
+        self.optimizer = Adam(params=model.parameters(), lr=config["train"]["lr"], weight_decay=config["train"]['wd'])
         self.dataloader = dataloader
         self.MSELoss = nn.MSELoss()
         self.KLDivergence = KLDivergence()
@@ -61,5 +61,11 @@ class Trainer:
             logs["kl"].append(kl_div.item())
             logs["loss"].append(loss)
 
+        # Debugging
+        batch = next(iter(self.dataloader))
+        batch = self.move_to_device.move_dict_to(batch)
+        _, mu, log_sigma = model(batch)
+        print(f'Avg mu: {mu.mean()}')
+        print(f'Avg sigma: {torch.exp(log_sigma).mean()}')
 
         return logs

@@ -33,6 +33,7 @@ class StrokesDataset(Dataset):
         self.sequence_length = config["dataset"]["sequence_length"]
         self.heuristic = config["dataset"]["heuristic"]
         self.img_size = config["dataset"]["resize"]
+        self.debug = config["dataset"]["debug"]
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
@@ -54,10 +55,15 @@ class StrokesDataset(Dataset):
 
         return strokes
 
-    def sample_storkes(self, n):
-        t = random.randint(self.context_length, n-self.sequence_length)
+    def sample_storkes(self, n, debug=False):
+        if not debug:
+            t = random.randint(self.context_length, n-self.sequence_length)
+        else:
+            t = 350  # fix it
+
         t_C = t-self.context_length
         t_T = t+self.sequence_length
+
         return t_C, t, t_T
 
     def load_canvas_states(self, name, t_C, t_T):
@@ -85,9 +91,8 @@ class StrokesDataset(Dataset):
             # ---------
             # Load strokes and sample
             strokes = self.load_storkes(name)
-            t_C, t, t_T = self.sample_storkes(strokes.shape[0])
+            t_C, t, t_T = self.sample_storkes(strokes.shape[0], debug=self.debug)
             strokes = strokes[t_C:t_T, :]
-
             # ---------
             # Load rendered image up to s
             canvas_sequence = self.load_canvas_states(name, t_C, t_T)
