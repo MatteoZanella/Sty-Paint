@@ -1,12 +1,14 @@
-from utils.parse_config import ConfigParser
 import argparse
-from model import InteractivePainter
-from dataset import StrokesDataset
-from training.training import Trainer
+import os
+import pickle
+
+from model.utils.parse_config import ConfigParser
+from model.model import InteractivePainter
+from model.only_vae import OnlyVAE
+from model.dataset import StrokesDataset
+from model.training.training import Trainer
 from torch.utils.data import DataLoader
 from torch import device
-import pickle
-import os
 
 # Debug
 import matplotlib.pyplot as plt
@@ -16,7 +18,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", required=True)
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--cat_x_z", action='store_true')
+    parser.add_argument("--sigm", action='store_true')
     parser.add_argument("--debug", action='store_true')
+    parser.add_argument("--only_vae", action='store_true')
     args = parser.parse_args()
 
     # Create config
@@ -25,6 +30,7 @@ if __name__ == '__main__':
     c_parser.crate_directory_output()
     config = c_parser.get_config()
 
+    print(config)
 
     # Device
     device = device(f'cuda:{config["train"]["gpu_id"]}')
@@ -37,8 +43,13 @@ if __name__ == '__main__':
     print(f'Dataloader: {len(dataloader)}')
 
     # Create model
-    model = InteractivePainter(config)
-    model.to(device)
+    if args.only_vae:
+        print('NO CONTEXT, only VAE')
+        model = OnlyVAE(config)
+        model.to(device)
+    else:
+        model = InteractivePainter(config)
+        model.to(device)
 
     def count_parameters(net):
         return sum(p.numel() for p in net.parameters() if p.requires_grad)
