@@ -1,8 +1,9 @@
 import torch
 from torch.optim import AdamW, Adam
 import torch.nn as nn
-from dataset import ToDevice
-from training.losses import KLDivergence, L2Loss
+from model.utils.utils import AverageMeter, dict_to_device
+import time
+from model.training.losses import KLDivergence
 import os
 
 class Trainer:
@@ -15,7 +16,8 @@ class Trainer:
         self.dataloader = dataloader
         self.MSELoss = nn.MSELoss()
         self.KLDivergence = KLDivergence()
-        self.move_to_device = ToDevice(device)
+        self.device = device
+
 
     def save_checkpoint(self, model, filename=None):
 
@@ -33,22 +35,26 @@ class Trainer:
         #TODO
         pass
 
-    def train_one_epoch(self, model, epoch):
+    def train_one_epoch(self, model):
 
         # Set trainign mode
         model.train()
 
-        logs = {
-            "mse_loss" : [],
-            "kl" : [],
-            "loss" : []
-        }
+        mse_loss_meter = AverageMeter(name='mse_loss')
+        kl_loss_meter = AverageMeter(name='kl')
+        loss_meter = AverageMeter(name='tot_loss')
+        batch_time = AverageMeter(name='batch_time')
+
+        end = time.time()
+
+        iter_mse_loss = []
+        iter_kl_loss = []
         for idx, batch in enumerate(self.dataloader):
-            batch = self.move_to_device.move_dict_to(batch)
-            labels = batch['sequence']['strokes']
+            batch = dict_to_device(batch, self.device)
+            targets = batch['strokes_seq']
 
             predictions, mu, log_sigma = model(batch)
-            mse_loss = self.MSELoss(predictions, labels)
+            mse_loss = self.MSELoss(predictions, targets)
             kl_div = self.KLDivergence(mu, log_sigma)
 
             loss = mse_loss + kl_div * self.kl_lambda
@@ -57,15 +63,20 @@ class Trainer:
             loss.backward()
             self.optimizer.step()
 
-            logs["mse_loss"].append(mse_loss.item())
-            logs["kl"].append(kl_div.item())
-            logs["loss"].append(loss)
+            mse_loss_meter.update(mse_loss.item(), targets.size(0))
+            kl_loss_meter.update(kl_div.item(), targets.size(0))
+            loss_meter.update(loss.item(), targets.size(0))
+            batch_time.update(time.time()-end)
+            end = time.time()
 
-        # Debugging
-        batch = next(iter(self.dataloader))
-        batch = self.move_to_device.move_dict_to(batch)
-        _, mu, log_sigma = model(batch)
-        print(f'Avg mu: {mu.mean()}')
-        print(f'Avg sigma: {torch.exp(log_sigma).mean()}')
+            # Debug
+            iter_mse_loss.append(mse_loss.item())
+            iter_kl_loss.append(kl_div.item())
 
-        return logs
+        print(loss_meter)
+        print(mse_loss_meter)
+        print(kl_loss_meter)
+        print(batch_time)
+
+
+        return iter_mse_loss, iter_kl_loss

@@ -5,9 +5,11 @@ from dataset import StrokesDataset
 from training.training import Trainer
 from torch.utils.data import DataLoader
 from torch import device
-import torch
 import pickle
 import os
+
+# Debug
+import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
 
@@ -28,7 +30,7 @@ if __name__ == '__main__':
     device = device(f'cuda:{config["train"]["gpu_id"]}')
 
     # Create dataset
-    dataset = StrokesDataset(config)
+    dataset = StrokesDataset(config, split='train')
     dataloader = DataLoader(dataset=dataset, batch_size=config["train"]["batch_size"], shuffle=True)
 
     print(f'Dataset length: {len(dataset)}')
@@ -47,24 +49,38 @@ if __name__ == '__main__':
     # Create
     trainer = Trainer(config, model, dataloader, device=device)
 
-    tot = {'mse_loss' : [],
-           'kl' : [],
-           'loss' : []}
-    for ep in range(config["train"]["n_epochs"]):
-        stats = trainer.train_one_epoch(model, ep)
-        if ep % config["train"]["save_freq"] == 0:
+    max_epochs = config["train"]["n_epochs"]
+    tot_iter = {'mse' : [],
+                'kl' : []}
+
+    for ep in range(max_epochs):
+        print('=' * 50)
+        print(f'Epoch: {ep} / {config["train"]["n_epochs"]}')
+
+        mse, kl = trainer.train_one_epoch(model)
+
+        if ep % config["train"]["save_freq"] == 0 or ep == max_epochs-1:
             trainer.save_checkpoint(model, filename=f'epoch_{ep}')
 
-        print('='*50)
-        print(f'Epoch: {ep} / {config["train"]["n_epochs"]}')
-        for k, vals in stats.items():
-            mean = torch.mean(torch.tensor(vals))
-            tot[k].append(mean.item())
-            print(f'{k} = {mean.item()}')
+        for val in mse:
+            tot_iter['mse'].append(val)
+        for val in kl:
+            tot_iter['kl'].append(val)
+
+    n_iters = range(1, len(tot_iter['mse'])+1)
+
+    # save loss
+    f = plt.figure(figsize=(15,5))
+    plt.subplot(1,2,1)
+    plt.plot(n_iters, tot_iter['mse'])
+    plt.title('MSE')
+    plt.subplot(1, 2, 2)
+    plt.plot(n_iters, tot_iter['kl'])
+    plt.title('KL')
+    plt.savefig(os.path.join(config["train"]["checkpoint_path"], 'losses.png'))
 
     with open(os.path.join(config["train"]["checkpoint_path"],'logs.pkl'), 'wb') as f:
-        pickle.dump(tot, f)
-    trainer.save_checkpoint(model)
+        pickle.dump(tot_iter, f)
 
 
 

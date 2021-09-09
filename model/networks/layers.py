@@ -32,22 +32,20 @@ class SequenceMerger(nn.Module):
         self.d_model = config["model"]["d_model"]
         self.s_params = config["model"]["n_strokes_params"]
 
-        self.img_proj = nn.Linear(512, self.d_model)  # project image features to lower dimension
-        self.seq_proj = nn.Linear(512 + self.s_params, self.d_model)
+        self.proj = nn.Linear(512 + self.s_params, self.d_model)
 
 
     def forward(self, strokes_params, canvas_feat, img_feat=None):
-        # Project img features
-        if img_feat is not None:
-            img_feat = self.img_proj(img_feat)
-            img_feat = img_feat.unsqueeze(1)
 
-        # Concatenate canvas and strokes and project
-        x = torch.cat([canvas_feat, strokes_params], dim=-1)  # concatenate along feature dim
-        x = self.seq_proj(x)
+        x = torch.cat((canvas_feat, strokes_params), dim=-1)  # bs x L x d, concatenate along feature dim
 
         if img_feat is not None:
-            return torch.cat([img_feat, x], dim=1)  # concatenate along length dim
-        else:
-            return x
+            bs = img_feat.size(0)
+            img_feat = torch.cat((img_feat, torch.zeros(bs, self.s_params, device=img_feat.device)), dim=-1)   # pad image features
+            img_feat = img_feat.unsqueeze(1) # length 1
+            x = torch.cat((img_feat, x), dim=1)   # concatenate on length dimension
+
+        # Project
+        x = self.proj(x)
+        return x
 

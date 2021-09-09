@@ -5,6 +5,7 @@ import PIL.Image as Image
 import numpy as np
 import random
 import os
+import pickle
 
 """
 Dataset structure:
@@ -25,9 +26,13 @@ root_dir:
 class StrokesDataset(Dataset):
 
     def __init__(self,
-                 config):
+                 config,
+                 split):
 
-        self.root_dir = config["dataset"]["root_dir"]
+        assert split == 'train' or split == 'test'
+        self.split = split
+
+        self.root_dir = config["dataset"][split]["root_dir"]
         self.filenames = sorted(os.listdir(self.root_dir))    # maybe check that every directory have the specified form before listing
         self.context_length = config["dataset"]["context_length"]
         self.sequence_length = config["dataset"]["sequence_length"]
@@ -51,7 +56,6 @@ class StrokesDataset(Dataset):
         data = np.load(os.path.join(self.root_dir, name, 'strokes_params.npz'))
         strokes = np.concatenate([data['x_ctt'], data['x_color'], data['x_alpha']], axis=-1)
         strokes = torch.tensor(strokes, dtype=torch.float).squeeze(0)
-        # TODO: Double is the default type, check if using float is good enoguh
 
         return strokes
 
@@ -65,6 +69,12 @@ class StrokesDataset(Dataset):
         t_T = t+self.sequence_length
 
         return t_C, t, t_T
+
+    def load_heuristic_idx(self, name):
+        file = os.path.join(self.root_dir, name, self.heuristic + '.pkl')
+        with open(file, 'rb') as f:
+            idx = pickle.load(f)
+        return idx
 
     def load_canvas_states(self, name, t_C, t_T):
 
@@ -89,58 +99,26 @@ class StrokesDataset(Dataset):
             img = self.img_transform(img)
 
             # ---------
-            # Load strokes and sample
-            strokes = self.load_storkes(name)
-            t_C, t, t_T = self.sample_storkes(strokes.shape[0], debug=self.debug)
-            strokes = strokes[t_C:t_T, :]
+            # Load strokes, reorder and sample
+            all_strokes = self.load_storkes(name)
+            idx = self.load_heuristic_idx(name)
+            all_strokes = all_strokes[idx]
+            t_C, t, t_T = self.sample_storkes(all_strokes.shape[0], debug=self.debug)
+            strokes = all_strokes[t_C:t_T, :]
             # ---------
             # Load rendered image up to s
             canvas_sequence = self.load_canvas_states(name, t_C, t_T)
 
-            context = {'strokes' : strokes[:self.context_length, :],
-                       'canvas' : canvas_sequence[:self.context_length, :, :, :]}
+            data = {
+                'strokes_ctx' : strokes[:self.context_length, :],
+                'canvas_ctx' : canvas_sequence[:self.context_length, :, :, :],
+                'strokes_seq' : strokes[self.context_length:, :],
+                'canvas_seq' : canvas_sequence[self.context_length:, :, :, :],
+                'img' : img
+            }
 
-            x = {'strokes': strokes[self.context_length:, :],
-                 'canvas' : canvas_sequence[self.context_length:, :, :, :]}
+            if self.split == 'test':
+                data.update({'time_steps' : [t_C, t, t_T]})
+                data.update({'strokes' : all_strokes})
 
-
-            return {'sequence' : x,
-                    'context' : context,
-                    'ref_img' : img}
-
-
-class ToDevice:
-    def __init__(self, device):
-        self.device = device
-
-    def move_dict_to(self, x : dict):
-        out = {}
-
-        for k, v in x.items():
-            if isinstance(v, dict):
-                out[k] = {}
-                for k2, v2 in v.items():
-                    out[k][k2] = v2.to(self.device)
-            else:
-                out[k] = v.to(self.device)
-
-        return out
-
-
-if __name__ == '__main__':
-
-    from torch.utils.data import DataLoader
-    import torchvision.transforms as transforms
-    from model.utils.parse_config import ConfigParser
-
-    c_parser = ConfigParser('utils/config.yaml')
-    c_parser.parse_config()
-    config = c_parser.get_config()
-
-    dataset = StrokesDataset(config=config)
-
-    dataloader = DataLoader(dataset, batch_size=2)
-
-    data = next(iter(dataloader))
-
-    print(data['ref_img'].shape)
+            return data

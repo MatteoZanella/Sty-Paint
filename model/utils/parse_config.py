@@ -3,7 +3,8 @@ import os
 from pathlib import Path
 
 class ConfigParser:
-    def __init__(self, args):
+    def __init__(self, args, is_train=True):
+        self.is_train = is_train
         self.config_path = args.config
 
         with open(self.config_path, 'r') as f:
@@ -11,11 +12,18 @@ class ConfigParser:
 
     def parse_config(self, args):
 
-        print(f'Model features  : {self.config["model"]["d_model"]}')
         # Add total sequence length
-        self.config['dataset']['total_length'] = self.config["dataset"]["sequence_length"] + self.config["dataset"]["context_length"]
-        self.config["train"]["checkpoint_path"] = os.path.join(self.config["train"]["checkpoint_path"], args.exp_name)
-        self.config["dataset"]["debug"] = args.debug
+        if self.is_train:
+            self.config["train"]["checkpoint_path"] = os.path.join(self.config["train"]["checkpoint_path"], args.exp_name)
+            if args.cat_x_z:
+                self.config["model"]["ctx_z"] = 'cat'
+            if args.sigm:
+                self.config["model"]["activation_last_layer"] = 'sigmoid'
+            #assert self.config["model"]["ctx_z"] == 'proj' or self.config["model"]["ctx_z"] == 'cat'
+            #assert self.config["model"]["activation_last_layer"] == 'identity' or self.config["model"]["activation_last_layer"] == 'sigmoid'
+            self.config["dataset"]["debug"] = args.debug
+        else:
+            self.config["dataset"]["debug"] = False
 
     def crate_directory_output(self):
 

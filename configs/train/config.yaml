@@ -1,5 +1,8 @@
 dataset :
-  root_dir : '/home/eperuzzo/brushstrokes/dataset_debug/'
+  train :
+    root_dir : '/home/eperuzzo/brushstrokes/dataset_debug/'
+  test :
+    root_dir : '/home/eperuzzo/brushstrokes/dataset_debug_test/'
   heuristic : 'lkh_col2_area1_pos0_cl7'
   resize : 256
   context_length : 4
@@ -27,11 +30,11 @@ model:
     n_layers : 5
     ff_dim : 1024
 train:
-  n_epochs : 50
+  n_epochs : 500
   gpu_id : 1
   batch_size : 16
   checkpoint_path : '/home/eperuzzo/brushstrokes/ckpt/'
   lr :  0.0001
   wd : 0.0
-  save_freq : 20
+  save_freq : 10000
   kl_lambda : 0.00001
