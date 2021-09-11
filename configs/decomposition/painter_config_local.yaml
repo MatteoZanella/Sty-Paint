@@ -1,0 +1,29 @@
+img_path: ''
+output_dir: ''
+renderer: 'oilpaintbrush'
+canvas_color: 'black'
+canvas_size: 512
+keep_aspect_ratio: False
+beta_L1: 1.0
+with_ot_loss: False
+beta_ot: 0.1
+net_G: 'zou-fusion-net'
+renderer_checkpoint_dir: '/home/eperuzzo/checkpoints_G_oilpaintbrush'
+lr: 0.005
+disable_preview: True
+gpu_id: 1
+clamp_schedule:
+  2 : 0.4
+  3 : 0.3
+  4 : 0.25
+  5 : 0.25
+manual_storkes_params:
+  2 : 30
+  3 : 20
+  4 : 15
+  5 : 10
+brush_paths:
+  small_vertical :  '/home/eperuzzo/brushstrokes/dataset/decomposition/brushes/brush_fromweb2_small_vertical.png'
+  small_horizontal : '/home/eperuzzo/brushstrokes/dataset/decomposition/brushes/brush_fromweb2_small_horizontal.png'
+  large_vertical : '/home/eperuzzo/brushstrokes/dataset/decomposition/brushes/brush_fromweb2_large_vertical.png'
+  large_horizontal : '/home/eperuzzo/brushstrokes/dataset/decomposition/brushes/brush_fromweb2_large_horizontal.png'

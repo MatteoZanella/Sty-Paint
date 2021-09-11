@@ -8,7 +8,7 @@ import torch
 import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
-from decomposition import renderer
+from dataset.decomposition import renderer
 import yaml
 from types import SimpleNamespace
 import matplotlib.pyplot as plt

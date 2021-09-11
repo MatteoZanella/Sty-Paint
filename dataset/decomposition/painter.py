@@ -4,17 +4,13 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
-from decomposition import morphology, loss
-from decomposition.networks import *
-from decomposition import renderer
-from decomposition import utils
+from dataset.decomposition import morphology, loss
+from dataset.decomposition.networks import *
+from dataset.decomposition import renderer
+from dataset.decomposition import utils
 
 import torch
 import torch.optim as optim
-
-# Decide which device we want to run on
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
 
 class PainterBase():
     def __init__(self, args):
@@ -26,7 +22,8 @@ class PainterBase():
                                        )
 
         # define G
-        self.net_G = define_G(rdrr=self.rderr, netG=args.net_G).to(device)
+        self.device = torch.device(f'cuda:{args.gpu_id}')
+        self.net_G = define_G(rdrr=self.rderr, netG=args.net_G).to(self.device)
 
         # define some other vars to record the training states
         self.x_ctt = None
@@ -36,7 +33,7 @@ class PainterBase():
         self.G_pred_foreground = None
         self.G_pred_alpha = None
         self.G_final_pred_canvas = torch.zeros(
-            [1, 3, self.net_G.out_size, self.net_G.out_size]).to(device)
+            [1, 3, self.net_G.out_size, self.net_G.out_size]).to(self.device)
 
         self.G_loss = torch.tensor(0.0)
         self.step_id = 0
@@ -66,10 +63,10 @@ class PainterBase():
             print('loading renderer from pre-trained checkpoint...')
             # load the entire checkpoint
             checkpoint = torch.load(os.path.join(self.renderer_checkpoint_dir, 'last_ckpt.pt'),
-                                map_location=None if torch.cuda.is_available() else device)
+                                map_location=None if torch.cuda.is_available() else self.device)
             # update net_G states
             self.net_G.load_state_dict(checkpoint['model_G_state_dict'])
-            self.net_G.to(device)
+            self.net_G.to(self.device)
             self.net_G.eval()
         else:
             print('pre-trained renderer does not exist...')
@@ -193,17 +190,17 @@ class PainterBase():
         self.x_ctt = np.random.rand(
             self.m_grid*self.m_grid, self.m_strokes_per_block,
             self.rderr.d_shape).astype(np.float32)
-        self.x_ctt = torch.tensor(self.x_ctt).to(device)
+        self.x_ctt = torch.tensor(self.x_ctt).to(self.device)
 
         self.x_color = np.random.rand(
             self.m_grid*self.m_grid, self.m_strokes_per_block,
             self.rderr.d_color).astype(np.float32)
-        self.x_color = torch.tensor(self.x_color).to(device)
+        self.x_color = torch.tensor(self.x_color).to(self.device)
 
         self.x_alpha = np.random.rand(
             self.m_grid*self.m_grid, self.m_strokes_per_block,
             self.rderr.d_alpha).astype(np.float32)
-        self.x_alpha = torch.tensor(self.x_alpha).to(device)
+        self.x_alpha = torch.tensor(self.x_alpha).to(self.device)
 
 
     def stroke_sampler(self, anchor_id):
@@ -286,7 +283,7 @@ class Painter(PainterBase):
         style_img = cv2.imread(self.img_path, cv2.IMREAD_COLOR)
         self.style_img_ = cv2.cvtColor(style_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.
         self.style_img = cv2.blur(cv2.resize(self.style_img_, (128, 128)), (2, 2))
-        self.style_img = torch.tensor(self.style_img).permute([2, 0, 1]).unsqueeze(0).to(device)
+        self.style_img = torch.tensor(self.style_img).permute([2, 0, 1]).unsqueeze(0).to(self.device)
 
     def _backward_x(self):
 
@@ -393,9 +390,6 @@ class Painter(PainterBase):
                 video_writer.write((this_frame[:,:,::-1] * 255.).astype(np.uint8))
 
         final_rendered_image = np.copy(this_frame)
-        # if save_jpgs:
-        #     print('saving final rendered result...')
-        #     plt.imsave(path + '_final.png', final_rendered_image)
 
         return final_rendered_image, np.concatenate(alphas)
 
@@ -409,8 +403,8 @@ class Painter(PainterBase):
 
     def check_stroke(self, inp):
         """
-        Copy and pasetd form renderder.py
-        They have a threshold on the min size of the brushstorkes
+        Copy and pasted form renderder.py
+        They have a threshold on the min size of the brushstrokes
         """
 
         r_ = max(inp[2], inp[3])   # check wifth and height, as in the original code
@@ -492,13 +486,13 @@ class Painter(PainterBase):
         PARAMS = np.zeros([1, 0, self.rderr.d + 2], np.float32)  # +2 to save layer information
 
         if self.rderr.canvas_color == 'white':
-            CANVAS_tmp = torch.ones([1, 3, 128, 128]).to(device)
+            CANVAS_tmp = torch.ones([1, 3, 128, 128]).to(self.device)
         else:
-            CANVAS_tmp = torch.zeros([1, 3, 128, 128]).to(device)
+            CANVAS_tmp = torch.zeros([1, 3, 128, 128]).to(self.device)
 
         for self.m_grid in self.manual_strokes_per_block.keys():
 
-            self.img_batch = utils.img2patches(self.img_, self.m_grid, self.net_G.out_size).to(device)
+            self.img_batch = utils.img2patches(self.img_, self.m_grid, self.net_G.out_size).to(self.device)
             self.G_final_pred_canvas = CANVAS_tmp
 
             self.manual_set_number_strokes_per_block(self.m_grid)
@@ -542,7 +536,7 @@ class Painter(PainterBase):
             # Add on previous parmas
             PARAMS = np.concatenate([PARAMS, v], axis=1)
             CANVAS_tmp, _ = self._render(PARAMS, save_jpgs=False, save_video=False)
-            CANVAS_tmp = utils.img2patches(CANVAS_tmp, self.m_grid + 1, self.net_G.out_size).to(device)
+            CANVAS_tmp = utils.img2patches(CANVAS_tmp, self.m_grid + 1, self.net_G.out_size).to(self.device)
 
         PARAMS = self.get_checked_strokes(PARAMS)
         #final_rendered_image, alphas = self._render(PARAMS, save_jpgs=False, save_video=False)

@@ -76,7 +76,7 @@ def process_image(args, source_image, w):
     # Creat the configuration file
     name = "lkh_" + f"col{w['color']}_area{w['area']}_pos{w['pos']}_cl{w['class']}_sal{w['sal']}"
 
-    lkh_config = utils.LKHConfig(default_config_path='./sorting/lkh_configuration',
+    lkh_config = utils.LKHConfig(default_config_path='../configs/lkh_configuration',
                                  name=name,
                                  num_nodes=graph.n_nodes + 1,
                                  output_path=os.path.join(output_dir, 'lkh', 'lkh_files'))

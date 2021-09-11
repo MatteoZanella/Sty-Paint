@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from model.networks.image_encoders import ResNetEncoder
-from model.networks.layers import PositionalEncoding, SequenceMerger
+from model.networks.layers import PositionalEncoding
 
 
 class Embedder(nn.Module):
@@ -25,8 +25,7 @@ class Embedder(nn.Module):
         #self.context_PE = nn.Parameter(torch.randn(self.context_length+1, self.d_model))
         #self.sequence_PE = nn.Parameter(torch.randn(self.seq_length, self.d_model))
 
-        # Merger
-        self.SM = SequenceMerger(config)
+        self.proj_features = nn.Linear(512 + self.s_params, self.d_model)
 
     def encode_canvas(self, x):
         L = x.size(1)
@@ -43,24 +42,24 @@ class Embedder(nn.Module):
         canvas_ctx = data['canvas_ctx']
         imgs = data['img']
 
+        bs = imgs.size(0)
+
         # Context
         img_feat = self.img_encoder(imgs)
-        # Encode canvas images
         ctx_canvas_feat = self.encode_canvas(canvas_ctx)
-        # Create context seq
-        ctx_sequence = self.SM(strokes_params=strokes_ctx,
-                               canvas_feat=ctx_canvas_feat,
-                               img_feat=img_feat)
+
+        img_feat = torch.cat((img_feat, torch.zeros(bs, self.s_params, device=img_feat.device)), dim=1)
+        ctx_sequence = torch.cat((ctx_canvas_feat, strokes_ctx), dim=-1)        # concatenate on features dim
+        ctx_sequence = torch.cat((img_feat.unsqueeze(1), ctx_sequence), dim=1)  # concatenate on length dim
+        ctx_sequence = self.proj_features(ctx_sequence)
 
         # Sequence
-        # Encode canvas images
         x_canvas_feat = self.encode_canvas(canvas_seq)
-        # Create context seq
-        x_sequence = self.SM(strokes_params=strokes_seq,
-                               canvas_feat=x_canvas_feat,
-                               img_feat=None)
+        x_sequence = torch.cat((x_canvas_feat, strokes_seq), dim=-1)
+        x_sequence = self.proj_features(x_sequence)
 
-        # Permute sequence as length-first
+
+        # Permute sequences as length-first
         ctx_sequence = ctx_sequence.permute(1, 0, 2)
         x_sequence = x_sequence.permute(1, 0, 2)
 
@@ -95,6 +94,7 @@ class TransformerVAE(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
         self.seq_length = config["dataset"]["sequence_length"]
@@ -108,9 +108,6 @@ class TransformerVAE(nn.Module):
         #self.query_dec = nn.Parameter(torch.randn(self.seq_length, self.d_model))
         self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
         self.log_sigma = nn.Parameter(torch.randn(1, 1, self.d_model))
-
-        #
-        #self.proj_z_context = nn.Linear(2*self.d_model, self.d_model)
 
         # Define Encoder and Decoder
         self.vae_encoder = nn.TransformerDecoder(
@@ -162,14 +159,14 @@ class TransformerVAE(nn.Module):
         return z
 
     def decode(self, size, z, context):
-        time_queries = torch.zeros(size, device=z.device)
+        time_queries = torch.zeros(size, device=self.device)
         time_queries = self.time_queries_PE(time_queries)
 
         if self.ctx_z == 'proj':
             # # Fuse z and context using projection
             z = repeat(z, 'bs n_feat -> ctx_len bs n_feat', ctx_len=self.context_length)
             z_ctx = torch.cat([context, z], dim=-1)   # concatenate on the feature dimension
-            z_ctx = self.proj_z_context(z_ctx)
+            z_ctx = self.proj_ctx_z(z_ctx)
         elif self.ctx_z == 'cat':
             # Fuse z and context with concatenation on length dim
             z_ctx = torch.cat((context, z[None]), dim=0)
@@ -195,9 +192,9 @@ class TransformerVAE(nn.Module):
         return out, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, L, ctx, device):
+    def generate(self, L, ctx):
         # Sample z
-        z = torch.randn(1, self.d_model, device=device)
+        z = torch.randn(1, self.d_model, device=self.device)
         preds = self.decode(size=(L, 1, self.d_model), z=z, context=ctx)
         return preds
 
@@ -226,7 +223,7 @@ class InteractivePainter(nn.Module):
         context, _ = self.embedder(data)
         context_features = self.context_encoder(context)
 
-        preds = self.transformer_vae.generate(L, context_features, device=context.device)
+        preds = self.transformer_vae.generate(L, context_features)
 
         return preds
 

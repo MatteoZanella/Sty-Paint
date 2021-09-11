@@ -8,12 +8,13 @@ class TransformerVAE(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
         self.seq_length = config["dataset"]["sequence_length"]
         self.context_length = config["dataset"]["context_length"]+1
 
-        self.time_queries_PE = PositionalEncoding(self.d_model, max_len=self.seq_length)
+        self.time_queries_PE = PositionalEncoding(self.d_model, max_len=100)
 
         #self.query_dec = nn.Parameter(torch.randn(self.seq_length, self.d_model))
         self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
@@ -44,6 +45,8 @@ class TransformerVAE(nn.Module):
         # Final projection head
         self.prediction_head = nn.Sequential(
             nn.Linear(self.d_model, self.s_params))
+        if config["model"]["activation_last_layer"] == "sigmoid":
+            self.prediction_head.add_module('act', nn.Sigmoid())
 
 
     def encode(self, x):
@@ -69,14 +72,11 @@ class TransformerVAE(nn.Module):
         z = eps.mul(sigma).add_(mu)
         return z
 
-    def decode(self, z):
-        z = z.unsqueeze(0)   # length 1
-
-        bs = z.size(1)
-        time_queries = torch.zeros(self.seq_length, bs, self.d_model, device=z.device)
+    def decode(self, size, z):
+        time_queries = torch.zeros(size, device=self.device)
         time_queries = self.time_queries_PE(time_queries)
 
-        out = self.vae_decoder(time_queries, z)
+        out = self.vae_decoder(time_queries, z.unsqueeze(0))
 
         # Linear proj
         out = out.permute(1, 0, 2)  # bs x L x dim
@@ -88,17 +88,14 @@ class TransformerVAE(nn.Module):
 
         mu, log_sigma = self.encode(xseq)
         z = self.sample_latent_z(mu, log_sigma)
-
-        # Replicate z and decode
-        out = self.decode(z)   # z is the input, context comes from the other branch
+        out = self.decode(size=xseq.size(), z=z)
 
         return out, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, ctx, device):
-        bs = ctx.size(1)
-        z = torch.randn(bs, self.d_model, device=device)
-        preds = self.decode(z)
+    def generate(self, L):
+        z = torch.randn(1, self.d_model, device=self.device)
+        preds = self.decode(size=(L, 1, self.d_model), z=z)
         return preds
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -121,52 +118,7 @@ class OnlyVAE(nn.Module):
         return predictions, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, data):
-        context, _ = self.embedder(data)
-        context_features = self.context_encoder(context)
-
-        preds = self.transformer_vae.generate(context_features, device=context.device)
-
+    def generate(self, data, L):
+        # TODO: fix this, with onlyvae we don't need the data
+        preds = self.transformer_vae.generate(L)
         return preds
-
-if __name__ == '__main__':
-
-    from dataset import StrokesDataset
-    from torch.utils.data import DataLoader
-    from utils.parse_config import ConfigParser
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--exp_name", default='a')
-    parser.add_argument("--config", default='../configs/train/config_local.yaml')
-    parser.add_argument("--debug", action='store_true')
-    args = parser.parse_args()
-
-    c_parser = ConfigParser(args)
-    c_parser.parse_config(args)
-    config = c_parser.get_config()
-
-
-    dataset = StrokesDataset(config=config, split='train')
-
-    dataloader = DataLoader(dataset, batch_size=2)
-    data = next(iter(dataloader))
-
-    # Define the model
-    net = InteractivePainter(config)
-
-
-    def count_parameters(model):
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-    params = count_parameters(net)
-    print(f'Number of trainable parameters: {params / 10**6}')
-    preds, mu, l_sigma = net(data)
-
-    labels = data['strokes_seq']
-    criterion = torch.nn.MSELoss()
-    loss = criterion(preds, labels)
-    loss.backward()
-
-    print(loss.item())
-    print(preds.shape)

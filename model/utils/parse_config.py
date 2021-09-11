@@ -1,6 +1,7 @@
 import yaml
 import os
 from pathlib import Path
+import torch
 
 class ConfigParser:
     def __init__(self, args, is_train=True):
@@ -12,23 +13,21 @@ class ConfigParser:
 
     def parse_config(self, args):
 
-        # Add total sequence length
+        assert self.config["model"]["ctx_z"] == 'proj' or self.config["model"]["ctx_z"] == 'cat'
+
+        if args.only_vae:
+            self.config["model"]["only_vae"] = True
+            self.config["model"]["ctx_z"] = None
+
         if self.is_train:
             self.config["train"]["checkpoint_path"] = os.path.join(self.config["train"]["checkpoint_path"], args.exp_name)
-            if args.cat_x_z:
-                self.config["model"]["ctx_z"] = 'cat'
-            if args.sigm:
-                self.config["model"]["activation_last_layer"] = 'sigmoid'
-            #assert self.config["model"]["ctx_z"] == 'proj' or self.config["model"]["ctx_z"] == 'cat'
-            #assert self.config["model"]["activation_last_layer"] == 'identity' or self.config["model"]["activation_last_layer"] == 'sigmoid'
-            self.config["dataset"]["debug"] = args.debug
-        else:
-            self.config["dataset"]["debug"] = False
+            self.config["train"]["train_render"] = os.path.join(self.config["train"]["checkpoint_path"], 'renders')
+
+        self.config["device"] = torch.device(f'cuda:{self.config["train"]["gpu_id"]}')
 
     def crate_directory_output(self):
-
         Path(self.config["train"]["checkpoint_path"]).mkdir(parents=True, exist_ok=True)
-
+        Path(self.config["train"]["train_render"]).mkdir(parents=True, exist_ok=True)
 
     def get_config(self):
         return self.config

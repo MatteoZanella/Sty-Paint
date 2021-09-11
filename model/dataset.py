@@ -27,18 +27,16 @@ class StrokesDataset(Dataset):
 
     def __init__(self,
                  config,
-                 split):
+                 isTrain):
 
-        assert split == 'train' or split == 'test'
-        self.split = split
-
-        self.root_dir = config["dataset"][split]["root_dir"]
+        self.isTrain = isTrain
+        self.prefix = 'train' if self.isTrain else 'test'
+        self.root_dir = config["dataset"][self.prefix]["root_dir"]
         self.filenames = sorted(os.listdir(self.root_dir))    # maybe check that every directory have the specified form before listing
         self.context_length = config["dataset"]["context_length"]
         self.sequence_length = config["dataset"]["sequence_length"]
         self.heuristic = config["dataset"]["heuristic"]
         self.img_size = config["dataset"]["resize"]
-        self.debug = config["dataset"]["debug"]
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
@@ -59,12 +57,8 @@ class StrokesDataset(Dataset):
 
         return strokes
 
-    def sample_storkes(self, n, debug=False):
-        if not debug:
-            t = random.randint(self.context_length, n-self.sequence_length)
-        else:
-            t = 350  # fix it
-
+    def sample_storkes(self, n):
+        t = random.randint(self.context_length, n-self.sequence_length)
         t_C = t-self.context_length
         t_T = t+self.sequence_length
 
@@ -91,34 +85,32 @@ class StrokesDataset(Dataset):
         return canvas
 
     def __getitem__(self, idx):
-            name = self.filenames[idx]
+        name = self.filenames[idx]
+        # ---------
+        # Load Image
+        img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
+        img = self.img_transform(img)
+        # ---------
+        # Load strokes, reorder and sample
+        all_strokes = self.load_storkes(name)
+        idx = self.load_heuristic_idx(name)
+        all_strokes = all_strokes[idx]
+        t_C, t, t_T = self.sample_storkes(all_strokes.shape[0])
+        strokes = all_strokes[t_C:t_T, :]
+        # ---------
+        # Load rendered image up to s
+        canvas_sequence = self.load_canvas_states(name, t_C, t_T)
 
-            # ---------
-            # Load Image
-            img = Image.open(os.path.join(self.root_dir, name, name+'.jpg'))
-            img = self.img_transform(img)
+        data = {
+            'strokes_ctx' : strokes[:self.context_length, :],
+            'canvas_ctx' : canvas_sequence[:self.context_length, :, :, :],
+            'strokes_seq' : strokes[self.context_length:, :],
+            'canvas_seq' : canvas_sequence[self.context_length:, :, :, :],
+            'img' : img
+        }
 
-            # ---------
-            # Load strokes, reorder and sample
-            all_strokes = self.load_storkes(name)
-            idx = self.load_heuristic_idx(name)
-            all_strokes = all_strokes[idx]
-            t_C, t, t_T = self.sample_storkes(all_strokes.shape[0], debug=self.debug)
-            strokes = all_strokes[t_C:t_T, :]
-            # ---------
-            # Load rendered image up to s
-            canvas_sequence = self.load_canvas_states(name, t_C, t_T)
+        if not self.isTrain:
+            data.update({'time_steps' : [t_C, t, t_T]})
+            data.update({'strokes' : all_strokes})
 
-            data = {
-                'strokes_ctx' : strokes[:self.context_length, :],
-                'canvas_ctx' : canvas_sequence[:self.context_length, :, :, :],
-                'strokes_seq' : strokes[self.context_length:, :],
-                'canvas_seq' : canvas_sequence[self.context_length:, :, :, :],
-                'img' : img
-            }
-
-            if self.split == 'test':
-                data.update({'time_steps' : [t_C, t, t_T]})
-                data.update({'strokes' : all_strokes})
-
-            return data
+        return data

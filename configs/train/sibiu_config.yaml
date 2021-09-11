@@ -1,0 +1,45 @@
+dataset :
+  train :
+    root_dir : '/home/eperuzzo/brushstrokes/ade-gen-brush-debug/train/'
+  test :
+    root_dir : '/home/eperuzzo/brushstrokes/ade-gen-brush-debug/test/'
+  heuristic : 'lkh_col2_area1_pos0_cl7'
+  resize : 256
+  context_length : 4
+  sequence_length : 8
+model:
+  only_vae : False
+  d_model : 256
+  n_strokes_params : 12
+  ctx_z : 'proj'
+  activation_last_layer : 'sigmoid'
+  img_encoder:
+    type : 'resnet18'
+    pretrained : True
+  encoder:
+    act : 'gelu'
+    n_heads : 8
+    n_layers : 5
+    ff_dim : 1024
+  vae_encoder:
+    act : 'gelu'
+    n_heads : 8
+    n_layers : 5
+    ff_dim : 1024
+  vae_decoder:
+    act : 'gelu'
+    n_heads : 8
+    n_layers : 5
+    ff_dim : 1024
+train:
+  n_epochs : 500
+  gpu_id : 1
+  batch_size : 10
+  checkpoint_path : '/home/eperuzzo/brushstrokes/ckpt/'
+  lr :  0.0001
+  wd : 0.0
+  save_freq : 10000
+  kl_lambda : 0.00001
+render:
+  painter_config : '/home/eperuzzo/brushstrokes/configs/decomposition/painter_config_local.yaml'
+  freq : 1

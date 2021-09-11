@@ -2,13 +2,8 @@ import torch
 import torch.nn as nn
 from torch.nn import init
 import functools
-from torchvision import models
 import torch.nn.functional as F
-from torch.optim import lr_scheduler
 import math
-from decomposition import utils
-import matplotlib.pyplot as plt
-import numpy as np
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
