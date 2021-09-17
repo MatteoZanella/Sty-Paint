@@ -2,6 +2,7 @@ import yaml
 import os
 from pathlib import Path
 import torch
+import glob
 
 class ConfigParser:
     def __init__(self, args, is_train=True):
@@ -21,13 +22,20 @@ class ConfigParser:
 
         if self.is_train:
             self.config["train"]["checkpoint_path"] = os.path.join(self.config["train"]["checkpoint_path"], args.exp_name)
-            self.config["train"]["train_render"] = os.path.join(self.config["train"]["checkpoint_path"], 'renders')
+            if os.path.exists(self.config["train"]["checkpoint_path"]):
+
+                f = os.path.join(self.config["train"]["checkpoint_path"], 'latest.pth.tar')
+                print(f'Auto Resume from : {f}')
+                self.config["train"]["auto_resume"]["active"] = True
+                self.config["train"]["auto_resume"]["resume_path"] = f
+
+            self.config["train"]["log_render_path"] = os.path.join(self.config["train"]["checkpoint_path"], 'renders')
 
         self.config["device"] = torch.device(f'cuda:{self.config["train"]["gpu_id"]}')
 
     def crate_directory_output(self):
         Path(self.config["train"]["checkpoint_path"]).mkdir(parents=True, exist_ok=True)
-        Path(self.config["train"]["train_render"]).mkdir(parents=True, exist_ok=True)
+        Path(self.config["train"]["log_render_path"]).mkdir(parents=True, exist_ok=True)
 
     def get_config(self):
         return self.config

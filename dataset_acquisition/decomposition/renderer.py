@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import random
-from dataset.decomposition import utils
+from dataset_acquisition.decomposition import utils
 
 
 def _random_floats(low, high, size):

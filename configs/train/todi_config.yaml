@@ -34,13 +34,17 @@ model:
 train:
   n_epochs : 100
   gpu_id : 0
-  batch_size : 32
+  batch_size : 64
   checkpoint_path : '/data/eperuzzo/brushstrokes-generation/checkpoints/'
   lr :  0.0001
   wd : 0.0
-  save_freq : 25
-  kl_lambda : 0.00001
+  save_freq : 5
+  kl_lambda : 0.000001
   print_freq : 10
+  num_workers : 8
+  auto_resume:
+    active : False
+    resume_path : ''
 render:
   painter_config : '/data/eperuzzo/brushstrokes-generation/code/configs/decomposition/painter_config.yaml'
   freq : 1

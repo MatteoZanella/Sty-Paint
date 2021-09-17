@@ -4,10 +4,10 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
-from dataset.decomposition import morphology, loss
-from dataset.decomposition.networks import *
-from dataset.decomposition import renderer
-from dataset.decomposition import utils
+from dataset_acquisition.decomposition import morphology, loss
+from dataset_acquisition.decomposition.networks import *
+from dataset_acquisition.decomposition import renderer
+from dataset_acquisition.decomposition import utils
 
 import torch
 import torch.optim as optim
@@ -399,7 +399,11 @@ class Painter(PainterBase):
         for i in range(v.shape[0]):
             if self.check_stroke(v[i,:]):
                 checked_strokes.append(v[i, :][None, :])
-        return np.concatenate(checked_strokes, axis=0)[None, :, :]   # restore the 1, n, parmas dimension for consistency
+
+        if not checked_strokes: # all illegal strokes
+            return checked_strokes
+        else:
+            return np.concatenate(checked_strokes, axis=0)[None, :, :]   # restore the 1, n, parmas dimension for consistency
 
     def check_stroke(self, inp):
         """

@@ -12,7 +12,7 @@ import pickle
 def get_args():
     # settings
     parser = argparse.ArgumentParser(description='STYLIZED NEURAL PAINTING')
-    parser.add_argument('--dataset_path', required=True, help='where the dataset will be stored')
+    parser.add_argument('--dataset_path', required=True, help='where the dataset_acquisition will be stored')
     parser.add_argument('--index_path', default='/data/eperuzzo/brushstrokes-ade/brushstrokes-sorting/', help='base folder with sorting results')
     parser.add_argument('--strokes_path', default='/data/eperuzzo/brushstrokes-ade/brushstrokes-decomposition/', help='base folder with decomposition results')
 

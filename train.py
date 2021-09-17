@@ -27,22 +27,22 @@ if __name__ == '__main__':
     # Create config
     c_parser = ConfigParser(args)
     c_parser.parse_config(args)
-    c_parser.crate_directory_output()
     config = c_parser.get_config()
+    c_parser.crate_directory_output()
     print(config)
 
     # Initialize wandb
     wandb.init(project='Brushstrokes-Generation', config=config)
     wandb.run.name = args.exp_name
 
-    # Create dataset
+    # Create dataset_acquisition
     device = config["device"]
     # Train
     dataset = StrokesDataset(config, isTrain=True)
-    train_loader = DataLoader(dataset=dataset, batch_size=config["train"]["batch_size"], shuffle=True)
+    train_loader = DataLoader(dataset=dataset, batch_size=config["train"]["batch_size"], shuffle=True, num_workers=config["train"]["num_workers"])
     # Test
     dataset_test = StrokesDataset(config, isTrain=False)
-    test_loader = DataLoader(dataset=dataset_test, batch_size=config["train"]["batch_size"], shuffle=True)
+    test_loader = DataLoader(dataset=dataset_test, batch_size=1, shuffle=True)
 
     print(f'Dataset stats: Train {len(dataset)} samples, Test : {len(dataset_test)} samples')
 
@@ -63,8 +63,9 @@ if __name__ == '__main__':
     trainer = Trainer(config, model, train_loader)
     max_epochs = config["train"]["n_epochs"]
 
-    generator = GenerateStorkes(config["render"]["painter_config"], output_path=config["train"]["train_render"])
+    generator = GenerateStorkes(config["render"]["painter_config"], output_path=config["train"]["log_render_path"])
 
+    wandb.watch(model)
     for ep in range(1, max_epochs+1):
         # Print
         print('=' * 50)
@@ -74,12 +75,13 @@ if __name__ == '__main__':
         if (ep % config["train"]["save_freq"] == 0):
             trainer.save_checkpoint(model, filename=f'epoch_{ep}')
         if ep % config["render"]["freq"] == 0:
-            render, _ = generator.generate_and_render(model, test_loader)
-            generator.save_renders(render, filename=f'epoch_{ep}')
-            # Wandb logging
-            wandb.log({"render" : wandb.Image(render, caption=f"render_ep_{ep}")})
-
+            vis = generator.generate_and_render(model, test_loader, ep)
+            if vis:
+                # Wandb logging
+                wandb.log({"generated" : wandb.Image(vis["generated"], caption=f"generated_ep_{ep}")})
+                wandb.log({"original" : wandb.Image(vis["original"], caption=f"original_ep_{ep}")})
         # Log
+        train_stats["epoch"] = ep
         wandb.log(train_stats)
 
     # Save final model

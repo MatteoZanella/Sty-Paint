@@ -5,20 +5,29 @@ from model.utils.utils import AverageMeter, dict_to_device
 import time
 from model.training.losses import KLDivergence
 import os
+import datetime
 
 class Trainer:
 
     def __init__(self, config, model, dataloader):
 
+        # Optimizers
         self.checkpoint_path = config["train"]["checkpoint_path"]
-        self.kl_lambda = config["train"]["kl_lambda"]
-        self.optimizer = Adam(params=model.parameters(), lr=config["train"]["lr"], weight_decay=config["train"]['wd'])
         self.dataloader = dataloader
+        self.optimizer = Adam(params=model.parameters(), lr=config["train"]["lr"], weight_decay=config["train"]['wd'])
+        self.LRScheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=0.001, steps_per_epoch=len(dataloader), epochs=config["train"]["n_epochs"])
+
+        # Losses
         self.MSELoss = nn.MSELoss()
+        self.kl_lambda = config["train"]["kl_lambda"]
         self.KLDivergence = KLDivergence()
+
+        # Misc
         self.device = config["device"]
         self.print_freq = config["train"]["print_freq"]
 
+        if config["train"]["auto_resume"]["active"]:
+            self.load_checkpoint(model, config["train"]["auto_resume"]["resume_path"])
 
     def save_checkpoint(self, model, filename=None):
 
@@ -29,8 +38,11 @@ class Trainer:
         print(f'Model saved at {path}')
 
     def load_checkpoint(self, model, filename=None):
-        #TODO
-        pass
+        ckpt = torch.load(filename, map_location=self.device)
+        model.load_state_dict(ckpt["model"])
+        self.optimizer.load_state_dict((ckpt["optimizer"]))
+
+        print(f'Model and optimizer loaded form {filename}')
 
     def train_one_epoch(self, model):
         # Set training mode
@@ -62,11 +74,15 @@ class Trainer:
             batch_time.update(time.time()-end)
             end = time.time()
             if idx % self.print_freq == 0:
-                print(f'Iter : {idx} / {len(self.dataloader)}\t||\tMSE : {mse_loss_meter.val},  ({mse_loss_meter.avg})\t||\tKL : {kl_loss_meter.val}, ({kl_loss_meter.avg})')
+                print(f'Iter : {idx} / {len(self.dataloader)}\t||\t'
+                      f'Time : {str(datetime.timedelta(seconds=batch_time.val))} \t||\t'
+                      f'MSE : {mse_loss_meter.val},  ({mse_loss_meter.avg})\t||\t'
+                      f'KL : {kl_loss_meter.val}, ({kl_loss_meter.avg})')
+            # Scheduler step
+            self.LRScheduler.step()
 
         stats = {'mse' : mse_loss_meter.avg,
                  'kl' : kl_loss_meter.avg,
-                 'loss' : loss_meter.avg,
-                 'batch_time' : batch_time.avg}
+                 'loss' : loss_meter.avg}
 
         return stats

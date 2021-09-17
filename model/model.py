@@ -12,15 +12,15 @@ class Embedder(nn.Module):
 
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
-        self.context_length = config["dataset"]["context_length"]
-        self.seq_length = config["dataset"]["sequence_length"]
-        #self.L = config["dataset"]["total_length"]
+        self.context_length = config["dataset_acquisition"]["context_length"]
+        self.seq_length = config["dataset_acquisition"]["sequence_length"]
+        #self.L = config["dataset_acquisition"]["total_length"]
 
         # Networks
         self.img_encoder = ResNetEncoder(pretrained=config["model"]["img_encoder"]["pretrained"])
 
-        self.context_PE = PositionalEncoding(self.d_model, max_len=100)
-        self.sequence_PE = PositionalEncoding(self.d_model, max_len=100)
+        self.context_PE = PositionalEncoding(self.d_model, dropout=0)
+        self.sequence_PE = PositionalEncoding(self.d_model, dropout=0)
 
         #self.context_PE = nn.Parameter(torch.randn(self.context_length+1, self.d_model))
         #self.sequence_PE = nn.Parameter(torch.randn(self.seq_length, self.d_model))
@@ -97,14 +97,14 @@ class TransformerVAE(nn.Module):
         self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
-        self.seq_length = config["dataset"]["sequence_length"]
-        self.context_length = config["dataset"]["context_length"]+1
+        self.seq_length = config["dataset_acquisition"]["sequence_length"]
+        self.context_length = config["dataset_acquisition"]["context_length"]+1
 
         self.ctx_z = config["model"]["ctx_z"]   # how to merge context and z
         if self.ctx_z == 'proj':
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
 
-        self.time_queries_PE = PositionalEncoding(self.d_model, max_len=100)
+        self.time_queries_PE = PositionalEncoding(self.d_model,dropout=0)
         #self.query_dec = nn.Parameter(torch.randn(self.seq_length, self.d_model))
         self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
         self.log_sigma = nn.Parameter(torch.randn(1, 1, self.d_model))
@@ -150,7 +150,7 @@ class TransformerVAE(nn.Module):
 
         return mu, log_var
 
-    def sample_latent_z(self, mu, log_sigma):
+    def reparameterize(self, mu, log_sigma):
 
         sigma = torch.exp(0.5 * log_sigma)
         eps = torch.randn_like(sigma)
@@ -184,7 +184,7 @@ class TransformerVAE(nn.Module):
     def forward(self, seq, context):
 
         mu, log_sigma = self.encode(seq, context)
-        z = self.sample_latent_z(mu, log_sigma)
+        z = self.reparameterize(mu, log_sigma)
 
         # Replicate z and decode
         out = self.decode(seq.size(), z, context)   # z is the input, context comes from the other branch
@@ -192,7 +192,7 @@ class TransformerVAE(nn.Module):
         return out, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, L, ctx):
+    def sample(self, L, ctx):
         # Sample z
         z = torch.randn(1, self.d_model, device=self.device)
         preds = self.decode(size=(L, 1, self.d_model), z=z, context=ctx)
@@ -219,17 +219,12 @@ class InteractivePainter(nn.Module):
         return predictions, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, data, L):
-        context, _ = self.embedder(data)
-        context_features = self.context_encoder(context)
-
-        preds = self.transformer_vae.generate(L, context_features)
-
-        return preds
+    def generate(self, data):
+        return self.forward(data)[0]
 
 if __name__ == '__main__':
 
-    from dataset import StrokesDataset
+    from dataset_acquisition import StrokesDataset
     from torch.utils.data import DataLoader
     from utils.parse_config import ConfigParser
     import argparse

@@ -56,7 +56,7 @@ if __name__ == '__main__':
             final_img, alphas = pt.inference(strokes)
             np.savez_compressed(os.path.join(tmp_output_path, 'alpha.npz'), alpha=alphas)
             # --------------------------------------------------------------------------------------------------------------
-            # Save loss curves dictonary and figures
+            # Save loss curves dictionary and figures
             elapsed = datetime.now() - start
             logs = pt.loss_dict
             logs['elapsed_time'] = elapsed

@@ -15,7 +15,7 @@ import pandas as pd
 def get_args():
     # settings
     parser = argparse.ArgumentParser(description='STYLIZED NEURAL PAINTING')
-    parser.add_argument('--csv_file', default='/data/eperuzzo/brushstrokes-generation/code/dataset/chunks/todi.csv')
+    parser.add_argument('--csv_file', default='/data/eperuzzo/brushstrokes-generation/code/dataset_acquisition/chunks/todi.csv')
     parser.add_argument('--data_path', default='/data/eperuzzo/ade_v1/')
     parser.add_argument('--output_path', default='/data/eperuzzo/sorting_ade_v2/')
     parser.add_argument('--imgs_path', default='/data/eperuzzo/ade20k_outdoors/images/training/')

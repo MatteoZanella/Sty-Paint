@@ -23,7 +23,7 @@ manual_storkes_params:
   4 : 15
   5 : 10
 brush_paths:
-  small_vertical :  '/data/eperuzzo/brushstrokes-generation/code/dataset/decomposition/brushes/brush_fromweb2_small_vertical.png'
-  small_horizontal : '/data/eperuzzo/brushstrokes-generation/code/dataset/decomposition/brushes/brush_fromweb2_small_horizontal.png'
-  large_vertical : '/data/eperuzzo/brushstrokes-generation/code/dataset/decomposition/brushes/brush_fromweb2_large_vertical.png'
-  large_horizontal : '/data/eperuzzo/brushstrokes-generation/code/dataset/decomposition/brushes/brush_fromweb2_large_horizontal.png'
+  small_vertical :  '/data/eperuzzo/brushstrokes-generation/code/dataset_acquisition/decomposition/brushes/brush_fromweb2_small_vertical.png'
+  small_horizontal : '/data/eperuzzo/brushstrokes-generation/code/dataset_acquisition/decomposition/brushes/brush_fromweb2_small_horizontal.png'
+  large_vertical : '/data/eperuzzo/brushstrokes-generation/code/dataset_acquisition/decomposition/brushes/brush_fromweb2_large_vertical.png'
+  large_horizontal : '/data/eperuzzo/brushstrokes-generation/code/dataset_acquisition/decomposition/brushes/brush_fromweb2_large_horizontal.png'
