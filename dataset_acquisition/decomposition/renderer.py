@@ -1,8 +1,7 @@
 import numpy as np
 import cv2
 import random
-from dataset_acquisition.decomposition import utils
-
+from decomposition import utils
 
 def _random_floats(low, high, size):
     return [random.uniform(low, high) for _ in range(size)]
@@ -25,7 +24,6 @@ class Renderer():
         self.create_empty_canvas()
 
         self.train = train
-
         if self.renderer in ['markerpen']:
             self.d = 12 # x0, y0, x1, y1, x2, y2, radius0, radius2, R, G, B, A
             self.d_shape = 8

@@ -4,13 +4,17 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
-from dataset_acquisition.decomposition import morphology, loss
-from dataset_acquisition.decomposition.networks import *
-from dataset_acquisition.decomposition import renderer
-from dataset_acquisition.decomposition import utils
+from decomposition import morphology, loss
+from decomposition.networks import *
+from decomposition import renderer
+from decomposition import utils
 
 import torch
 import torch.optim as optim
+
+# Decide which device we want to run on
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 class PainterBase():
     def __init__(self, args):
@@ -23,7 +27,7 @@ class PainterBase():
 
         # define G
         self.device = torch.device(f'cuda:{args.gpu_id}')
-        self.net_G = define_G(rdrr=self.rderr, netG=args.net_G).to(self.device)
+        self.net_G = define_G(rdrr=self.rderr, netG=args.net_G,device=self.device).to(self.device)
 
         # define some other vars to record the training states
         self.x_ctt = None
@@ -63,7 +67,7 @@ class PainterBase():
             print('loading renderer from pre-trained checkpoint...')
             # load the entire checkpoint
             checkpoint = torch.load(os.path.join(self.renderer_checkpoint_dir, 'last_ckpt.pt'),
-                                map_location=None if torch.cuda.is_available() else self.device)
+                                map_location=self.device)
             # update net_G states
             self.net_G.load_state_dict(checkpoint['model_G_state_dict'])
             self.net_G.to(self.device)
@@ -283,7 +287,7 @@ class Painter(PainterBase):
         style_img = cv2.imread(self.img_path, cv2.IMREAD_COLOR)
         self.style_img_ = cv2.cvtColor(style_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.
         self.style_img = cv2.blur(cv2.resize(self.style_img_, (128, 128)), (2, 2))
-        self.style_img = torch.tensor(self.style_img).permute([2, 0, 1]).unsqueeze(0).to(self.device)
+        self.style_img = torch.tensor(self.style_img).permute([2, 0, 1]).unsqueeze(0).to(device)
 
     def _backward_x(self):
 
@@ -338,7 +342,7 @@ class Painter(PainterBase):
 
     def _drawing_step_states(self):
         acc = self._compute_acc().item()
-        print_fn = True
+        print_fn = False
         if print_fn:
             print('iteration step %d, G_loss: %.5f, step_acc: %.5f, grid_scale: %d / %d, strokes: %d / %d'
                   % (self.step_id, self.G_loss.item(), acc,
@@ -390,6 +394,9 @@ class Painter(PainterBase):
                 video_writer.write((this_frame[:,:,::-1] * 255.).astype(np.uint8))
 
         final_rendered_image = np.copy(this_frame)
+        # if save_jpgs:
+        #     print('saving final rendered result...')
+        #     plt.imsave(path + '_final.png', final_rendered_image)
 
         return final_rendered_image, np.concatenate(alphas)
 
@@ -399,16 +406,12 @@ class Painter(PainterBase):
         for i in range(v.shape[0]):
             if self.check_stroke(v[i,:]):
                 checked_strokes.append(v[i, :][None, :])
-
-        if not checked_strokes: # all illegal strokes
-            return checked_strokes
-        else:
-            return np.concatenate(checked_strokes, axis=0)[None, :, :]   # restore the 1, n, parmas dimension for consistency
+        return np.concatenate(checked_strokes, axis=0)[None, :, :]   # restore the 1, n, parmas dimension for consistency
 
     def check_stroke(self, inp):
         """
-        Copy and pasted form renderder.py
-        They have a threshold on the min size of the brushstrokes
+        Copy and pasetd form renderder.py
+        They have a threshold on the min size of the brushstorkes
         """
 
         r_ = max(inp[2], inp[3])   # check wifth and height, as in the original code

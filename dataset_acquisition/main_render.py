@@ -26,10 +26,7 @@ if __name__ == '__main__':
 
     args = get_args()
 
-    # Decide which device we want to run on
-    device = torch.device('cuda:0')
-
-    # Create basedirectory
+    # Create base directory
     os.makedirs(args.dataset_path)
 
     # Define Painter

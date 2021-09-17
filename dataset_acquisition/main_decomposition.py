@@ -1,6 +1,8 @@
 import os
+from pathlib import Path
 import argparse
-import torch
+import traceback
+import logging
 
 from decomposition import utils
 from decomposition.painter import Painter
@@ -14,9 +16,10 @@ import numpy as np
 def get_args():
     # settings
     parser = argparse.ArgumentParser(description='STROKES DECOMPOSITION')
-    parser.add_argument('--output_path', required=True, type=str, help='output')
-    parser.add_argument('--csv_file', required=True, type=str, help='Image path')
-    parser.add_argument('--painter_config', default='./decomposition/painter_config.yaml')
+    parser.add_argument('--output_path', required=True, type=str, help='Output path')
+    parser.add_argument('--csv_file', required=True, type=str, help='Images to process')
+    parser.add_argument('--data_path', required=True, type=str, help='where images are stored')
+    parser.add_argument('--painter_config', default='../configs/decomposition/painter_config.yaml')
     parser.add_argument('--plot_loss', default=False)
     parser.add_argument('--gpu_id', default=0, type=int, help='GPU index')
     return parser.parse_args()
@@ -26,28 +29,28 @@ if __name__ == '__main__':
 
     args = get_args()
 
-    if args.gpu_id >= 0 and torch.cuda.is_available():
-        device = torch.device("cuda:{}".format(args.gpu_id))
-    else:
-        device = torch.device('cpu')
-
     # Define Painter
     painter_config = utils.load_painter_config(args.painter_config)
+    painter_config.gpu_id = args.gpu_id # overwrite
     pt = Painter(args=painter_config)
-
     df = pd.read_csv(args.csv_file)
-    print(f'Total Number of images to process in this chunk: {len(df)}')
+
+    # Create directories and logging
+    Path(args.output_path).mkdir(parents=True, exist_ok=True)
+    log_name = os.path.basename(args.csv_file).split('.')[0]
+    logging.basicConfig(level=logging.INFO, filename=os.path.join(args.output_path, log_name + '.log'))
+    logging.info(f'Total Number of images to process in this chunk: {len(df)}')
 
     errors = []
     for index, row in df.iterrows():
         try:
             start = datetime.now()
-            print('Processing image: {}, {}/{}'.format(row['Images'], index, len(df)))
-            img_path = row['Images']
+            logging.info('Processing image: {}, {}/{}'.format(row['Images'], index, len(df)))
+            img_name = row['Images']
 
-            name = os.path.basename(img_path).split('.')[0]
-            tmp_output_path = os.path.join(args.output_path, name)
-            os.makedirs(tmp_output_path, exist_ok=True)
+            img_path = os.path.join(args.data_path, img_name)
+            tmp_output_path = os.path.join(args.output_path, img_name.split('.')[0])
+            Path(tmp_output_path).mkdir(parents=True, exist_ok=True)
             # --------------------------------------------------------------------------------------------------------------
             # Decomposition
             painter_config.img_path = img_path
@@ -64,8 +67,9 @@ if __name__ == '__main__':
                 pickle.dump(logs, f, pickle.HIGHEST_PROTOCOL)
             if args.plot_loss:
                 utils.plot_loss_curves(logs, tmp_output_path)
-        except:
-            img_name = row['Images']
-            print(f'Error occured processing {img_name}')
-            errors.append(img_name)
+        except Exception as e:
+            logging.error(traceback.format_exc())
+            errors.append(row['Images'])
 
+    with open(os.path.join(args.output_path, f'errors_{log_name}.pkl'), 'wb') as f:
+        pickle.dump(errors, f)

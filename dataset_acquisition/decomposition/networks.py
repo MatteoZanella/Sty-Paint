@@ -5,9 +5,6 @@ import functools
 import torch.nn.functional as F
 import math
 
-# Decide which device we want to run on
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
 PI = math.pi
 ###############################################################################
 # Helper Functions
@@ -90,7 +87,7 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
     return net
 
 
-def define_G(rdrr, netG, init_type='normal', init_gain=0.02, gpu_ids=[]):
+def define_G(rdrr, netG, device, init_type='normal', init_gain=0.02, gpu_ids=[]):
     net = None
     if netG == 'plain-dcgan':
         net = DCGAN(rdrr)
@@ -99,9 +96,9 @@ def define_G(rdrr, netG, init_type='normal', init_gain=0.02, gpu_ids=[]):
     elif netG == 'huang-net':
         net = HuangNet(rdrr)
     elif netG == 'zou-fusion-net':
-        net = ZouFCNFusion(rdrr)
+        net = ZouFCNFusion(rdrr, device=device)
     elif netG == 'zou-fusion-net-light':
-        net = ZouFCNFusionLight(rdrr)
+        net = ZouFCNFusionLight(rdrr, device=device)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -275,18 +272,19 @@ class HuangNet(nn.Module):
 
 
 class ZouFCNFusion(nn.Module):
-    def __init__(self, rdrr):
+    def __init__(self, rdrr, device):
         super(ZouFCNFusion, self).__init__()
         self.rdrr = rdrr
         self.out_size = 128
         self.huangnet = PixelShuffleNet(rdrr.d_shape)
+        self.device = device
         self.dcgan = DCGAN(rdrr)
 
     def forward(self, x):
         x_shape = x[:, 0:self.rdrr.d_shape, :, :]
         x_alpha = x[:, [-1], :, :]
         if self.rdrr.renderer in ['oilpaintbrush', 'airbrush']:
-            x_alpha = torch.tensor(1.0).to(device)
+            x_alpha = torch.tensor(1.0).to(self.device)
 
         mask = self.huangnet(x_shape)
         color, _ = self.dcgan(x)
@@ -296,18 +294,19 @@ class ZouFCNFusion(nn.Module):
 
 
 class ZouFCNFusionLight(nn.Module):
-    def __init__(self, rdrr):
+    def __init__(self, rdrr, device):
         super(ZouFCNFusionLight, self).__init__()
         self.rdrr = rdrr
         self.out_size = 32
         self.huangnet = PixelShuffleNet_32(rdrr.d_shape)
+        self.device = device
         self.dcgan = DCGAN_32(rdrr)
 
     def forward(self, x):
         x_shape = x[:, 0:self.rdrr.d_shape, :, :]
         x_alpha = x[:, [-1], :, :]
         if self.rdrr.renderer in ['oilpaintbrush', 'airbrush']:
-            x_alpha = torch.tensor(1.0).to(device)
+            x_alpha = torch.tensor(1.0).to(self.device)
 
         mask = self.huangnet(x_shape)
         color, _ = self.dcgan(x)
