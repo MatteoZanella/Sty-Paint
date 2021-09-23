@@ -21,21 +21,20 @@ class ConfigParser:
             self.config["model"]["ctx_z"] = None
 
         if self.is_train:
-            self.config["train"]["checkpoint_path"] = os.path.join(self.config["train"]["checkpoint_path"], args.exp_name)
-            if os.path.exists(self.config["train"]["checkpoint_path"]):
-
-                f = os.path.join(self.config["train"]["checkpoint_path"], 'latest.pth.tar')
+            self.config["train"]["logging"]["checkpoint_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], args.exp_name)
+            f = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'latest.pth.tar')
+            if os.path.exists(f):
                 print(f'Auto Resume from : {f}')
                 self.config["train"]["auto_resume"]["active"] = True
                 self.config["train"]["auto_resume"]["resume_path"] = f
 
-            self.config["train"]["log_render_path"] = os.path.join(self.config["train"]["checkpoint_path"], 'renders')
+            self.config["train"]["logging"]["log_render_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'renders')
 
         self.config["device"] = torch.device(f'cuda:{self.config["train"]["gpu_id"]}')
 
     def crate_directory_output(self):
-        Path(self.config["train"]["checkpoint_path"]).mkdir(parents=True, exist_ok=True)
-        Path(self.config["train"]["log_render_path"]).mkdir(parents=True, exist_ok=True)
+        Path(self.config["train"]["logging"]["checkpoint_path"]).mkdir(parents=True, exist_ok=True)
+        Path(self.config["train"]["logging"]["log_render_path"]).mkdir(parents=True, exist_ok=True)
 
     def get_config(self):
         return self.config

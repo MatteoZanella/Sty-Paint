@@ -31,12 +31,12 @@ class StrokesDataset(Dataset):
 
         self.isTrain = isTrain
         self.prefix = 'train' if self.isTrain else 'test'
-        self.root_dir = config["dataset_acquisition"][self.prefix]["root_dir"]
+        self.root_dir = config["dataset"][self.prefix]["root_dir"]
         self.filenames = sorted(os.listdir(self.root_dir))    # maybe check that every directory have the specified form before listing
-        self.context_length = config["dataset_acquisition"]["context_length"]
-        self.sequence_length = config["dataset_acquisition"]["sequence_length"]
-        self.heuristic = config["dataset_acquisition"]["heuristic"]
-        self.img_size = config["dataset_acquisition"]["resize"]
+        self.context_length = config["dataset"]["context_length"]
+        self.sequence_length = config["dataset"]["sequence_length"]
+        self.heuristic = config["dataset"]["heuristic"]
+        self.img_size = config["dataset"]["resize"]
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),

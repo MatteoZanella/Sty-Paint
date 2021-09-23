@@ -11,8 +11,8 @@ class TransformerVAE(nn.Module):
         self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
-        self.seq_length = config["dataset_acquisition"]["sequence_length"]
-        self.context_length = config["dataset_acquisition"]["context_length"]+1
+        self.seq_length = config["dataset"]["sequence_length"]
+        self.context_length = config["dataset"]["context_length"]+1
 
         self.seq_pos_encoding = PositionalEncoding(self.d_model, dropout=0)
         self.timequeries_pos_encoding = PositionalEncoding(self.d_model, dropout=0)
@@ -46,24 +46,6 @@ class TransformerVAE(nn.Module):
             nn.Linear(self.d_model, self.s_params))
         if config["model"]["activation_last_layer"] == "sigmoid":
             self.prediction_head.add_module('act', nn.Sigmoid())
-
-        print('Initialize weights')
-        self.weight_init()
-
-    def weight_init(self):
-        for n,p in self.vae_encoder.named_parameters():
-            N = 5
-            gain = 0.67 * (N ** (-1. / 4.))
-            if re.match(r'.*bias$|.*bn\.weight$|.*norm.*\.weight', n):
-                continue
-            nn.init.xavier_normal_(p, gain=gain)
-
-        for n,p in self.vae_decoder.named_parameters():
-            N = 5
-            gain = (9 * N) ** (-1. / 4.)
-            if re.match(r'.*bias$|.*bn\.weight$|.*norm.*\.weight', n):
-                continue
-            nn.init.xavier_normal_(p, gain=gain)
 
 
     def encode(self, x):

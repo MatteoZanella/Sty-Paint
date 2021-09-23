@@ -12,8 +12,8 @@ class Embedder(nn.Module):
 
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
-        self.context_length = config["dataset_acquisition"]["context_length"]
-        self.seq_length = config["dataset_acquisition"]["sequence_length"]
+        self.context_length = config["dataset"]["context_length"]
+        self.seq_length = config["dataset"]["sequence_length"]
         #self.L = config["dataset_acquisition"]["total_length"]
 
         # Networks
@@ -84,9 +84,19 @@ class ContextEncoder(nn.Module):
                                     ),
                                     num_layers=config["model"]["encoder"]["n_layers"])
 
+        self.pool_context = config["model"]["encoder"]["context_pooling"]
+        if self.pool_context:
+            self.context_token = nn.Parameter(torch.randn(1, 1, config["model"]["d_model"]))
+
     def forward(self, x):
+        if self.pool_context:
+            x = torch.cat((self.context_token, x), dim=0)   # add fake token
         x = self.net(x)
-        return x
+
+        if self.pool_context:
+            return x[0]    # return only the fake token, summarizing the whole sequence
+        else:
+            return x       # retrun the whole sequence
 
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -97,8 +107,8 @@ class TransformerVAE(nn.Module):
         self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
-        self.seq_length = config["dataset_acquisition"]["sequence_length"]
-        self.context_length = config["dataset_acquisition"]["context_length"]+1
+        self.seq_length = config["dataset"]["sequence_length"]
+        self.context_length = config["dataset"]["context_length"]+1
 
         self.ctx_z = config["model"]["ctx_z"]   # how to merge context and z
         if self.ctx_z == 'proj':
@@ -219,8 +229,14 @@ class InteractivePainter(nn.Module):
         return predictions, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, data):
-        return self.forward(data)[0]
+    def generate(self, data, zero_context=False):
+        context, x = self.embedder(data)
+        context_features = self.context_encoder(context)
+        if zero_context: # zero out the context to check if the model benefit from it
+            context_features = torch.randn_like(context_features, device=context_features.device)
+        predictions, mu, log_sigma = self.transformer_vae(x, context_features)
+        return predictions
+
 
 if __name__ == '__main__':
 
