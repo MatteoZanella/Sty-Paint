@@ -90,13 +90,14 @@ class ContextEncoder(nn.Module):
 
     def forward(self, x):
         if self.pool_context:
-            x = torch.cat((self.context_token, x), dim=0)   # add fake token
+            fake_ctx = repeat(self.context_token, '1 1 dim -> 1 bs dim', bs=x.size(1))
+            x = torch.cat((fake_ctx, x), dim=0)   # add fake token
         x = self.net(x)
 
         if self.pool_context:
-            return x[0]    # return only the fake token, summarizing the whole sequence
+            return x[0][None]    # return only the fake token, summarizing the whole sequence.
         else:
-            return x       # retrun the whole sequence
+            return x            # retrun the whole sequence
 
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -229,25 +230,29 @@ class InteractivePainter(nn.Module):
         return predictions, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, data, zero_context=False):
+    def generate(self, data, no_context=False, no_z=False):
         context, x = self.embedder(data)
         context_features = self.context_encoder(context)
-        if zero_context: # zero out the context to check if the model benefit from it
+        if no_context: # zero out the context to check if the model benefit from it
             context_features = torch.randn_like(context_features, device=context_features.device)
-        predictions, mu, log_sigma = self.transformer_vae(x, context_features)
+        if no_z:
+            predictions = self.transformer_vae.sample(L=8, ctx=context_features)
+        else:
+            predictions = self.transformer_vae(x, context_features)[0]
         return predictions
 
 
 if __name__ == '__main__':
 
-    from dataset_acquisition import StrokesDataset
+    from dataset import StrokesDataset
     from torch.utils.data import DataLoader
     from utils.parse_config import ConfigParser
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", default='a')
-    parser.add_argument("--config", default='utils/config_local.yaml')
+    parser.add_argument("--only_vae", default=False)
+    parser.add_argument("--config", default='/Users/eliap/Projects/brushstrokes/configs/train/config_local.yaml')
     parser.add_argument("--debug", action='store_true')
     args = parser.parse_args()
 
@@ -256,7 +261,7 @@ if __name__ == '__main__':
     config = c_parser.get_config()
 
 
-    dataset = StrokesDataset(config=config, split='train')
+    dataset = StrokesDataset(config=config, isTrain=True)
 
     dataloader = DataLoader(dataset, batch_size=2)
     data = next(iter(dataloader))
@@ -272,13 +277,4 @@ if __name__ == '__main__':
     print(f'Number of trainable parameters: {params / 10**6}')
     preds, mu, l_sigma = net(data)
 
-
-    gen = net.generate(data)
-
-    labels = data['strokes_seq']
-    criterion = torch.nn.MSELoss()
-    loss = criterion(preds, labels)
-    loss.backward()
-
-    print(loss.item())
     print(preds.shape)

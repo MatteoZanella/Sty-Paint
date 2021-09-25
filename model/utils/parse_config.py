@@ -30,7 +30,10 @@ class ConfigParser:
 
             self.config["train"]["logging"]["log_render_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'renders')
 
-        self.config["device"] = torch.device(f'cuda:{self.config["train"]["gpu_id"]}')
+        if self.config["train"]["gpu_id"] >= 0:
+            self.config["device"] = torch.device(f'cuda:{self.config["train"]["gpu_id"]}')
+        else:
+            self.config["device"] = torch.device('cpu')
 
     def crate_directory_output(self):
         Path(self.config["train"]["logging"]["checkpoint_path"]).mkdir(parents=True, exist_ok=True)

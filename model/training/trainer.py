@@ -123,7 +123,7 @@ class Trainer:
             mse_loss_meter.update(mse_loss.item(), bs)
             kl_loss_meter.update(kl_div.item(), bs)
             #loss_meter.update(torch.tensor(0).item(), bs)
-            mu_meter.update(mu.mean().data.item(), bs)
+            mu_meter.update(torch.abs(mu).mean().data.item(), bs)
             sigma_meter.update(log_sigma.exp().mean().data.item(), bs)
             grad_norm_meter.update(grad_norm.item(), bs)
             batch_time.update(time.time()-end)
@@ -156,6 +156,7 @@ class Trainer:
         model.eval()
         mse_loss_meter = AverageMeter(name='mse_loss')
         mse_no_context_meter = AverageMeter(name='mse_without_context')
+        mse_no_z_meter = AverageMeter(name='mse_no_z')
 
         logs = {}
         for rep in range(10):     # TO FIX when we have a proper test set, for now just iterate more time on this
@@ -168,9 +169,14 @@ class Trainer:
                 mse_loss_meter.update(clean_mse.item(), 1)
 
                 # Predict without context
-                noctx_preds = model.generate(data, zero_context=True)
+                noctx_preds = model.generate(data, no_context=True)
                 noctx_mse = self.MSELoss(noctx_preds, data['strokes_seq'])
                 mse_no_context_meter.update(noctx_mse.item(), 1)
+
+                # Prediction without z
+                noz_preds = model.generate(data, no_z=True)
+                noz_mse = self.MSELoss(noz_preds, data['strokes_seq'])
+                mse_no_z_meter.update(noz_mse.item(), 1)
 
                 # Log some images
                 if idx == 0 and rep == 0:
@@ -181,11 +187,13 @@ class Trainer:
                                                       ep=ep)
                     logs.update(imgs_to_log)
 
-        logging.info(f'TEST'
+        logging.info(f'TEST: '
                      f'Clean MSE : {mse_loss_meter.avg}\t||\t'
-                     f'No ctx MSE : {mse_no_context_meter.avg}')
+                     f'No ctx MSE : {mse_no_context_meter.avg}\t||\t'
+                     f'No z MSE : {mse_no_z_meter.avg}')
 
         logs.update({'test/clean_mse' : mse_loss_meter.avg,
-                    'test/no_context_mse' : mse_no_context_meter.avg})
+                    'test/no_context_mse' : mse_no_context_meter.avg,
+                     'test/no_z_mse' : mse_no_z_meter.avg})
 
         return logs

@@ -11,12 +11,13 @@ model:
   only_vae : False
   d_model : 256
   n_strokes_params : 12
-  ctx_z : 'proj'
+  ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
   img_encoder:
     type : 'resnet18'
     pretrained : True
   encoder:
+    context_pooling : False
     act : 'gelu'
     n_heads : 8
     n_layers : 5
@@ -32,14 +33,28 @@ model:
     n_layers : 5
     ff_dim : 1024
 train:
-  n_epochs : 500
+  n_epochs : 100
   gpu_id : 1
-  batch_size : 10
-  checkpoint_path : '/home/eperuzzo/brushstrokes/ckpt/'
-  lr :  0.0001
-  wd : 0.0
-  save_freq : 10000
-  kl_lambda : 0.00001
+  batch_size : 64
+  num_workers : 8
+  optimizer:
+    max_lr : 7.0e-4
+    min_lr : 5.0e-5
+    warmup_lr : 5.0e-6
+    warmup_ep : 20
+    wd : 0.05
+    clip_grad : 4.0
+  kl:
+    warmup_type : 'linear'
+    warm_up_epochs : 10
+    kl_lambda : 5.0e-5
+  auto_resume:
+    active : False
+    resume_path : ''
+  logging:
+    checkpoint_path : '/home/eperuzzo/brushstrokes/checkpoints/'
+    save_freq : 25
+    print_freq : 10
 render:
-  painter_config : '/home/eperuzzo/brushstrokes/configs/decomposition/painter_config_local.yaml'
+  painter_config : '/home/eperuzzo/brushstrokes/configs/decomposition/painter_config_sibiu.yaml'
   freq : 1
