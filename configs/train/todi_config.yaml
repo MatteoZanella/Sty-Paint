@@ -37,6 +37,8 @@ train:
   gpu_id : 0
   batch_size : 64
   num_workers : 8
+  seed : 0
+  amp_enabled : True
   optimizer:
     max_lr : 5.0e-4
     min_lr : 5.0e-5
@@ -53,7 +55,7 @@ train:
     resume_path : ''
   logging:
     checkpoint_path : '/data/eperuzzo/brushstrokes-generation/checkpoints/'
-    save_freq : 25
+    save_freq : 1000
     print_freq : 10
 render:
   painter_config : '/data/eperuzzo/brushstrokes-generation/code/configs/decomposition/painter_config.yaml'

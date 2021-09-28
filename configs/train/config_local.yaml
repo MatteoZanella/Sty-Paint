@@ -37,6 +37,7 @@ train:
   gpu_id : -1
   batch_size : 64
   num_workers : 8
+  amp_enabled : False
   optimizer:
     max_lr : 7.0e-4
     min_lr : 5.0e-5

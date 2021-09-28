@@ -111,6 +111,6 @@ class StrokesDataset(Dataset):
 
         if not self.isTrain:
             data.update({'time_steps' : [t_C, t, t_T]})
-            data.update({'strokes' : all_strokes})
+            #data.update({'strokes' : all_strokes})
 
         return data

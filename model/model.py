@@ -4,7 +4,6 @@ from einops import rearrange, repeat
 from model.networks.image_encoders import ResNetEncoder
 from model.networks.layers import PositionalEncoding
 
-
 class Embedder(nn.Module):
 
     def __init__(self, config):
@@ -170,7 +169,7 @@ class TransformerVAE(nn.Module):
         return z
 
     def decode(self, size, z, context):
-        time_queries = torch.zeros(size, device=self.device)
+        time_queries = torch.zeros(size, device=z.device)
         time_queries = self.time_queries_PE(time_queries)
 
         if self.ctx_z == 'proj':
@@ -204,9 +203,10 @@ class TransformerVAE(nn.Module):
 
     @torch.no_grad()
     def sample(self, L, ctx):
+        bs = ctx.size(1)
         # Sample z
-        z = torch.randn(1, self.d_model, device=self.device)
-        preds = self.decode(size=(L, 1, self.d_model), z=z, context=ctx)
+        z = torch.randn(bs, self.d_model).cuda()
+        preds = self.decode(size=(L, bs, self.d_model), z=z, context=ctx)
         return preds
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -216,17 +216,16 @@ class InteractivePainter(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.amp_enabled = config["train"]["amp_enabled"]
         self.embedder = Embedder(config)
         self.context_encoder = ContextEncoder(config)
         self.transformer_vae = TransformerVAE(config)
 
     def forward(self, data):
-
-        context, x = self.embedder(data)
-
-        context_features = self.context_encoder(context)
-        predictions, mu, log_sigma = self.transformer_vae(x, context_features)
-
+        with torch.cuda.amp.autocast(enabled=self.amp_enabled):
+            context, x = self.embedder(data)
+            context_features = self.context_encoder(context)
+            predictions, mu, log_sigma = self.transformer_vae(x, context_features)
         return predictions, mu, log_sigma
 
     @torch.no_grad()
@@ -275,6 +274,14 @@ if __name__ == '__main__':
 
     params = count_parameters(net)
     print(f'Number of trainable parameters: {params / 10**6}')
-    preds, mu, l_sigma = net(data)
+    #preds, mu, l_sigma = net(data)
 
-    print(preds.shape)
+    # Predict with context
+    clean_preds = net.generate(data)
+
+    # Predict without context
+    noctx_preds = net.generate(data, no_context=True)
+
+    # Prediction without z
+    noz_preds = net.generate(data, no_z=True)
+    print(noz_preds.shape)

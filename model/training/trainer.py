@@ -14,6 +14,7 @@ from torch.cuda.amp import GradScaler
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 
+logging.getLogger(__name__)
 
 class Trainer:
 
@@ -49,6 +50,7 @@ class Trainer:
         # Misc
         self.device = config["device"]
         self.print_freq = config["train"]["logging"]["print_freq"]
+        self.amp_enabled = config["train"]["amp_enabled"]
 
         if config["train"]["auto_resume"]["active"]:
             self.load_checkpoint(model, config["train"]["auto_resume"]["resume_path"])
@@ -64,7 +66,11 @@ class Trainer:
         else:
             path = os.path.join(self.checkpoint_path, f"latest.pth.tar")
 
-        torch.save({"model": model.state_dict(),
+        if isinstance(model, nn.DataParallel):
+            model_state_dict = model.module.state_dict()
+        else:
+            model_state_dict = model.state_dict()
+        torch.save({"model": model_state_dict,
                     "optimizer": self.optimizer.state_dict(),
                     "lr_scheduler": self.LRScheduler.state_dict(),
                     "scaler" : self.scaler.state_dict(),
@@ -99,7 +105,7 @@ class Trainer:
             batch = dict_to_device(batch, self.device)
             targets = batch['strokes_seq']
 
-            with torch.cuda.amp.autocast():
+            with torch.cuda.amp.autocast(enabled=self.amp_enabled):
                 predictions, mu, log_sigma = model(batch)
                 mse_loss = self.MSELoss(predictions, targets)
                 kl_div = self.KLDivergence(mu, log_sigma)
@@ -159,33 +165,39 @@ class Trainer:
         mse_no_z_meter = AverageMeter(name='mse_no_z')
 
         logs = {}
-        for rep in range(10):     # TO FIX when we have a proper test set, for now just iterate more time on this
-            for idx, data in enumerate(self.test_dataloader):
-                data = dict_to_device(data, self.device, to_skip=['strokes', 'time_steps'])
 
-                # Predict with context
-                clean_preds = model.generate(data)
-                clean_mse = self.MSELoss(clean_preds, data['strokes_seq'])
-                mse_loss_meter.update(clean_mse.item(), 1)
+        if isinstance(model, nn.DataParallel):
+            model = model.module
 
-                # Predict without context
-                noctx_preds = model.generate(data, no_context=True)
-                noctx_mse = self.MSELoss(noctx_preds, data['strokes_seq'])
-                mse_no_context_meter.update(noctx_mse.item(), 1)
+        for idx, data in enumerate(self.test_dataloader):
+            data = dict_to_device(data, self.device, to_skip=['strokes', 'time_steps'])
+            targets = data['strokes_seq']
+            bs = targets.size(0)
 
-                # Prediction without z
-                noz_preds = model.generate(data, no_z=True)
-                noz_mse = self.MSELoss(noz_preds, data['strokes_seq'])
-                mse_no_z_meter.update(noz_mse.item(), 1)
+            # Predict with context
+            clean_preds = model.generate(data)
+            clean_mse = self.MSELoss(clean_preds, targets)
+            mse_loss_meter.update(clean_mse.item(), bs)
 
-                # Log some images
-                if idx == 0 and rep == 0:
-                    imgs_to_log = render_save_strokes(generated_strokes=clean_preds,
-                                                      original_strokes=data['strokes_seq'],
-                                                      painter=self.pt,
-                                                      output_path=self.checkpoint_path_render,
-                                                      ep=ep)
-                    logs.update(imgs_to_log)
+            # Predict without context
+            noctx_preds = model.generate(data, no_context=True)
+            noctx_mse = self.MSELoss(noctx_preds, targets)
+            mse_no_context_meter.update(noctx_mse.item(), bs)
+
+            # Prediction without z
+            noz_preds = model.generate(data, no_z=True)
+            noz_mse = self.MSELoss(noz_preds, targets)
+            mse_no_z_meter.update(noz_mse.item(), bs)
+
+            # Log some images
+            if idx == 0:
+                # TOFIX: for now just plot the first element of the first batch
+                imgs_to_log = render_save_strokes(generated_strokes=clean_preds[0][None],
+                                                  original_strokes=targets[0][None],
+                                                  painter=self.pt,
+                                                  output_path=self.checkpoint_path_render,
+                                                  ep=ep)
+                logs.update(imgs_to_log)
 
         logging.info(f'TEST: '
                      f'Clean MSE : {mse_loss_meter.avg}\t||\t'

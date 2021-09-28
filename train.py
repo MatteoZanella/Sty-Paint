@@ -1,6 +1,7 @@
 import argparse
 import os
 import logging
+import numpy as np
 
 from model.utils.parse_config import ConfigParser
 from model.model import InteractivePainter
@@ -8,6 +9,7 @@ from model.only_vae import OnlyVAE
 from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
+import torch
 import wandb
 
 def count_parameters(net):
@@ -34,6 +36,12 @@ if __name__ == '__main__':
     c_parser.crate_directory_output()
     print(config)
 
+    # Seed
+    seed = config["train"]["seed"]
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    torch.backends.cudnn.benchmark = True
+
     # Initialize wandb
     wandb.init(project='Brushstrokes-Generation', config=config)
     wandb.run.name = args.exp_name
@@ -45,7 +53,7 @@ if __name__ == '__main__':
     train_loader = DataLoader(dataset=dataset, batch_size=config["train"]["batch_size"], shuffle=True, num_workers=config["train"]["num_workers"])
     # Test
     dataset_test = StrokesDataset(config, isTrain=False)
-    test_loader = DataLoader(dataset=dataset_test, batch_size=1, shuffle=True)
+    test_loader = DataLoader(dataset=dataset_test, batch_size=config["train"]["batch_size"], shuffle=True)
 
     logging.info(f'Dataset stats: Train {len(dataset)} samples, Test : {len(dataset_test)} samples')
 
@@ -53,11 +61,12 @@ if __name__ == '__main__':
     if args.only_vae:
         logging.info('VAE ONLY, NO CONTEXT')
         model = OnlyVAE(config)
-        model.to(device)
+        model.cuda()
     else:
         logging.info('FULL MODEL')
         model = InteractivePainter(config)
-        model.to(device)
+        model = torch.nn.DataParallel(model)
+        model.cuda()
 
     params = count_parameters(model)
     logging.info(f'Number of trainable parameters: {params / 10**6}M')
@@ -65,8 +74,6 @@ if __name__ == '__main__':
     # Create
     trainer = Trainer(config, model, train_loader, test_loader)
     max_epochs = config["train"]["n_epochs"]
-
-    #generator = GenerateStorkes(config["render"]["painter_config"], output_path=config["train"]["logging"]["log_render_path"])
 
     wandb.watch(model)
     for ep in range(1, max_epochs+1):
@@ -87,10 +94,3 @@ if __name__ == '__main__':
 
     # Save final model
     trainer.save_checkpoint(model, epoch=ep, filename='latest')
-
-
-
-
-
-
-
