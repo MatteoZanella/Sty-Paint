@@ -4,10 +4,10 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
-from decomposition import morphology, loss
-from decomposition.networks import *
-from decomposition import renderer
-from decomposition import utils
+from dataset_acquisition.decomposition import morphology, loss
+from dataset_acquisition.decomposition.networks import *
+from dataset_acquisition.decomposition import renderer
+from dataset_acquisition.decomposition import utils
 
 import torch
 import torch.optim as optim

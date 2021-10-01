@@ -5,8 +5,9 @@ dataset :
     root_dir : '/data/eperuzzo/test_set_ade/'
   heuristic : 'lkh_col2_area1_pos0_cl7'
   resize : 256
-  context_length : 4
-  sequence_length : 8
+  context_length : 12 
+  sequence_length : 8 
+  only_strokes : True 
 model:
   only_vae : False
   d_model : 256
@@ -37,7 +38,7 @@ train:
   gpu_id : 0
   batch_size : 64
   num_workers : 8
-  seed : 0
+  seed : 43
   amp_enabled : True
   optimizer:
     max_lr : 5.0e-4
@@ -49,7 +50,7 @@ train:
   kl:
     warmup_type : 'linear'
     warm_up_epochs : 10
-    kl_lambda : 5.0e-5
+    kl_lambda : 3.0e-4
   auto_resume:
     active : False
     resume_path : ''

@@ -37,6 +37,9 @@ class StrokesDataset(Dataset):
         self.sequence_length = config["dataset"]["sequence_length"]
         self.heuristic = config["dataset"]["heuristic"]
         self.img_size = config["dataset"]["resize"]
+        self.only_strokes = False
+        if config["dataset"]["only_strokes"]:
+            self.only_strokes = True
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
@@ -87,27 +90,29 @@ class StrokesDataset(Dataset):
     def __getitem__(self, idx):
         name = self.filenames[idx]
         # ---------
-        # Load Image
-        img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
-        img = self.img_transform(img)
-        # ---------
         # Load strokes, reorder and sample
         all_strokes = self.load_storkes(name)
         idx = self.load_heuristic_idx(name)
         all_strokes = all_strokes[idx]
         t_C, t, t_T = self.sample_storkes(all_strokes.shape[0])
         strokes = all_strokes[t_C:t_T, :]
-        # ---------
-        # Load rendered image up to s
-        canvas_sequence = self.load_canvas_states(name, t_C, t_T)
-
         data = {
             'strokes_ctx' : strokes[:self.context_length, :],
-            'canvas_ctx' : canvas_sequence[:self.context_length, :, :, :],
-            'strokes_seq' : strokes[self.context_length:, :],
-            'canvas_seq' : canvas_sequence[self.context_length:, :, :, :],
-            'img' : img
-        }
+            'strokes_seq' : strokes[self.context_length :, :]}
+        # ---------
+        if not self.only_strokes:
+            # Load rendered image up to s
+            canvas_sequence = self.load_canvas_states(name, t_C, t_T)
+            # ---------
+            # Load Image
+            img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
+            img = self.img_transform(img)
+
+            data.update({
+                'canvas_ctx' : canvas_sequence[:self.context_length, :, :, :],
+                'canvas_seq' : canvas_sequence[self.context_length:, :, :, :],
+                'img' : img
+            })
 
         if not self.isTrain:
             data.update({'time_steps' : [t_C, t, t_T]})

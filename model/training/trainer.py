@@ -14,7 +14,6 @@ from torch.cuda.amp import GradScaler
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 
-logging.getLogger(__name__)
 
 class Trainer:
 
@@ -50,7 +49,6 @@ class Trainer:
         # Misc
         self.device = config["device"]
         self.print_freq = config["train"]["logging"]["print_freq"]
-        self.amp_enabled = config["train"]["amp_enabled"]
 
         if config["train"]["auto_resume"]["active"]:
             self.load_checkpoint(model, config["train"]["auto_resume"]["resume_path"])
@@ -66,11 +64,7 @@ class Trainer:
         else:
             path = os.path.join(self.checkpoint_path, f"latest.pth.tar")
 
-        if isinstance(model, nn.DataParallel):
-            model_state_dict = model.module.state_dict()
-        else:
-            model_state_dict = model.state_dict()
-        torch.save({"model": model_state_dict,
+        torch.save({"model": model.state_dict(),
                     "optimizer": self.optimizer.state_dict(),
                     "lr_scheduler": self.LRScheduler.state_dict(),
                     "scaler" : self.scaler.state_dict(),
@@ -105,7 +99,7 @@ class Trainer:
             batch = dict_to_device(batch, self.device)
             targets = batch['strokes_seq']
 
-            with torch.cuda.amp.autocast(enabled=self.amp_enabled):
+            with torch.cuda.amp.autocast():
                 predictions, mu, log_sigma = model(batch)
                 mse_loss = self.MSELoss(predictions, targets)
                 kl_div = self.KLDivergence(mu, log_sigma)
@@ -156,9 +150,8 @@ class Trainer:
 
         return stats
 
-
     @torch.no_grad()
-    def evaluate(self, model, ep):
+    def evaluate(self, model, ep) :
         model.eval()
         mse_loss_meter = AverageMeter(name='mse_loss')
         mse_no_context_meter = AverageMeter(name='mse_without_context')
@@ -166,10 +159,7 @@ class Trainer:
 
         logs = {}
 
-        if isinstance(model, nn.DataParallel):
-            model = model.module
-
-        for idx, data in enumerate(self.test_dataloader):
+        for idx, data in enumerate(self.test_dataloader) :
             data = dict_to_device(data, self.device, to_skip=['strokes', 'time_steps'])
             targets = data['strokes_seq']
             bs = targets.size(0)
@@ -190,7 +180,7 @@ class Trainer:
             mse_no_z_meter.update(noz_mse.item(), bs)
 
             # Log some images
-            if idx == 0:
+            if idx == 0 :
                 # TOFIX: for now just plot the first element of the first batch
                 imgs_to_log = render_save_strokes(generated_strokes=clean_preds[0][None],
                                                   original_strokes=targets[0][None],
@@ -205,7 +195,7 @@ class Trainer:
                      f'No z MSE : {mse_no_z_meter.avg}')
 
         logs.update({'test/clean_mse' : mse_loss_meter.avg,
-                    'test/no_context_mse' : mse_no_context_meter.avg,
+                     'test/no_context_mse' : mse_no_context_meter.avg,
                      'test/no_z_mse' : mse_no_z_meter.avg})
 
         return logs

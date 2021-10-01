@@ -10,6 +10,7 @@ from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
 import torch
+
 import wandb
 
 def count_parameters(net):
@@ -51,9 +52,10 @@ if __name__ == '__main__':
     # Train
     dataset = StrokesDataset(config, isTrain=True)
     train_loader = DataLoader(dataset=dataset, batch_size=config["train"]["batch_size"], shuffle=True, num_workers=config["train"]["num_workers"])
+
     # Test
     dataset_test = StrokesDataset(config, isTrain=False)
-    test_loader = DataLoader(dataset=dataset_test, batch_size=config["train"]["batch_size"], shuffle=True)
+    test_loader = DataLoader(dataset=dataset_test, batch_size=16, shuffle=True)
 
     logging.info(f'Dataset stats: Train {len(dataset)} samples, Test : {len(dataset_test)} samples')
 
@@ -61,12 +63,11 @@ if __name__ == '__main__':
     if args.only_vae:
         logging.info('VAE ONLY, NO CONTEXT')
         model = OnlyVAE(config)
-        model.cuda()
+        model.to(device)
     else:
         logging.info('FULL MODEL')
         model = InteractivePainter(config)
-        model = torch.nn.DataParallel(model)
-        model.cuda()
+        model.to(device)
 
     params = count_parameters(model)
     logging.info(f'Number of trainable parameters: {params / 10**6}M')

@@ -4,6 +4,7 @@ from einops import rearrange, repeat
 from model.networks.image_encoders import ResNetEncoder
 from model.networks.layers import PositionalEncoding
 
+
 class Embedder(nn.Module):
 
     def __init__(self, config):
@@ -14,9 +15,13 @@ class Embedder(nn.Module):
         self.context_length = config["dataset"]["context_length"]
         self.seq_length = config["dataset"]["sequence_length"]
         #self.L = config["dataset_acquisition"]["total_length"]
+        self.only_strokes = False
+        if config["dataset"]["only_strokes"]:
+            self.only_strokes = True
 
         # Networks
-        self.img_encoder = ResNetEncoder(pretrained=config["model"]["img_encoder"]["pretrained"])
+        if not self.only_strokes:
+            self.img_encoder = ResNetEncoder(pretrained=config["model"]["img_encoder"]["pretrained"])
 
         self.context_PE = PositionalEncoding(self.d_model, dropout=0)
         self.sequence_PE = PositionalEncoding(self.d_model, dropout=0)
@@ -24,7 +29,10 @@ class Embedder(nn.Module):
         #self.context_PE = nn.Parameter(torch.randn(self.context_length+1, self.d_model))
         #self.sequence_PE = nn.Parameter(torch.randn(self.seq_length, self.d_model))
 
-        self.proj_features = nn.Linear(512 + self.s_params, self.d_model)
+        if not self.only_strokes:
+            self.proj_features = nn.Linear(512 + self.s_params, self.d_model)
+        else:
+            self.proj_features = nn.Linear(self.s_params, self.d_model)
 
     def encode_canvas(self, x):
         L = x.size(1)
@@ -33,8 +41,7 @@ class Embedder(nn.Module):
         x = rearrange(x, '(bs L) n_feat -> bs L n_feat', L=L)
         return x
 
-    def forward(self, data):
-        # Unpack data
+    def embed_imgs_and_strokes(self, data):
         strokes_seq = data['strokes_seq']
         canvas_seq = data['canvas_seq']
         strokes_ctx = data['strokes_ctx']
@@ -48,7 +55,7 @@ class Embedder(nn.Module):
         ctx_canvas_feat = self.encode_canvas(canvas_ctx)
 
         img_feat = torch.cat((img_feat, torch.zeros(bs, self.s_params, device=img_feat.device)), dim=1)
-        ctx_sequence = torch.cat((ctx_canvas_feat, strokes_ctx), dim=-1)        # concatenate on features dim
+        ctx_sequence = torch.cat((ctx_canvas_feat, strokes_ctx), dim=-1)  # concatenate on features dim
         ctx_sequence = torch.cat((img_feat.unsqueeze(1), ctx_sequence), dim=1)  # concatenate on length dim
         ctx_sequence = self.proj_features(ctx_sequence)
 
@@ -56,7 +63,6 @@ class Embedder(nn.Module):
         x_canvas_feat = self.encode_canvas(canvas_seq)
         x_sequence = torch.cat((x_canvas_feat, strokes_seq), dim=-1)
         x_sequence = self.proj_features(x_sequence)
-
 
         # Permute sequences as length-first
         ctx_sequence = ctx_sequence.permute(1, 0, 2)
@@ -67,6 +73,35 @@ class Embedder(nn.Module):
         x_sequence = self.sequence_PE(x_sequence)
 
         return ctx_sequence, x_sequence
+
+    def embed_strokes(self, data):
+        strokes_seq = data['strokes_seq']
+        strokes_ctx = data['strokes_ctx']
+
+        bs = strokes_ctx.size(0)
+
+        # Context
+        ctx_sequence = self.proj_features(strokes_ctx)
+
+        # Sequence
+        x_sequence = self.proj_features(strokes_seq)
+
+        # Permute sequences as length-first
+        ctx_sequence = ctx_sequence.permute(1, 0, 2)
+        x_sequence = x_sequence.permute(1, 0, 2)
+
+        # Add positional encodings to the sequences
+        ctx_sequence = self.context_PE(ctx_sequence)
+        x_sequence = self.sequence_PE(x_sequence)
+
+        return ctx_sequence, x_sequence
+
+    def forward(self, data):
+        # Unpack data
+        if not self.only_strokes:
+            return self.embed_imgs_and_strokes(data)
+        else:
+            return self.embed_strokes(data)
 # ----------------------------------------------------------------------------------------------------------------------
 
 class ContextEncoder(nn.Module):
@@ -113,7 +148,9 @@ class TransformerVAE(nn.Module):
         self.ctx_z = config["model"]["ctx_z"]   # how to merge context and z
         if self.ctx_z == 'proj':
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
-
+        
+        if config["dataset"]["only_strokes"]:
+            self.context_length -= 1
         self.time_queries_PE = PositionalEncoding(self.d_model,dropout=0)
         #self.query_dec = nn.Parameter(torch.randn(self.seq_length, self.d_model))
         self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
@@ -169,7 +206,7 @@ class TransformerVAE(nn.Module):
         return z
 
     def decode(self, size, z, context):
-        time_queries = torch.zeros(size, device=z.device)
+        time_queries = torch.zeros(size, device=self.device)
         time_queries = self.time_queries_PE(time_queries)
 
         if self.ctx_z == 'proj':
@@ -202,7 +239,9 @@ class TransformerVAE(nn.Module):
         return out, mu, log_sigma
 
     @torch.no_grad()
-    def sample(self, L, ctx):
+    def sample(self, ctx, L=None):
+        if L is None:
+            L = self.seq_length
         bs = ctx.size(1)
         # Sample z
         z = torch.randn(bs, self.d_model).cuda()
@@ -216,16 +255,16 @@ class InteractivePainter(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.amp_enabled = config["train"]["amp_enabled"]
         self.embedder = Embedder(config)
         self.context_encoder = ContextEncoder(config)
         self.transformer_vae = TransformerVAE(config)
 
     def forward(self, data):
-        with torch.cuda.amp.autocast(enabled=self.amp_enabled):
-            context, x = self.embedder(data)
-            context_features = self.context_encoder(context)
-            predictions, mu, log_sigma = self.transformer_vae(x, context_features)
+
+        context, x = self.embedder(data)
+        context_features = self.context_encoder(context)
+        predictions, mu, log_sigma = self.transformer_vae(x, context_features)
+
         return predictions, mu, log_sigma
 
     @torch.no_grad()
@@ -235,14 +274,13 @@ class InteractivePainter(nn.Module):
         if no_context: # zero out the context to check if the model benefit from it
             context_features = torch.randn_like(context_features, device=context_features.device)
         if no_z:
-            predictions = self.transformer_vae.sample(L=8, ctx=context_features)
+            predictions = self.transformer_vae.sample(ctx=context_features)
         else:
             predictions = self.transformer_vae(x, context_features)[0]
         return predictions
 
 
 if __name__ == '__main__':
-
     from dataset import StrokesDataset
     from torch.utils.data import DataLoader
     from utils.parse_config import ConfigParser
@@ -259,7 +297,6 @@ if __name__ == '__main__':
     c_parser.parse_config(args)
     config = c_parser.get_config()
 
-
     dataset = StrokesDataset(config=config, isTrain=True)
 
     dataloader = DataLoader(dataset, batch_size=2)
@@ -268,13 +305,16 @@ if __name__ == '__main__':
     # Define the model
     net = InteractivePainter(config)
 
+    preds = net(data)
 
-    def count_parameters(model):
+
+    def count_parameters(model) :
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
     params = count_parameters(net)
-    print(f'Number of trainable parameters: {params / 10**6}')
-    #preds, mu, l_sigma = net(data)
+    print(f'Number of trainable parameters: {params / 10 ** 6}')
+    # preds, mu, l_sigma = net(data)
 
     # Predict with context
     clean_preds = net.generate(data)

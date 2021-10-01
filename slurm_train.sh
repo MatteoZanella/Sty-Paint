@@ -14,4 +14,4 @@ conda activate brush
 
 trap "trap ' ' TERM INT; kill -TERM 0; wait" TERM INT
 cd /data/eperuzzo/brushstrokes-generation/code/
-python train.py --exp_name vae_proj --config ./configs/train/todi_config.yaml & wait
+python train.py --exp_name cat_1e-3_todi_seq_4_ctx_8 --config ./configs/train/todi_config.yaml & wait
