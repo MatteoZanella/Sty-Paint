@@ -37,8 +37,8 @@ if __name__ == '__main__':
 
     # Create directories and logging
     Path(args.output_path).mkdir(parents=True, exist_ok=True)
-    log_name = os.path.basename(args.csv_file).split('.')[0]
-    logging.basicConfig(level=logging.INFO, filename=os.path.join(args.output_path, log_name + '.log'))
+    chunk_name = os.path.basename(args.csv_file).split('.')[0]
+    logging.basicConfig(level=logging.INFO, filename=os.path.join(args.output_path, chunk_name + '.log'))
     logging.info(f'Total Number of images to process in this chunk: {len(df)}')
 
     errors = []
@@ -49,7 +49,7 @@ if __name__ == '__main__':
             img_name = row['Images']
 
             img_path = os.path.join(args.data_path, img_name)
-            tmp_output_path = os.path.join(args.output_path, img_name.split('.')[0])
+            tmp_output_path = os.path.join(args.output_path, chunk_name, img_name.split('.')[0])
             Path(tmp_output_path).mkdir(parents=True, exist_ok=True)
             # --------------------------------------------------------------------------------------------------------------
             # Decomposition
@@ -71,5 +71,5 @@ if __name__ == '__main__':
             logging.error(traceback.format_exc())
             errors.append(row['Images'])
 
-    with open(os.path.join(args.output_path, f'errors_{log_name}.pkl'), 'wb') as f:
+    with open(os.path.join(args.output_path, f'errors_{chunk_name}.pkl'), 'wb') as f:
         pickle.dump(errors, f)

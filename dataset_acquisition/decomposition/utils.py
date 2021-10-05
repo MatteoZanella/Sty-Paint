@@ -8,10 +8,11 @@ import torch
 import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
-from dataset_acquisition.decomposition import renderer
 import yaml
 from types import SimpleNamespace
 import matplotlib.pyplot as plt
+
+from . import renderer
 
 M_RENDERING_SAMPLES_PER_EPOCH = 50000
 

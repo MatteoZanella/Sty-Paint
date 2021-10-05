@@ -4,10 +4,8 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
-from dataset_acquisition.decomposition import morphology, loss
-from dataset_acquisition.decomposition.networks import *
-from dataset_acquisition.decomposition import renderer
-from dataset_acquisition.decomposition import utils
+from . import morphology, loss, utils, renderer
+from .networks import *
 
 import torch
 import torch.optim as optim
@@ -359,7 +357,7 @@ class Painter(PainterBase):
             cv2.waitKey(1)
 
 
-    def _render(self, v, path=None, save_jpgs=True, save_video=True):
+    def _render(self, v, path=None, canvas_start=None, save_jpgs=False, save_video=False):
 
         v = v[0,:,:self.rderr.d]   # if we add additional information, make sure to use only needed parms
         if self.args.keep_aspect_ratio:
@@ -379,7 +377,11 @@ class Painter(PainterBase):
                 (out_w, out_h))
 
         print('rendering canvas...')
-        self.rderr.create_empty_canvas()
+        if canvas_start is None:
+            self.rderr.create_empty_canvas()
+        else:
+            self.rderr.canvas = canvas_start
+
         alphas = []
         for i in range(v.shape[0]):  # for each stroke
             self.rderr.stroke_params = v[i, :]
@@ -408,13 +410,14 @@ class Painter(PainterBase):
                 checked_strokes.append(v[i, :][None, :])
         return np.concatenate(checked_strokes, axis=0)[None, :, :]   # restore the 1, n, parmas dimension for consistency
 
-    def check_stroke(self, inp):
+    @staticmethod
+    def check_stroke(inp):
         """
         Copy and pasetd form renderder.py
         They have a threshold on the min size of the brushstorkes
         """
 
-        r_ = max(inp[2], inp[3])   # check wifth and height, as in the original code
+        r_ = max(inp[2], inp[3])   # check width and height, as in the original code
         if r_ > 0.025:
             return True
         else:
@@ -465,8 +468,8 @@ class Painter(PainterBase):
         # self.max_divide = args.max_divide
         # self.max_m_strokes = args.max_m_strokes
 
-        # manually set the number of strokes, use more storkes at the beginning
-        self.manual_strokes_per_block = self.args.manual_storkes_params  # {2:30, 3:20, 4:15, 5:10} ##{1:9, 2:9, 3:9, 4:9, 5:9} #
+        # manually set the number of strokes, use more strokes at the beginning
+        self.manual_strokes_per_block = self.args.manual_storkes_params
         self.m_strokes_per_block = None  # self.stroke_parser()
 
         self.max_divide = max(self.manual_strokes_per_block.keys())
@@ -549,13 +552,13 @@ class Painter(PainterBase):
         #final_rendered_image, alphas = self._render(PARAMS, save_jpgs=False, save_video=False)
         return PARAMS
 
-    def inference(self, strokes, output_path=None, order=None, save_jpgs=False, save_video=False):
+    def inference(self, strokes, output_path=None, order=None, canvas_start=None, save_jpgs=False, save_video=False):
 
         if order is not None:
             strokes = strokes[:, order, :]
 
         if output_path is None:
-            img, alphas = self._render(strokes, output_path, save_jpgs=save_jpgs, save_video=save_video)
+            img, alphas = self._render(strokes, canvas_start=canvas_start)
             return img, alphas
         else:
-            _ = self._render(strokes, output_path, save_jpgs=save_jpgs, save_video=save_video)
+            _ = self._render(strokes, path=output_path, canvas_start=canvas_start, save_jpgs=save_jpgs, save_video=save_video)
