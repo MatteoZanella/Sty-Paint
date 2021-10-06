@@ -4,10 +4,10 @@ dataset :
   test :
     root_dir : '/Users/eliap/Projects/tiny_dataset'
   heuristic : 'lkh_col1_area2_pos0_cl10_sal0'
+  partition : 'ade_dataset'
   resize : 256
   context_length : 4
   sequence_length : 8
-  only_strokes : True
 model:
   only_vae : False
   d_model : 256
@@ -18,6 +18,7 @@ model:
     type : 'resnet18'
     pretrained : True
   encoder:
+    canvas_strokes : 'add'
     context_pooling : False
     act : 'gelu'
     n_heads : 8

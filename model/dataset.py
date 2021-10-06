@@ -6,6 +6,7 @@ import numpy as np
 import random
 import os
 import pickle
+import pandas as pd
 
 """
 Dataset structure:
@@ -20,7 +21,7 @@ root_dir:
             .
             .
             .
-            - j.png   # image rendered until the j-th, it is used to condition the transformer
+            - j.png   # image rendered until the j-th
 """
 
 class StrokesDataset(Dataset):
@@ -29,17 +30,25 @@ class StrokesDataset(Dataset):
                  config,
                  isTrain):
 
+        self.config = config
         self.isTrain = isTrain
-        self.prefix = 'train' if self.isTrain else 'test'
-        self.root_dir = config["dataset"][self.prefix]["root_dir"]
-        self.filenames = sorted(os.listdir(self.root_dir))    # maybe check that every directory have the specified form before listing
+
+        # Load csv file
+        partition = self.config["dataset"]["partition"]
+
+        self.df = pd.read_csv(self.config["dataset"]["csv_file"])
+        if partition == 'both':
+            raise NotImplementedError()
+        else:
+            self.root_dir = os.path.join(self.config["dataset"]["root"], partition, 'brushstrokes_generation_dataset')
+
+        self.filenames = list(self.df[(self.df["partition"] == partition) & (self.df["isTrain"] == self.isTrain)]['filename'])
+
+        # Configs
         self.context_length = config["dataset"]["context_length"]
         self.sequence_length = config["dataset"]["sequence_length"]
         self.heuristic = config["dataset"]["heuristic"]
         self.img_size = config["dataset"]["resize"]
-        self.only_strokes = False
-        if config["dataset"]["only_strokes"]:
-            self.only_strokes = True
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
@@ -89,6 +98,7 @@ class StrokesDataset(Dataset):
 
     def __getitem__(self, idx):
         name = self.filenames[idx]
+        name = name.split('.')[0]
         # ---------
         # Load strokes, reorder and sample
         all_strokes = self.load_storkes(name)
@@ -100,22 +110,21 @@ class StrokesDataset(Dataset):
             'strokes_ctx' : strokes[:self.context_length, :],
             'strokes_seq' : strokes[self.context_length :, :]}
         # ---------
-        if not self.only_strokes:
-            # Load rendered image up to s
-            canvas_sequence = self.load_canvas_states(name, t_C, t_T)
-            # ---------
-            # Load Image
-            img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
-            img = self.img_transform(img)
+        # Load rendered image up to s
+        canvas_sequence = self.load_canvas_states(name, t_C, t_T)
+        # ---------
+        # Load Image
+        img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
+        img = self.img_transform(img)
 
-            data.update({
-                'canvas_ctx' : canvas_sequence[:self.context_length, :, :, :],
-                'canvas_seq' : canvas_sequence[self.context_length:, :, :, :],
-                'img' : img
-            })
+        data.update({
+            'canvas_ctx' : canvas_sequence[:self.context_length, :, :, :],
+            'canvas_seq' : canvas_sequence[self.context_length:, :, :, :],
+            'img' : img
+        })
 
         if not self.isTrain:
             data.update({'time_steps' : [t_C, t, t_T]})
-            #data.update({'strokes' : all_strokes})
+            #data.update({'strokes' : all_strokes})  #TODO: fix here
 
         return data

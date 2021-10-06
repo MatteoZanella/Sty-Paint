@@ -1,15 +1,12 @@
 dataset :
-  train :
-    root_dir : '/data/eperuzzo/ade_generative_brushstrokes_dataset/'
-  test :
-    root_dir : '/data/eperuzzo/test_set_ade/'
+  root : '/data/eperuzzo/IBG_dataset/'
+  csv_file : '/data/eperuzzo/IBG_dataset/dataset_config.csv'
+  partition : 'ade_dataset'
   heuristic : 'lkh_col2_area1_pos0_cl7'
   resize : 256
-  context_length : 12 
-  sequence_length : 8 
-  only_strokes : True 
+  context_length : 4
+  sequence_length : 8
 model:
-  only_vae : False
   d_model : 256
   n_strokes_params : 12
   ctx_z : 'cat'
@@ -18,6 +15,7 @@ model:
     type : 'resnet18'
     pretrained : True
   encoder:
+    canvas_strokes : 'proj'
     context_pooling : False
     act : 'gelu'
     n_heads : 8
@@ -55,9 +53,10 @@ train:
     active : False
     resume_path : ''
   logging:
-    checkpoint_path : '/data/eperuzzo/brushstrokes-generation/checkpoints/'
+    wandb_api_key : "5745461314f5f4abb2c957bb991d2df97144ba06"
+    checkpoint_path : '/data/eperuzzo/model_checkpoints/'
     save_freq : 1000
     print_freq : 10
 render:
-  painter_config : '/data/eperuzzo/brushstrokes-generation/code/configs/decomposition/painter_config.yaml'
+  painter_config : '/data/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config.yaml'
   freq : 1

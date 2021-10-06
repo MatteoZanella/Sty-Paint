@@ -64,7 +64,12 @@ class Trainer:
         else:
             path = os.path.join(self.checkpoint_path, f"latest.pth.tar")
 
-        torch.save({"model": model.state_dict(),
+        if isinstance(model, nn.DataParallel):
+            model_state_dict = model.module.state_dict()
+        else:
+            model_state_dict = model.state_dict()
+
+        torch.save({"model": model_state_dict,
                     "optimizer": self.optimizer.state_dict(),
                     "lr_scheduler": self.LRScheduler.state_dict(),
                     "scaler" : self.scaler.state_dict(),
@@ -165,17 +170,17 @@ class Trainer:
             bs = targets.size(0)
 
             # Predict with context
-            clean_preds = model.generate(data)
+            clean_preds = model.module.generate(data)
             clean_mse = self.MSELoss(clean_preds, targets)
             mse_loss_meter.update(clean_mse.item(), bs)
 
             # Predict without context
-            noctx_preds = model.generate(data, no_context=True)
+            noctx_preds = model.module.generate(data, no_context=True)
             noctx_mse = self.MSELoss(noctx_preds, targets)
             mse_no_context_meter.update(noctx_mse.item(), bs)
 
             # Prediction without z
-            noz_preds = model.generate(data, no_z=True)
+            noz_preds = model.module.generate(data, no_z=True)
             noz_mse = self.MSELoss(noz_preds, targets)
             mse_no_z_meter.update(noz_mse.item(), bs)
 

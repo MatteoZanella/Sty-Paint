@@ -2,25 +2,22 @@ import yaml
 import os
 from pathlib import Path
 import torch
-import glob
 
 class ConfigParser:
-    def __init__(self, args, is_train=True):
-        self.is_train = is_train
+    def __init__(self, args, isTrain=True):
+        self.isTrain = isTrain
         self.config_path = args.config
 
         with open(self.config_path, 'r') as f:
             self.config = yaml.safe_load(f)
 
     def parse_config(self, args):
+        if self.isTrain:
+            assert self.config["model"]["encoder"]["canvas_strokes"] == 'proj' or self.config["model"]["encoder"]["canvas_strokes"] == 'add'
+            assert self.config["model"]["ctx_z"] == 'proj' or self.config["model"]["ctx_z"] == 'cat'
+            assert self.config["dataset"]["partition"] == 'both' or self.config["dataset"]["partition"] == 'ade_dataset' or self.config["dataset"]["partition"] == 'oxford_pet_dataset'
 
-        assert self.config["model"]["ctx_z"] == 'proj' or self.config["model"]["ctx_z"] == 'cat'
 
-        if args.only_vae:
-            self.config["model"]["only_vae"] = True
-            self.config["model"]["ctx_z"] = None
-
-        if self.is_train:
             self.config["train"]["logging"]["checkpoint_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], args.exp_name)
             f = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'latest.pth.tar')
             if os.path.exists(f):
@@ -41,4 +38,3 @@ class ConfigParser:
 
     def get_config(self):
         return self.config
-

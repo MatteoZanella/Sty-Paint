@@ -1,12 +1,13 @@
 dataset :
   train :
-    root_dir : '/home/eperuzzo/brushstrokes/ade-gen-brush-debug/train/'
+    root_dir : '/home/eperuzzo/test_set_debug/'
   test :
-    root_dir : '/home/eperuzzo/brushstrokes/ade-gen-brush-debug/test/'
+    root_dir : '/home/eperuzzo/test_set_debug/'
   heuristic : 'lkh_col2_area1_pos0_cl7'
   resize : 256
   context_length : 4
   sequence_length : 8
+  only_strokes : False
 model:
   only_vae : False
   d_model : 256
