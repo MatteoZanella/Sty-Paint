@@ -49,6 +49,8 @@ class StrokesDataset(Dataset):
         self.sequence_length = config["dataset"]["sequence_length"]
         self.heuristic = config["dataset"]["heuristic"]
         self.img_size = config["dataset"]["resize"]
+        self.use_images = config["dataset"]["use_images"]
+        self.use_ref_canvas = config["dataset"]["use_ref_canvas"]
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
@@ -58,7 +60,7 @@ class StrokesDataset(Dataset):
     def __len__(self):
         return len(self.filenames)
 
-    def load_storkes(self, name):
+    def load_strokes(self, name):
         '''
         Format is 1 x T x 12   (x,y,h,w,theta,r1,g1,b1,r2,g2,b2,alpha)
         '''
@@ -69,7 +71,7 @@ class StrokesDataset(Dataset):
 
         return strokes
 
-    def sample_storkes(self, n):
+    def sample_strokes(self, n):
         t = random.randint(self.context_length, n-self.sequence_length)
         t_C = t-self.context_length
         t_T = t+self.sequence_length
@@ -82,18 +84,10 @@ class StrokesDataset(Dataset):
             idx = pickle.load(f)
         return idx
 
-    def load_canvas_states(self, name, t_C, t_T):
-
+    def load_canvas_states(self, name, time_step):
         tmp_path = os.path.join(self.root_dir, name, 'render_' + self.heuristic)
-
-        canvas = []
-        for i in range(t_C, t_T):
-            img = Image.open(os.path.join(tmp_path, f'{i}.jpg'))
-            img = self.img_transform(img)
-            canvas.append(img)
-
-        canvas = torch.stack(canvas)
-
+        canvas = Image.open(os.path.join(tmp_path, f'{str(time_step)}.jpg'))
+        canvas = self.img_transform(canvas)
         return canvas
 
     def __getitem__(self, idx):
@@ -101,27 +95,26 @@ class StrokesDataset(Dataset):
         name = name.split('.')[0]
         # ---------
         # Load strokes, reorder and sample
-        all_strokes = self.load_storkes(name)
+        all_strokes = self.load_strokes(name)
         idx = self.load_heuristic_idx(name)
         all_strokes = all_strokes[idx]
-        t_C, t, t_T = self.sample_storkes(all_strokes.shape[0])
+        t_C, t, t_T = self.sample_strokes(all_strokes.shape[0])
         strokes = all_strokes[t_C:t_T, :]
         data = {
-            'strokes_ctx' : strokes[:self.context_length, :],
-            'strokes_seq' : strokes[self.context_length :, :]}
+            'strokes_ctx': strokes[:self.context_length, :],
+            'strokes_seq': strokes[self.context_length :, :]}
         # ---------
-        # Load rendered image up to s
-        canvas_sequence = self.load_canvas_states(name, t_C, t_T)
-        # ---------
-        # Load Image
-        img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
-        img = self.img_transform(img)
+        if self.use_images:
+            # Load rendered image up to s
+            canvas = self.load_canvas_states(name, t-1)
+            # ---------
+            # Load Image
+            img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
+            img = self.img_transform(img)
 
-        data.update({
-            'canvas_ctx' : canvas_sequence[:self.context_length, :, :, :],
-            'canvas_seq' : canvas_sequence[self.context_length:, :, :, :],
-            'img' : img
-        })
+            data.update({
+                'canvas': canvas,
+                'img': img})
 
         if not self.isTrain:
             data.update({'time_steps' : [t_C, t, t_T]})

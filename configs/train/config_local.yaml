@@ -18,6 +18,7 @@ model:
     type : 'resnet18'
     pretrained : True
   encoder:
+    pe : 'learnable'
     canvas_strokes : 'add'
     context_pooling : False
     act : 'gelu'

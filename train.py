@@ -4,7 +4,7 @@ import logging
 import numpy as np
 
 from model.utils.parse_config import ConfigParser
-from model.model import InteractivePainter
+from model import model, model_no_images
 from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
@@ -54,12 +54,16 @@ if __name__ == '__main__':
 
     # Test
     dataset_test = StrokesDataset(config, isTrain=False)
-    test_loader = DataLoader(dataset=dataset_test, batch_size=config["train"]["batch_size"], shuffle=True, pin_memory=True)
+    test_loader = DataLoader(dataset=dataset_test, batch_size=config["train"]["batch_size"], shuffle=True, pin_memory=False)
 
     logging.info(f'Dataset stats: Train {len(dataset)} samples, Test : {len(dataset_test)} samples')
 
     # Create model
-    model = InteractivePainter(config)
+    if config["dataset"]["use_images"]:
+        model = model.InteractivePainter(config)
+    else:
+        model = model_no_images.InteractivePainter(config)
+
     model = nn.DataParallel(model)
     model.cuda()
 

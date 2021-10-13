@@ -6,6 +6,8 @@ dataset :
   resize : 256
   context_length : 4
   sequence_length : 8
+  use_images : True
+  use_ref_canvas : False
 model:
   d_model : 256
   n_strokes_params : 12
@@ -15,7 +17,8 @@ model:
     type : 'resnet18'
     pretrained : True
   encoder:
-    canvas_strokes : 'proj'
+    pe : 'sine'
+    canvas_strokes : 'add'
     context_pooling : False
     act : 'gelu'
     n_heads : 8
