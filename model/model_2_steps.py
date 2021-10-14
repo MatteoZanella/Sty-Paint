@@ -1,14 +1,26 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
-from model.networks.image_encoders import resnet18
-from model.networks.layers import PE
+from networks.image_encoders import resnet18
+from networks.layers import PE
 from timm.models.layers import trunc_normal_
-
+import numpy as np
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
+def pos_to_idx(x, width=256):
+    with torch.no_grad():
+        x = x.detach().numpy()
+        x = np.rint(x * (width - 1) + 0.5)
+
+        # index to feature maps
+        x_i = x[:, :, 0] // 32
+        y_i = x[:, :, 1] // 32
+
+        flat_idx = y_i * 8 + x_i
+
+    return flat_idx.transpose([1,0])
 
 class Embedder(nn.Module) :
 
@@ -38,7 +50,7 @@ class Embedder(nn.Module) :
         self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
                                        layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
 
-        self.conv_proj = nn.Conv2d(in_channels=1024, out_channels=256, kernel_size=(3, 3), padding=1, stride=1)
+        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3, 3), padding=1, stride=1)
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
     def forward(self, data) :
@@ -70,7 +82,8 @@ class Embedder(nn.Module) :
         ctx_sequence = ctx_sequence.permute(1, 0, 2)
         x_sequence = x_sequence.permute(1, 0, 2)
 
-        return ctx_sequence, x_sequence
+        return ctx_sequence, x_sequence, visual_feat
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -109,7 +122,7 @@ class TransformerVAE(nn.Module) :
         if self.ctx_z == 'proj' :
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
 
-        if config["model"]["decoder_pe"] == 'sine':
+        if config["model"]["decoder_pe"] == 'sine' :
             self.time_queries_PE = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
             self.time_queries_PE = self.time_queries_PE.permute(1, 0, 2)
         else :
@@ -129,7 +142,8 @@ class TransformerVAE(nn.Module) :
             ),
             num_layers=config["model"]["vae_encoder"]["n_layers"])
 
-        self.vae_decoder = nn.TransformerDecoder(
+        # Divide the decoder in 2 modules
+        self.pos_decoder = nn.TransformerDecoder(
             decoder_layer=nn.TransformerDecoderLayer(
                 d_model=self.d_model,
                 nhead=config["model"]["vae_decoder"]["n_heads"],
@@ -138,11 +152,24 @@ class TransformerVAE(nn.Module) :
             ),
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
-        # Final projection head
-        self.prediction_head = nn.Sequential(
-            nn.Linear(self.d_model, self.s_params))
-        if config["model"]["activation_last_layer"] == "sigmoid" :
-            self.prediction_head.add_module('act', nn.Sigmoid())
+        self.pos_head = nn.Sequential(
+            nn.Linear(self.d_model, 2),
+            nn.Sigmoid())
+
+
+        self.color_decoder = nn.TransformerDecoder(
+            decoder_layer=nn.TransformerDecoderLayer(
+                d_model=self.d_model,
+                nhead=config["model"]["vae_decoder"]["n_heads"],
+                dim_feedforward=config["model"]["vae_decoder"]["ff_dim"],
+                activation=config["model"]["vae_decoder"]["act"],
+            ),
+            num_layers=config["model"]["vae_decoder"]["n_layers"])
+
+        self.color_head = nn.Sequential(
+            nn.Linear(self.d_model, 9),
+            nn.Sigmoid())
+
 
     def encode(self, x, context) :
         bs = x.size(1)
@@ -167,19 +194,29 @@ class TransformerVAE(nn.Module) :
         z = eps.mul(sigma).add_(mu)
         return z
 
-    def decode(self, size, z, context) :
-        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=size[1])
+    def decode_position(self, size, context):
+        time_queries = repeat(self.time_queries_PE.to(device=context.device), 'L 1 d_model -> L bs d_model', bs=size[1])
+        hidden = self.pos_decoder(time_queries, context)
+        pos = self.pos_head(hidden)
 
-        if self.ctx_z == 'proj' :
-            # # Fuse z and context using projection
-            z = repeat(z, 'bs n_feat -> ctx_len bs n_feat', ctx_len=self.context_length)
-            z_ctx = torch.cat([context, z], dim=-1)  # concatenate on the feature dimension
-            z_ctx = self.proj_ctx_z(z_ctx)
-        elif self.ctx_z == 'cat' :
-            # Fuse z and context with concatenation on length dim
-            z_ctx = torch.cat((context, z[None]), dim=0)
-        else :
-            raise NotImplementedError()
+        return pos
+
+    def decode_color(self, pos, visual_features):
+        flat_idx = pos_to_idx(pos, width=256)
+        pooled_features = visual_features[flat_idx, :]
+
+        return x_i
+
+
+
+
+    def decode(self, size, z, context, visual_features) :
+        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=size[1])
+        z_ctx = torch.cat((context, z[None]), dim=0)
+
+        pred_pos = self.decode_position(size, z_ctx)
+        x_i, y_i = self.decode_color(pred_pos, visual_features)
+
 
         out = self.vae_decoder(time_queries, z_ctx)
 
@@ -189,13 +226,13 @@ class TransformerVAE(nn.Module) :
 
         return out
 
-    def forward(self, seq, context) :
+    def forward(self, seq, context, visual_features) :
 
         mu, log_sigma = self.encode(seq, context)
         z = self.reparameterize(mu, log_sigma)
 
         # Replicate z and decode
-        out = self.decode(seq.size(), z, context)  # z is the input, context comes from the other branch
+        out = self.decode(seq.size(), z, context, visual_features)  # z is the input, context comes from the other branch
 
         return out, mu, log_sigma
 
@@ -223,9 +260,9 @@ class InteractivePainter(nn.Module) :
 
     def forward(self, data) :
 
-        context, x = self.embedder(data)
+        context, x, vs_feat = self.embedder(data)
         context_features = self.context_encoder(context)
-        predictions, mu, log_sigma = self.transformer_vae(x, context_features)
+        predictions, mu, log_sigma = self.transformer_vae(x, context_features, vs_feat)
 
         return predictions, mu, log_sigma
 
@@ -240,7 +277,6 @@ class InteractivePainter(nn.Module) :
         else :
             predictions = self.transformer_vae(x, context_features)[0]
         return predictions
-
 
 if __name__ == '__main__' :
     from dataset import StrokesDataset
@@ -265,10 +301,10 @@ if __name__ == '__main__' :
     # data = next(iter(dataloader))
 
     data = {
-        'strokes_ctx' : torch.randn((1, 4, 12)),
-        'strokes_seq' : torch.randn((1, 8, 12)),
-        'canvas' : torch.randn((1, 3, 256, 256)),
-        'img' : torch.randn((1, 3, 256, 256))
+        'strokes_ctx' : torch.randn((2, 4, 12)),
+        'strokes_seq' : torch.randn((2, 8, 12)),
+        'canvas' : torch.randn((2, 3, 256, 256)),
+        'img' : torch.randn((2, 3, 256, 256))
     }
 
     # Define the model

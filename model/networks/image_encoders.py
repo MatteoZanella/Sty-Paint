@@ -195,7 +195,7 @@ class ResNet(nn.Module):
         self.layer4 = None
         if 'layer4' not in layers_to_remove:
             self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
-            self.out = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1, stride=1)
+            self.out = nn.Identity()
         else:
             # smaller config
             self.out = nn.AvgPool2d((2,2))
@@ -301,10 +301,6 @@ def _remove_keys_from_state_dict(state_dict, to_remove):
             continue
         else:
             weights[key] = state_dict[key]
-    # TODO: Fix here
-    if 'layer4' not in to_remove:
-        weights['out.weight'] = nn.init.kaiming_normal_(torch.zeros((256, 512, 1, 1)), mode="fan_out", nonlinearity="relu")
-        weights['out.bias'] = torch.zeros(256)
 
     return weights
 
