@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
-from model.networks.image_encoders import ResNetEncoder
 from model.networks.layers import PositionalEncoding
 
 

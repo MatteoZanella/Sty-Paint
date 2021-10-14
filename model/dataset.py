@@ -50,7 +50,6 @@ class StrokesDataset(Dataset):
         self.heuristic = config["dataset"]["heuristic"]
         self.img_size = config["dataset"]["resize"]
         self.use_images = config["dataset"]["use_images"]
-        self.use_ref_canvas = config["dataset"]["use_ref_canvas"]
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),

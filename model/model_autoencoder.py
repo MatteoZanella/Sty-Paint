@@ -5,8 +5,10 @@ from model.networks.image_encoders import resnet18
 from model.networks.layers import PE
 from timm.models.layers import trunc_normal_
 
-def count_parameters(net):
+
+def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
+
 
 class Embedder(nn.Module) :
 
@@ -18,28 +20,28 @@ class Embedder(nn.Module) :
         self.context_length = config["dataset"]["context_length"]
         self.seq_length = config["dataset"]["sequence_length"]
 
-        if config["model"]["pe"] == "sine":
+        if config["model"]["pe"] == "sine" :
             self.pe2D = PE(type='2d', d_model=self.d_model, h=8, w=8)()
             self.pe1D_ctx = PE(type='1d', d_model=self.d_model, length=self.context_length)()
             self.pe1D_seq = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
-        else:
+        else :
             # Learnable PE, length first
-            self.pe2D = nn.Parameter(torch.zeros(1, 8*8, self.d_model))
+            self.pe2D = nn.Parameter(torch.zeros(1, 8 * 8, self.d_model))
             self.pe1D_ctx = nn.Parameter(torch.zeros(1, self.context_length, self.d_model))
             self.pe1D_seq = nn.Parameter(torch.zeros(1, self.seq_length, self.d_model))
             trunc_normal_(self.pe2D, std=0.02)
             trunc_normal_(self.pe1D_ctx, std=0.02)
             trunc_normal_(self.pe1D_seq, std=0.02)
 
+        self.img_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
+                                    layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
+        self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
+                                       layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
 
-        self.img_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"], layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
-        self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"], layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
-
-        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3,3), padding=1, stride=1)
+        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3, 3), padding=1, stride=1)
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
     def forward(self, data) :
-        strokes_seq = data['strokes_seq']
         strokes_ctx = data['strokes_ctx']
         img = data['img']
         canvas = data['canvas']
@@ -59,15 +61,11 @@ class Embedder(nn.Module) :
 
         ctx_sequence = torch.cat((visual_feat, strokes_ctx_feat), dim=1)
 
-        # Sequence
-        x_sequence = self.proj_features(strokes_seq)
-        x_sequence += self.pe1D_seq.to(device=x_sequence.device)
-
         # Permute sequences as length-first
         ctx_sequence = ctx_sequence.permute(1, 0, 2)
-        x_sequence = x_sequence.permute(1, 0, 2)
 
-        return ctx_sequence, x_sequence
+        return ctx_sequence
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -85,7 +83,7 @@ class ContextEncoder(nn.Module) :
             ),
             num_layers=config["model"]["encoder"]["n_layers"])
 
-    def forward(self, x):
+    def forward(self, x) :
         x = self.net(x)
         return x
 
@@ -102,29 +100,12 @@ class TransformerVAE(nn.Module) :
         self.seq_length = config["dataset"]["sequence_length"]
         self.context_length = config["dataset"]["context_length"]
 
-        self.ctx_z = config["model"]["ctx_z"]  # how to merge context and z
-        if self.ctx_z == 'proj' :
-            self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
-
-        if config["model"]["pe"] == 'sine':
+        if config["model"]["pe"] == 'sine' :
             self.time_queries_PE = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
             self.time_queries_PE = self.time_queries_PE.permute(1, 0, 2)
-        else:
+        else :
             self.time_queries_PE = nn.Parameter(torch.zeros(self.seq_length, 1, self.d_model))
             trunc_normal_(self.time_queries_PE, std=0.02)
-
-        self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
-        self.log_sigma = nn.Parameter(torch.randn(1, 1, self.d_model))
-
-        # Define Encoder and Decoder
-        self.vae_encoder = nn.TransformerDecoder(
-            decoder_layer=nn.TransformerDecoderLayer(
-                d_model=self.d_model,
-                nhead=config["model"]["vae_encoder"]["n_heads"],
-                dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
-                activation=config["model"]["vae_encoder"]["act"],
-            ),
-            num_layers=config["model"]["vae_encoder"]["n_layers"])
 
         self.vae_decoder = nn.TransformerDecoder(
             decoder_layer=nn.TransformerDecoderLayer(
@@ -141,44 +122,11 @@ class TransformerVAE(nn.Module) :
         if config["model"]["activation_last_layer"] == "sigmoid" :
             self.prediction_head.add_module('act', nn.Sigmoid())
 
-    def encode(self, x, context) :
-        bs = x.size(1)
 
-        # add learnable tokens
-        mu = repeat(self.mu, '1 1 dim -> 1 bs dim', bs=bs)
-        log_sigma = repeat(self.log_sigma, '1 1 dim -> 1 bs dim', bs=bs)
-        x = torch.cat((mu, log_sigma, x), dim=0)  # (T+2) x bs x d_model
+    def decode(self, context):
 
-        # Encode the input
-        x = self.vae_encoder(x, context)
-        mu = x[0]  # first element of the seq
-        log_var = x[1]  # second element of the seq
-
-        return mu, log_var
-
-    def reparameterize(self, mu, log_sigma) :
-
-        sigma = torch.exp(0.5 * log_sigma)
-        eps = torch.randn_like(sigma)
-
-        z = eps.mul(sigma).add_(mu)
-        return z
-
-    def decode(self, size, z, context):
-        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=size[1])
-
-        if self.ctx_z == 'proj' :
-            # # Fuse z and context using projection
-            z = repeat(z, 'bs n_feat -> ctx_len bs n_feat', ctx_len=self.context_length)
-            z_ctx = torch.cat([context, z], dim=-1)  # concatenate on the feature dimension
-            z_ctx = self.proj_ctx_z(z_ctx)
-        elif self.ctx_z == 'cat' :
-            # Fuse z and context with concatenation on length dim
-            z_ctx = torch.cat((context, z[None]), dim=0)
-        else :
-            raise NotImplementedError()
-
-        out = self.vae_decoder(time_queries, z_ctx)
+        time_queries = repeat(self.time_queries_PE.to(device=context.device), 'L 1 d_model -> L bs d_model', bs=context.size(1))
+        out = self.vae_decoder(time_queries, context)
 
         # Linear proj
         out = out.permute(1, 0, 2)  # bs x L x dim
@@ -186,25 +134,15 @@ class TransformerVAE(nn.Module) :
 
         return out
 
-    def forward(self, seq, context) :
-
-        mu, log_sigma = self.encode(seq, context)
-        z = self.reparameterize(mu, log_sigma)
+    def forward(self, context) :
 
         # Replicate z and decode
-        out = self.decode(seq.size(), z, context)  # z is the input, context comes from the other branch
+        out = self.decode(context)
+
+        mu = torch.zeros((out.size(1), out.size(2)), device=context.device)
+        log_sigma = torch.ones((out.size(1), out.size(2)), device=context.device)
 
         return out, mu, log_sigma
-
-    @torch.no_grad()
-    def sample(self, ctx, L=None) :
-        if L is None :
-            L = self.seq_length
-        bs = ctx.size(1)
-        # Sample z
-        z = torch.randn(bs, self.d_model).to(self.device)
-        preds = self.decode(size=(L, bs, self.d_model), z=z, context=ctx)
-        return preds
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -220,27 +158,25 @@ class InteractivePainter(nn.Module) :
 
     def forward(self, data) :
 
-        context, x = self.embedder(data)
+        context = self.embedder(data)
         context_features = self.context_encoder(context)
-        predictions, mu, log_sigma = self.transformer_vae(x, context_features)
+        predictions, mu, log_sigma = self.transformer_vae(context_features)
 
         return predictions, mu, log_sigma
 
     @torch.no_grad()
     def generate(self, data, no_context=False, no_z=False) :
-        context, x = self.embedder(data)
+        context = self.embedder(data)
         context_features = self.context_encoder(context)
-        if no_context :  # zero out the context to check if the model benefit from it
+        if no_context or no_z:  # zero out the context to check if the model benefit from it
             context_features = torch.randn_like(context_features, device=context_features.device)
-        if no_z :
-            predictions = self.transformer_vae.sample(ctx=context_features)
-        else :
-            predictions = self.transformer_vae(x, context_features)[0]
+
+        predictions = self.transformer_vae(context_features)[0]
+
         return predictions
 
+
 if __name__ == '__main__':
-    from dataset import StrokesDataset
-    from torch.utils.data import DataLoader
     from utils.parse_config import ConfigParser
     import argparse
 
@@ -254,13 +190,8 @@ if __name__ == '__main__':
     c_parser.parse_config(args)
     config = c_parser.get_config()
 
-    #dataset = StrokesDataset(config=config, isTrain=True)
-
-    #dataloader = DataLoader(dataset, batch_size=2)
-    #data = next(iter(dataloader))
-
     data = {
-        'strokes_ctx' : torch.randn((1,4, 12)),
+        'strokes_ctx' : torch.randn((1,20, 12)),
         'strokes_seq' : torch.randn((1,8, 12)),
         'canvas' : torch.randn((1,3,256, 256)),
         'img' : torch.randn((1,3, 256, 256))
@@ -268,9 +199,6 @@ if __name__ == '__main__':
 
     # Define the model
     net = InteractivePainter(config)
-
-    #preds = net(data)
-
 
     def count_parameters(model) :
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -280,6 +208,4 @@ if __name__ == '__main__':
     print(f'Number of trainable parameters: {params / 10 ** 6}')
 
     # Predict with context
-    net.train()
     clean_preds = net(data)
-

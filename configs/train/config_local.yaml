@@ -6,7 +6,7 @@ dataset :
   heuristic : 'lkh_col1_area2_pos0_cl10_sal0'
   partition : 'ade_dataset'
   resize : 256
-  context_length : 4
+  context_length : 20
   sequence_length : 8
 model:
   only_vae : False
@@ -14,13 +14,13 @@ model:
   n_strokes_params : 12
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
+  pe: 'sine'
   img_encoder:
     type : 'resnet18'
     pretrained : True
+    layers_to_remove : ['fc', 'layer4']
   encoder:
-    pe : 'learnable'
     canvas_strokes : 'add'
-    context_pooling : False
     act : 'gelu'
     n_heads : 8
     n_layers : 5

@@ -1,24 +1,24 @@
 dataset :
-  train :
-    root_dir : '/home/eperuzzo/test_set_debug/'
-  test :
-    root_dir : '/home/eperuzzo/test_set_debug/'
-  heuristic : 'lkh_col2_area1_pos0_cl7'
-  resize : 256
-  context_length : 4
-  sequence_length : 8
-  only_strokes : False
+  root: '/home/eperuzzo'
+  csv_file: '/home/eperuzzo/oxford_pet_dataset/sibiu.csv'
+  partition: 'oxford_pet_dataset'
+  heuristic: 'lkh_col2_area1_pos0_cl7'
+  resize: 256
+  context_length: 4
+  sequence_length: 8
+  use_images: True
 model:
-  only_vae : False
   d_model : 256
   n_strokes_params : 12
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
+  pe: 'sine'
   img_encoder:
     type : 'resnet18'
     pretrained : True
+    layers_to_remove : ['fc', 'layer4']
   encoder:
-    context_pooling : False
+    canvas_strokes : 'add'
     act : 'gelu'
     n_heads : 8
     n_layers : 5
@@ -57,5 +57,5 @@ train:
     save_freq : 25
     print_freq : 10
 render:
-  painter_config : '/home/eperuzzo/brushstrokes/configs/decomposition/painter_config_sibiu.yaml'
+  painter_config : '/home/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config_sibiu.yaml'
   freq : 1

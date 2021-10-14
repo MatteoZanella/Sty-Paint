@@ -90,9 +90,5 @@ class PE :
             pe = self.positionalencoding2d(d_model=self.d_model, height=self.h, width=self.w)
             pe = rearrange(pe, 'bs d_model h w -> bs (h w) d_model')
 
-
-        if self.length_first:
-            pe = rearrange(pe, 'bs L d_model -> L bs d_model')
-
         return pe.detach()
 

@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import wandb
+import math
 
 def dict_to_device(inp, device, to_skip=[]):
     return {k : t.to(device) for k, t in inp.items() if k not in to_skip}
@@ -62,6 +63,11 @@ class LambdaScheduler:
             l1 = torch.linspace(0, self.base_value, self.warmup_epochs)
             l2 = torch.full((self.max_epochs - self.warmup_epochs,), self.base_value)
             self.schedule = torch.cat([l1, l2])
+        elif self.warmup_type == 'cosine':
+            l1 = 0.5 * (0-self.base_value) * (1 + torch.cos(torch.tensor(torch.arange(0, self.warmup_epochs) * math.pi / self.warmup_epochs))) + self.base_value
+            l2 = torch.full((self.max_epochs - self.warmup_epochs,), self.base_value)
+            self.schedule = torch.cat(([l1, l2]))
+
 
         assert len(self.schedule) == self.max_epochs
         #self.schedule.cuda()

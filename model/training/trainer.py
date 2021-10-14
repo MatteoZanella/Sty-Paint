@@ -20,6 +20,7 @@ class Trainer:
     def __init__(self, config, model, train_dataloader, test_dataloader):
 
         self.config = config
+        self.model_type = config["model"]["model_type"]
 
         # Optimizers
         self.checkpoint_path = config["train"]["logging"]["checkpoint_path"]
@@ -114,7 +115,10 @@ class Trainer:
             self.optimizer.zero_grad()
             #loss.backward()
             self.scaler.scale(mse_loss).backward(retain_graph=True)
-            self.scaler.scale(kl_div * kl_lambda).backward()
+            if self.model_type == 'autoencoder':
+                kl_div = torch.tensor([0])
+            else:
+                self.scaler.scale(kl_div * kl_lambda).backward()
 
             # Gradient clipping
             self.scaler.unscale_(self.optimizer)

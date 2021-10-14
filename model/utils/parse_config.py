@@ -16,7 +16,7 @@ class ConfigParser:
             assert self.config["model"]["encoder"]["canvas_strokes"] == 'proj' or self.config["model"]["encoder"]["canvas_strokes"] == 'add'
             assert self.config["model"]["ctx_z"] == 'proj' or self.config["model"]["ctx_z"] == 'cat'
             assert self.config["dataset"]["partition"] == 'both' or self.config["dataset"]["partition"] == 'ade_dataset' or self.config["dataset"]["partition"] == 'oxford_pet_dataset'
-
+            assert self.config["model"]["pe"] == 'sine' or self.config["model"]["pe"] == 'learnable'
 
             self.config["train"]["logging"]["checkpoint_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], args.exp_name)
             f = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'latest.pth.tar')

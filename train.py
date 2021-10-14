@@ -4,7 +4,7 @@ import logging
 import numpy as np
 
 from model.utils.parse_config import ConfigParser
-from model import model, model_no_images
+from model import model_no_images, model, model_autoencoder
 from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
@@ -59,10 +59,14 @@ if __name__ == '__main__':
     logging.info(f'Dataset stats: Train {len(dataset)} samples, Test : {len(dataset_test)} samples')
 
     # Create model
-    if config["dataset"]["use_images"]:
+    if config["model"]["model_type"] == 'full':
         model = model.InteractivePainter(config)
-    else:
+    elif config["model"]["model_type"] == 'autoencoder':
+        model = model_autoencoder.InteractivePainter(config)
+    elif config["model"]["model_type"] == 'no_images':
         model = model_no_images.InteractivePainter(config)
+    else:
+        raise NotImplementedError(f'Wrong model type: {config["model"]["model_type"]}')
 
     model = nn.DataParallel(model)
     model.cuda()
