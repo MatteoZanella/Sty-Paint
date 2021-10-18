@@ -2,7 +2,7 @@ img_path: ''
 output_dir: ''
 renderer: 'oilpaintbrush'
 canvas_color: 'black'
-canvas_size: 512
+canvas_size: 256
 keep_aspect_ratio: False
 beta_L1: 1.0
 with_ot_loss: False

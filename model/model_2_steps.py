@@ -9,19 +9,6 @@ import numpy as np
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
-def pos_to_idx(x, width=256):
-    with torch.no_grad():
-        x = x.detach().numpy()
-        x = np.rint(x * (width - 1) + 0.5)
-
-        # index to feature maps
-        x_i = x[:, :, 0] // 32
-        y_i = x[:, :, 1] // 32
-
-        flat_idx = y_i * 8 + x_i
-
-    return flat_idx.transpose([1,0])
-
 class Embedder(nn.Module) :
 
     def __init__(self, config) :
@@ -31,14 +18,15 @@ class Embedder(nn.Module) :
         self.d_model = config["model"]["d_model"]
         self.context_length = config["dataset"]["context_length"]
         self.seq_length = config["dataset"]["sequence_length"]
+        self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
         if config["model"]["encoder_pe"] == "sine" :
-            self.pe2D = PE(type='2d', d_model=self.d_model, h=8, w=8)()
+            self.pe2D = PE(type='2d', d_model=self.d_model, h=self.visual_features_size, w=self.visual_features_size)()
             self.pe1D_ctx = PE(type='1d', d_model=self.d_model, length=self.context_length)()
             self.pe1D_seq = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
         else :
             # Learnable PE, length first
-            self.pe2D = nn.Parameter(torch.zeros(1, 8 * 8, self.d_model))
+            self.pe2D = nn.Parameter(torch.zeros(1, self.visual_features_size ** 2, self.d_model))
             self.pe1D_ctx = nn.Parameter(torch.zeros(1, self.context_length, self.d_model))
             self.pe1D_seq = nn.Parameter(torch.zeros(1, self.seq_length, self.d_model))
             trunc_normal_(self.pe2D, std=0.02)
@@ -117,6 +105,8 @@ class TransformerVAE(nn.Module) :
         self.d_model = config["model"]["d_model"]
         self.seq_length = config["dataset"]["sequence_length"]
         self.context_length = config["dataset"]["context_length"]
+        self.width = config["dataset"]["resize"]
+        self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
         self.ctx_z = config["model"]["ctx_z"]  # how to merge context and z
         if self.ctx_z == 'proj' :
@@ -131,6 +121,8 @@ class TransformerVAE(nn.Module) :
 
         self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
         self.log_sigma = nn.Parameter(torch.randn(1, 1, self.d_model))
+        trunc_normal_(self.mu, std=0.02)
+        trunc_normal_(self.log_sigma, std=0.02)
 
         # Define Encoder and Decoder
         self.vae_encoder = nn.TransformerDecoder(
@@ -143,7 +135,7 @@ class TransformerVAE(nn.Module) :
             num_layers=config["model"]["vae_encoder"]["n_layers"])
 
         # Divide the decoder in 2 modules
-        self.pos_decoder = nn.TransformerDecoder(
+        self.position_decoder = nn.TransformerDecoder(
             decoder_layer=nn.TransformerDecoderLayer(
                 d_model=self.d_model,
                 nhead=config["model"]["vae_decoder"]["n_heads"],
@@ -152,10 +144,9 @@ class TransformerVAE(nn.Module) :
             ),
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
-        self.pos_head = nn.Sequential(
+        self.position_head = nn.Sequential(
             nn.Linear(self.d_model, 2),
             nn.Sigmoid())
-
 
         self.color_decoder = nn.TransformerDecoder(
             decoder_layer=nn.TransformerDecoderLayer(
@@ -167,9 +158,21 @@ class TransformerVAE(nn.Module) :
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
         self.color_head = nn.Sequential(
-            nn.Linear(self.d_model, 9),
+            nn.Linear(self.d_model, 10),
             nn.Sigmoid())
 
+    def pos_to_idx(self, p):
+        n = int(self.width / self.visual_features_size)
+        with torch.no_grad() :
+            p = p.detach().numpy()
+            p = np.rint(p * (self.width - 1) + 0.5)
+            # index to feature maps
+            x_i = p[:, :, 0] // n
+            y_i = p[:, :, 1] // n
+
+            flat_idx = (y_i * self.visual_features_size) + x_i
+
+        return flat_idx
 
     def encode(self, x, context) :
         bs = x.size(1)
@@ -194,35 +197,28 @@ class TransformerVAE(nn.Module) :
         z = eps.mul(sigma).add_(mu)
         return z
 
-    def decode_position(self, size, context):
-        time_queries = repeat(self.time_queries_PE.to(device=context.device), 'L 1 d_model -> L bs d_model', bs=size[1])
-        hidden = self.pos_decoder(time_queries, context)
-        pos = self.pos_head(hidden)
-
-        return pos
-
-    def decode_color(self, pos, visual_features):
-        flat_idx = pos_to_idx(pos, width=256)
-        pooled_features = visual_features[flat_idx, :]
-
-        return x_i
-
-
-
-
-    def decode(self, size, z, context, visual_features) :
-        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=size[1])
+    def decode(self, z, context, visual_features):
+        bs = z.size(0)
+        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=bs)
         z_ctx = torch.cat((context, z[None]), dim=0)
 
-        pred_pos = self.decode_position(size, z_ctx)
-        x_i, y_i = self.decode_color(pred_pos, visual_features)
+        # Decode Position
+        hidden_pos = self.position_decoder(time_queries, z_ctx)
+        hidden_pos = rearrange(hidden_pos, 'L bs dim -> bs L dim')
+        preds_pos = self.position_head(hidden_pos)
 
+        # Pool visual features
+        idxs = self.pos_to_idx(preds_pos)
+        pooled_features = visual_features[np.arange(bs)[:, None], idxs]
+        pooled_features = rearrange(pooled_features, 'bs L dim -> L bs dim')
 
-        out = self.vae_decoder(time_queries, z_ctx)
+        # Decode color
+        hidden_color = self.color_decoder(pooled_features, z_ctx)
+        hidden_color = rearrange(hidden_color, 'L bs dim -> bs L dim')
+        preds_color = self.color_head(hidden_color)
 
-        # Linear proj
-        out = out.permute(1, 0, 2)  # bs x L x dim
-        out = self.prediction_head(out)
+        # Output
+        out = torch.cat((preds_pos, preds_color), dim=-1)
 
         return out
 
@@ -232,18 +228,19 @@ class TransformerVAE(nn.Module) :
         z = self.reparameterize(mu, log_sigma)
 
         # Replicate z and decode
-        out = self.decode(seq.size(), z, context, visual_features)  # z is the input, context comes from the other branch
+        out = self.decode(z=z,
+                          context=context,
+                          visual_features=visual_features)  # z is the input, context comes from the other branch
 
         return out, mu, log_sigma
 
     @torch.no_grad()
-    def sample(self, ctx, L=None) :
-        if L is None :
-            L = self.seq_length
+    def sample(self, ctx, visual_features):
         bs = ctx.size(1)
-        # Sample z
         z = torch.randn(bs, self.d_model).to(self.device)
-        preds = self.decode(size=(L, bs, self.d_model), z=z, context=ctx)
+        preds = self.decode(z=z,
+                            context=ctx,
+                            visual_features=visual_features)
         return preds
 
 
@@ -251,7 +248,7 @@ class TransformerVAE(nn.Module) :
 
 class InteractivePainter(nn.Module) :
 
-    def __init__(self, config) :
+    def __init__(self, config):
         super().__init__()
 
         self.embedder = Embedder(config)
@@ -268,19 +265,18 @@ class InteractivePainter(nn.Module) :
 
     @torch.no_grad()
     def generate(self, data, no_context=False, no_z=False) :
-        context, x = self.embedder(data)
+        context, x, vs_features = self.embedder(data)
         context_features = self.context_encoder(context)
         if no_context :  # zero out the context to check if the model benefit from it
             context_features = torch.randn_like(context_features, device=context_features.device)
         if no_z :
             predictions = self.transformer_vae.sample(ctx=context_features)
         else :
-            predictions = self.transformer_vae(x, context_features)[0]
+            predictions = self.transformer_vae(x, context_features, vs_features)[0]
         return predictions
 
 if __name__ == '__main__' :
-    from dataset import StrokesDataset
-    from torch.utils.data import DataLoader
+    import torch.nn.functional as F
     from utils.parse_config import ConfigParser
     import argparse
 
@@ -301,12 +297,11 @@ if __name__ == '__main__' :
     # data = next(iter(dataloader))
 
     data = {
-        'strokes_ctx' : torch.randn((2, 4, 12)),
-        'strokes_seq' : torch.randn((2, 8, 12)),
-        'canvas' : torch.randn((2, 3, 256, 256)),
-        'img' : torch.randn((2, 3, 256, 256))
+        'strokes_ctx' : torch.randn((5, 4, 12)),
+        'strokes_seq' : torch.randn((5, 8, 12)),
+        'canvas' : torch.randn((5, 3, 256, 256)),
+        'img' : torch.randn((5, 3, 256, 256))
     }
-
     # Define the model
     net = InteractivePainter(config)
 
@@ -322,4 +317,10 @@ if __name__ == '__main__' :
 
     # Predict with context
     net.train()
-    clean_preds = net(data)
+    y = data['strokes_seq']
+    clean_preds, _, _ = net(data)
+
+    loss = F.mse_loss(clean_preds, y)
+
+    print(loss.item())
+    loss.backward()

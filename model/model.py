@@ -19,14 +19,15 @@ class Embedder(nn.Module) :
         self.d_model = config["model"]["d_model"]
         self.context_length = config["dataset"]["context_length"]
         self.seq_length = config["dataset"]["sequence_length"]
+        self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
         if config["model"]["encoder_pe"] == "sine" :
-            self.pe2D = PE(type='2d', d_model=self.d_model, h=8, w=8)()
+            self.pe2D = PE(type='2d', d_model=self.d_model, h=self.visual_features_size, w=self.visual_features_size)()
             self.pe1D_ctx = PE(type='1d', d_model=self.d_model, length=self.context_length)()
             self.pe1D_seq = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
         else :
             # Learnable PE, length first
-            self.pe2D = nn.Parameter(torch.zeros(1, 8 * 8, self.d_model))
+            self.pe2D = nn.Parameter(torch.zeros(1, self.visual_features_size ** 2, self.d_model))
             self.pe1D_ctx = nn.Parameter(torch.zeros(1, self.context_length, self.d_model))
             self.pe1D_seq = nn.Parameter(torch.zeros(1, self.seq_length, self.d_model))
             trunc_normal_(self.pe2D, std=0.02)
@@ -38,7 +39,7 @@ class Embedder(nn.Module) :
         self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
                                        layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
 
-        self.conv_proj = nn.Conv2d(in_channels=1024, out_channels=256, kernel_size=(3, 3), padding=1, stride=1)
+        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3, 3), padding=1, stride=1)
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
     def forward(self, data) :

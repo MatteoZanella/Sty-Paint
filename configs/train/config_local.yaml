@@ -20,6 +20,7 @@ model:
     type : 'resnet18'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
+    visual_features_dim : 8
   encoder:
     canvas_strokes : 'add'
     act : 'gelu'
