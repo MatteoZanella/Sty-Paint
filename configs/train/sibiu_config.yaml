@@ -1,24 +1,27 @@
 dataset :
-  train :
-    root_dir : '/home/eperuzzo/test_set_debug/'
-  test :
-    root_dir : '/home/eperuzzo/test_set_debug/'
-  heuristic : 'lkh_col2_area1_pos0_cl7'
+  root: '/home/eperuzzo/IBG_dataset'
+  csv_file: '/home/eperuzzo/IBG_dataset/ade_test.csv'
+  partition: 'ade_dataset'
+  heuristic: 'lkh_col2_area1_pos0_cl7'
   resize : 256
-  context_length : 4
+  context_length : 10
   sequence_length : 8
-  only_strokes : False
+  use_images : True
 model:
-  only_vae : False
+  model_type : 'full'
   d_model : 256
-  n_strokes_params : 12
+  n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
+  encoder_pe: 'learnable'
+  decoder_pe : 'learnable'
   img_encoder:
     type : 'resnet18'
     pretrained : True
+    layers_to_remove : ['fc', 'layer4']
+    visual_features_dim : 8
   encoder:
-    context_pooling : False
+    canvas_strokes : 'add'
     act : 'gelu'
     n_heads : 8
     n_layers : 5
@@ -34,21 +37,23 @@ model:
     n_layers : 5
     ff_dim : 1024
 train:
-  n_epochs : 100
-  gpu_id : 1
-  batch_size : 64
+  n_epochs : 250
+  gpu_id : 0
+  batch_size : 256
   num_workers : 8
+  seed : 43
+  amp_enabled : True
   optimizer:
-    max_lr : 7.0e-4
-    min_lr : 5.0e-5
-    warmup_lr : 5.0e-6
-    warmup_ep : 20
+    max_lr : 1.0e-3
+    min_lr : 1.0e-4
+    warmup_lr : 1.0e-5
+    warmup_ep : 50
     wd : 0.05
     clip_grad : 4.0
   kl:
-    warmup_type : 'linear'
-    warm_up_epochs : 10
-    kl_lambda : 5.0e-5
+    warmup_type : 'cosine'
+    warm_up_epochs : 100
+    kl_lambda : 2.5e-4
   auto_resume:
     active : False
     resume_path : ''
@@ -57,5 +62,5 @@ train:
     save_freq : 25
     print_freq : 10
 render:
-  painter_config : '/home/eperuzzo/brushstrokes/configs/decomposition/painter_config_sibiu.yaml'
+  painter_config : '/home/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config_sibiu.yaml'
   freq : 1

@@ -14,4 +14,4 @@ conda activate brush
 
 trap "trap ' ' TERM INT; kill -TERM 0; wait" TERM INT
 cd /data/eperuzzo/brushstrokes-generation/
-python train.py --exp_name autoencoder_v1 --config /data/eperuzzo/brushstrokes-generation/configs/train/todi_config.yaml & wait
+python evaluate_metrics.py --checkpoint_path /data/eperuzzo/model_checkpoints/full_big_v2/latest.pth.tar --config /data/eperuzzo/brushstrokes-generation/configs/train/todi_config.yaml & wait

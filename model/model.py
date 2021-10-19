@@ -1,168 +1,151 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
-from model.networks.image_encoders import ResNetEncoder
-from model.networks.layers import PositionalEncoding
-from torch.cuda.amp import autocast
+from model.networks.image_encoders import resnet18
+from model.networks.layers import PE
+from timm.models.layers import trunc_normal_
 
-class Embedder(nn.Module):
 
-    def __init__(self, config):
+def count_parameters(net) :
+    return sum(p.numel() for p in net.parameters() if p.requires_grad)
+
+
+class Embedder(nn.Module) :
+
+    def __init__(self, config) :
         super(Embedder, self).__init__()
 
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
         self.context_length = config["dataset"]["context_length"]
         self.seq_length = config["dataset"]["sequence_length"]
+        self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
-        # Networks
-        self.img_encoder = ResNetEncoder(pretrained=config["model"]["img_encoder"]["pretrained"])
-        self.context_PE = PositionalEncoding(self.d_model, dropout=0)
-        self.sequence_PE = PositionalEncoding(self.d_model, dropout=0)
+        if config["model"]["encoder_pe"] == "sine" :
+            self.pe2D = PE(type='2d', d_model=self.d_model, h=self.visual_features_size, w=self.visual_features_size)()
+            self.pe1D_ctx = PE(type='1d', d_model=self.d_model, length=self.context_length)()
+            self.pe1D_seq = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
+        else :
+            # Learnable PE
+            self.pe2D = nn.Parameter(torch.zeros(1, self.visual_features_size ** 2, self.d_model))
+            self.pe1D_ctx = nn.Parameter(torch.zeros(1, self.context_length, self.d_model))
+            self.pe1D_seq = nn.Parameter(torch.zeros(1, self.seq_length, self.d_model))
+            trunc_normal_(self.pe2D, std=0.02)
+            trunc_normal_(self.pe1D_ctx, std=0.02)
+            trunc_normal_(self.pe1D_seq, std=0.02)
 
-        #self.context_PE = nn.Parameter(torch.randn(self.context_length+1, self.d_model))
-        #self.sequence_PE = nn.Parameter(torch.randn(self.seq_length, self.d_model))
+        self.img_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
+                                    layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
+        self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
+                                       layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
 
-        self.merge_type = config["model"]["encoder"]["canvas_strokes"]    # how to merge features from the canvas with strokes params
-        if config["model"]["encoder"]["canvas_strokes"] == 'proj':
-            self.proj_features = nn.Linear(512 + self.s_params, self.d_model)
-        elif config["model"]["encoder"]["canvas_strokes"] == 'add':
-            self.proj_strokes = nn.Linear(self.s_params, self.d_model)
-            self.proj_canvas_feat = nn.Linear(512, self.d_model)
-        else:
-            raise NotImplementedError()
+        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3, 3), padding=1, stride=1)
+        self.proj_features = nn.Linear(self.s_params, self.d_model)
 
-    def encode_canvas(self, x):
-        L = x.size(1)
-        x = rearrange(x, 'bs L c h w -> (bs L) c h w')
-        x = self.img_encoder(x)
-        x = rearrange(x, '(bs L) n_feat -> bs L n_feat', L=L)
-        return x
-
-    @autocast()
-    def forward(self, data):
+    def forward(self, data) :
         strokes_seq = data['strokes_seq']
-        canvas_seq = data['canvas_seq']
         strokes_ctx = data['strokes_ctx']
-        canvas_ctx = data['canvas_ctx']
-        imgs = data['img']
+        img = data['img']
+        canvas = data['canvas']
+        bs = img.shape[0]
 
-        bs = imgs.size(0)
+        # Encode Img/Canvas
+        img_feat = self.img_encoder(img)
+        canvas_feat = self.canvas_encoder(canvas)
+        visual_feat = self.conv_proj(torch.cat((img_feat, canvas_feat), dim=1))
+
+        visual_feat = visual_feat.reshape(bs, self.d_model, -1).permute(0, 2, 1)
+        visual_feat += self.pe2D.to(device=visual_feat.device)
 
         # Context
-        img_feat = self.img_encoder(imgs)
-        ctx_canvas_feat = self.encode_canvas(canvas_ctx)
+        strokes_ctx_feat = self.proj_features(strokes_ctx)
+        strokes_ctx_feat += self.pe1D_ctx.to(device=strokes_ctx_feat.device)
 
-        if self.merge_type == 'proj':
-            img_feat = torch.cat((img_feat, torch.zeros(bs, self.s_params, device=img_feat.device)), dim=1)
-            ctx_sequence = torch.cat((ctx_canvas_feat, strokes_ctx), dim=-1)  # concatenate on features dim
-            ctx_sequence = torch.cat((img_feat.unsqueeze(1), ctx_sequence), dim=1)  # concatenate on length dim
-            ctx_sequence = self.proj_features(ctx_sequence)
-        else:
-            strokes_ctx = self.proj_strokes(strokes_ctx)
-            ctx_canvas_feat = self.proj_canvas_feat(ctx_canvas_feat)
-            img_feat = self.proj_canvas_feat(img_feat)
-            ctx_sequence = torch.cat((img_feat.unsqueeze(1), ctx_canvas_feat + strokes_ctx), dim=1)
+        ctx_sequence = torch.cat((visual_feat, strokes_ctx_feat), dim=1)
 
         # Sequence
-        x_canvas_feat = self.encode_canvas(canvas_seq)
-        if self.merge_type == 'proj':
-            x_sequence = torch.cat((x_canvas_feat, strokes_seq), dim=-1)
-            x_sequence = self.proj_features(x_sequence)
-        else:
-            strokes_seq = self.proj_strokes(strokes_seq)
-            x_canvas_feat = self.proj_canvas_feat(x_canvas_feat)
-            x_sequence = x_canvas_feat + strokes_seq
+        x_sequence = self.proj_features(strokes_seq)
+        x_sequence += self.pe1D_seq.to(device=x_sequence.device)
 
         # Permute sequences as length-first
         ctx_sequence = ctx_sequence.permute(1, 0, 2)
         x_sequence = x_sequence.permute(1, 0, 2)
 
-        # Add positional encodings to the sequences
-        ctx_sequence = self.context_PE(ctx_sequence)
-        x_sequence = self.sequence_PE(x_sequence)
-
         return ctx_sequence, x_sequence
 
 # ----------------------------------------------------------------------------------------------------------------------
 
-class ContextEncoder(nn.Module):
+class ContextEncoder(nn.Module) :
 
-    def __init__(self, config):
+    def __init__(self, config) :
         super().__init__()
 
         self.net = nn.TransformerEncoder(
-                                    encoder_layer=nn.TransformerEncoderLayer(
-                                                  d_model=config["model"]["d_model"],
-                                                  nhead=config["model"]["encoder"]["n_heads"],
-                                                  dim_feedforward=config["model"]["encoder"]["ff_dim"],
-                                                  activation=config["model"]["encoder"]["act"],
-                                    ),
-                                    num_layers=config["model"]["encoder"]["n_layers"])
+            encoder_layer=nn.TransformerEncoderLayer(
+                d_model=config["model"]["d_model"],
+                nhead=config["model"]["encoder"]["n_heads"],
+                dim_feedforward=config["model"]["encoder"]["ff_dim"],
+                activation=config["model"]["encoder"]["act"],
+            ),
+            num_layers=config["model"]["encoder"]["n_layers"])
 
-        self.pool_context = config["model"]["encoder"]["context_pooling"]
-        if self.pool_context:
-            self.context_token = nn.Parameter(torch.randn(1, 1, config["model"]["d_model"]))
-    @autocast()
-    def forward(self, x):
-        if self.pool_context:
-            fake_ctx = repeat(self.context_token, '1 1 dim -> 1 bs dim', bs=x.size(1))
-            x = torch.cat((fake_ctx, x), dim=0)   # add fake token
+    def forward(self, x) :
         x = self.net(x)
+        return x
 
-        if self.pool_context:
-            return x[0][None]    # return only the fake token, summarizing the whole sequence.
-        else:
-            return x            # retrun the whole sequence
 
 # ----------------------------------------------------------------------------------------------------------------------
 
-class TransformerVAE(nn.Module):
-    def __init__(self, config):
+class TransformerVAE(nn.Module) :
+    def __init__(self, config) :
         super().__init__()
 
         self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
         self.seq_length = config["dataset"]["sequence_length"]
-        self.context_length = config["dataset"]["context_length"]+1
+        self.context_length = config["dataset"]["context_length"]
 
-        self.ctx_z = config["model"]["ctx_z"]   # how to merge context and z
-        if self.ctx_z == 'proj':
+        self.ctx_z = config["model"]["ctx_z"]  # how to merge context and z
+        if self.ctx_z == 'proj' :
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
 
-        self.time_queries_PE = PositionalEncoding(self.d_model,dropout=0)
-        #self.query_dec = nn.Parameter(torch.randn(self.seq_length, self.d_model))
+        if config["model"]["decoder_pe"] == 'sine':
+            self.time_queries_PE = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
+            self.time_queries_PE = self.time_queries_PE.permute(1, 0, 2)
+        else :
+            self.time_queries_PE = nn.Parameter(torch.zeros(self.seq_length, 1, self.d_model))
+            trunc_normal_(self.time_queries_PE, std=0.02)
+
         self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
         self.log_sigma = nn.Parameter(torch.randn(1, 1, self.d_model))
 
         # Define Encoder and Decoder
         self.vae_encoder = nn.TransformerDecoder(
-                            decoder_layer=nn.TransformerDecoderLayer(
-                                         d_model=self.d_model,
-                                         nhead=config["model"]["vae_encoder"]["n_heads"],
-                                         dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
-                                         activation=config["model"]["vae_encoder"]["act"],
-                                         ),
-                            num_layers=config["model"]["vae_encoder"]["n_layers"])
+            decoder_layer=nn.TransformerDecoderLayer(
+                d_model=self.d_model,
+                nhead=config["model"]["vae_encoder"]["n_heads"],
+                dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
+                activation=config["model"]["vae_encoder"]["act"],
+            ),
+            num_layers=config["model"]["vae_encoder"]["n_layers"])
 
         self.vae_decoder = nn.TransformerDecoder(
-                            decoder_layer=nn.TransformerDecoderLayer(
-                                         d_model=self.d_model,
-                                         nhead=config["model"]["vae_decoder"]["n_heads"],
-                                         dim_feedforward=config["model"]["vae_decoder"]["ff_dim"],
-                                         activation=config["model"]["vae_decoder"]["act"],
-                            ),
-                            num_layers=config["model"]["vae_decoder"]["n_layers"])
+            decoder_layer=nn.TransformerDecoderLayer(
+                d_model=self.d_model,
+                nhead=config["model"]["vae_decoder"]["n_heads"],
+                dim_feedforward=config["model"]["vae_decoder"]["ff_dim"],
+                activation=config["model"]["vae_decoder"]["act"],
+            ),
+            num_layers=config["model"]["vae_decoder"]["n_layers"])
 
         # Final projection head
         self.prediction_head = nn.Sequential(
             nn.Linear(self.d_model, self.s_params))
-        if config["model"]["activation_last_layer"] == "sigmoid":
+        if config["model"]["activation_last_layer"] == "sigmoid" :
             self.prediction_head.add_module('act', nn.Sigmoid())
 
-
-    def encode(self, x, context):
+    def encode(self, x, context) :
         bs = x.size(1)
 
         # add learnable tokens
@@ -172,12 +155,12 @@ class TransformerVAE(nn.Module):
 
         # Encode the input
         x = self.vae_encoder(x, context)
-        mu = x[0]     # first element of the seq
-        log_var = x[1]   # second element of the seq
+        mu = x[0]  # first element of the seq
+        log_var = x[1]  # second element of the seq
 
         return mu, log_var
 
-    def reparameterize(self, mu, log_sigma):
+    def reparameterize(self, mu, log_sigma) :
 
         sigma = torch.exp(0.5 * log_sigma)
         eps = torch.randn_like(sigma)
@@ -185,19 +168,18 @@ class TransformerVAE(nn.Module):
         z = eps.mul(sigma).add_(mu)
         return z
 
-    def decode(self, size, z, context):
-        time_queries = torch.zeros(size, device=z.device)
-        time_queries = self.time_queries_PE(time_queries)
+    def decode(self, size, z, context) :
+        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=size[1])
 
-        if self.ctx_z == 'proj':
+        if self.ctx_z == 'proj' :
             # # Fuse z and context using projection
             z = repeat(z, 'bs n_feat -> ctx_len bs n_feat', ctx_len=self.context_length)
-            z_ctx = torch.cat([context, z], dim=-1)   # concatenate on the feature dimension
+            z_ctx = torch.cat([context, z], dim=-1)  # concatenate on the feature dimension
             z_ctx = self.proj_ctx_z(z_ctx)
-        elif self.ctx_z == 'cat':
+        elif self.ctx_z == 'cat' :
             # Fuse z and context with concatenation on length dim
             z_ctx = torch.cat((context, z[None]), dim=0)
-        else:
+        else :
             raise NotImplementedError()
 
         out = self.vae_decoder(time_queries, z_ctx)
@@ -208,40 +190,39 @@ class TransformerVAE(nn.Module):
 
         return out
 
-    @autocast()
-    def forward(self, seq, context):
+    def forward(self, seq, context) :
 
         mu, log_sigma = self.encode(seq, context)
         z = self.reparameterize(mu, log_sigma)
 
         # Replicate z and decode
-        out = self.decode(seq.size(), z, context)   # z is the input, context comes from the other branch
+        out = self.decode(seq.size(), z, context)  # z is the input, context comes from the other branch
 
         return out, mu, log_sigma
 
     @torch.no_grad()
-    def sample(self, ctx, L=None):
-        if L is None:
+    def sample(self, ctx, L=None) :
+        if L is None :
             L = self.seq_length
         bs = ctx.size(1)
         # Sample z
-        z = torch.randn(bs, self.d_model).cuda()
+        z = torch.randn(bs, self.d_model).to(self.device)
         preds = self.decode(size=(L, bs, self.d_model), z=z, context=ctx)
         return preds
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 
-class InteractivePainter(nn.Module):
+class InteractivePainter(nn.Module) :
 
-    def __init__(self, config):
+    def __init__(self, config) :
         super().__init__()
 
         self.embedder = Embedder(config)
         self.context_encoder = ContextEncoder(config)
         self.transformer_vae = TransformerVAE(config)
 
-    @autocast()
-    def forward(self, data):
+    def forward(self, data) :
 
         context, x = self.embedder(data)
         context_features = self.context_encoder(context)
@@ -250,19 +231,19 @@ class InteractivePainter(nn.Module):
         return predictions, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, data, no_context=False, no_z=False):
+    def generate(self, data, no_context=False, no_z=False) :
         context, x = self.embedder(data)
         context_features = self.context_encoder(context)
-        if no_context: # zero out the context to check if the model benefit from it
+        if no_context :  # zero out the context to check if the model benefit from it
             context_features = torch.randn_like(context_features, device=context_features.device)
-        if no_z:
+        if no_z :
             predictions = self.transformer_vae.sample(ctx=context_features)
-        else:
+        else :
             predictions = self.transformer_vae(x, context_features)[0]
         return predictions
 
 
-if __name__ == '__main__':
+if __name__ == '__main__' :
     from dataset import StrokesDataset
     from torch.utils.data import DataLoader
     from utils.parse_config import ConfigParser
@@ -270,7 +251,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", default='a')
-    parser.add_argument("--config", default='/Users/eliap/Projects/brushstrokes-generation/configs/train/config_local.yaml')
+    parser.add_argument("--config",
+                        default='/Users/eliap/Projects/brushstrokes-generation/configs/train/config_local.yaml')
     parser.add_argument("--debug", action='store_true')
     args = parser.parse_args()
 
@@ -278,24 +260,23 @@ if __name__ == '__main__':
     c_parser.parse_config(args)
     config = c_parser.get_config()
 
-    #dataset = StrokesDataset(config=config, isTrain=True)
+    # dataset = StrokesDataset(config=config, isTrain=True)
 
-    #dataloader = DataLoader(dataset, batch_size=2)
-    #data = next(iter(dataloader))
+    # dataloader = DataLoader(dataset, batch_size=2)
+    # data = next(iter(dataloader))
 
     data = {
-        'strokes_ctx' : torch.randn((1,4, 12)),
-        'strokes_seq' : torch.randn((1,8, 12)),
-        'canvas_ctx' : torch.randn((1,4, 3, 256, 256)),
-        'canvas_seq' : torch.randn((1,8, 3, 256, 256)),
-        'img' : torch.randn((1,3, 256, 256))
+        'strokes_ctx' : torch.randn((1, 10, 11)),
+        'strokes_seq' : torch.randn((1, 8, 11)),
+        'canvas' : torch.randn((1, 3, 256, 256)),
+        'img' : torch.randn((1, 3, 256, 256))
     }
 
     # Define the model
     net = InteractivePainter(config)
 
-    #preds = net(data)
 
+    # preds = net(data)
 
     def count_parameters(model) :
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -303,14 +284,7 @@ if __name__ == '__main__':
 
     params = count_parameters(net)
     print(f'Number of trainable parameters: {params / 10 ** 6}')
-    # preds, mu, l_sigma = net(data)
 
     # Predict with context
-    clean_preds = net.generate(data)
-
-    # # Predict without context
-    # noctx_preds = net.generate(data, no_context=True)
-    #
-    # # Prediction without z
-    # noz_preds = net.generate(data, no_z=True)
-    # print(noz_preds.shape)
+    net.train()
+    clean_preds = net(data)
