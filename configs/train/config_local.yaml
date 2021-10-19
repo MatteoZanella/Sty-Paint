@@ -6,15 +6,16 @@ dataset :
   heuristic : 'lkh_col1_area2_pos0_cl10_sal0'
   partition : 'ade_dataset'
   resize : 256
-  context_length : 4
+  context_length : 10
   sequence_length : 8
+  use_images : True
 model:
-  only_vae : False
+  model_type : 'full'
   d_model : 256
-  n_strokes_params : 12
+  n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
-  encoder_pe: 'sine'
+  encoder_pe: 'learnable'
   decoder_pe : 'learnable'
   img_encoder:
     type : 'resnet18'
@@ -38,22 +39,23 @@ model:
     n_layers : 5
     ff_dim : 1024
 train:
-  n_epochs : 100
-  gpu_id : -1
-  batch_size : 64
+  n_epochs : 250
+  gpu_id : 0
+  batch_size : 256
   num_workers : 8
-  amp_enabled : False
+  seed : 43
+  amp_enabled : True
   optimizer:
-    max_lr : 7.0e-4
-    min_lr : 5.0e-5
-    warmup_lr : 5.0e-6
-    warmup_ep : 20
+    max_lr : 1.0e-3
+    min_lr : 1.0e-4
+    warmup_lr : 1.0e-5
+    warmup_ep : 50
     wd : 0.05
     clip_grad : 4.0
   kl:
-    warmup_type : 'linear'
-    warm_up_epochs : 10
-    kl_lambda : 5.0e-5
+    warmup_type : 'cosine'
+    warm_up_epochs : 125
+    kl_lambda : 5.0e-4
   auto_resume:
     active : False
     resume_path : ''

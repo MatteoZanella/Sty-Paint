@@ -266,8 +266,8 @@ if __name__ == '__main__' :
     # data = next(iter(dataloader))
 
     data = {
-        'strokes_ctx' : torch.randn((1, 4, 12)),
-        'strokes_seq' : torch.randn((1, 8, 12)),
+        'strokes_ctx' : torch.randn((1, 10, 11)),
+        'strokes_seq' : torch.randn((1, 8, 11)),
         'canvas' : torch.randn((1, 3, 256, 256)),
         'img' : torch.randn((1, 3, 256, 256))
     }

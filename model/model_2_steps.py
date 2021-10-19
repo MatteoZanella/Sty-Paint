@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
-from networks.image_encoders import resnet18
-from networks.layers import PE
+from model.networks.image_encoders import resnet18
+from model.networks.layers import PE
 from timm.models.layers import trunc_normal_
 import numpy as np
 
@@ -158,13 +158,13 @@ class TransformerVAE(nn.Module) :
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
         self.color_head = nn.Sequential(
-            nn.Linear(self.d_model, 10),
+            nn.Linear(self.d_model, 9),
             nn.Sigmoid())
 
     def pos_to_idx(self, p):
         n = int(self.width / self.visual_features_size)
         with torch.no_grad() :
-            p = p.detach().numpy()
+            p = p.detach().cpu().numpy()
             p = np.rint(p * (self.width - 1) + 0.5)
             # index to feature maps
             x_i = p[:, :, 0] // n
@@ -270,7 +270,7 @@ class InteractivePainter(nn.Module) :
         if no_context :  # zero out the context to check if the model benefit from it
             context_features = torch.randn_like(context_features, device=context_features.device)
         if no_z :
-            predictions = self.transformer_vae.sample(ctx=context_features)
+            predictions = self.transformer_vae.sample(ctx=context_features, visual_features=vs_features)
         else :
             predictions = self.transformer_vae(x, context_features, vs_features)[0]
         return predictions
@@ -297,8 +297,8 @@ if __name__ == '__main__' :
     # data = next(iter(dataloader))
 
     data = {
-        'strokes_ctx' : torch.randn((5, 4, 12)),
-        'strokes_seq' : torch.randn((5, 8, 12)),
+        'strokes_ctx' : torch.randn((5, 10, 11)),
+        'strokes_seq' : torch.randn((5, 8, 11)),
         'canvas' : torch.randn((5, 3, 256, 256)),
         'img' : torch.randn((5, 3, 256, 256))
     }

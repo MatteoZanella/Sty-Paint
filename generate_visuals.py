@@ -9,7 +9,7 @@ import torch
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 import matplotlib.pyplot as plt
-from model.dataset import StrokesDataset, GenerativeDataset
+from model.dataset import StrokesDataset
 import torchvision.transforms as transforms
 
 from model.baseline.model import PaintTransformer
@@ -64,7 +64,7 @@ if __name__ == '__main__':
 
 
     # Test
-    dataset_test = GenerativeDataset(config, isTrain=False)
+    dataset_test = StrokesDataset(config, isTrain=False)
 
     # beagle_22, Siamese_170, yorkshire_terrier_22
     names = ['beagle_22', 'leonberger_4', 'Abyssinian_8']

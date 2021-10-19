@@ -4,7 +4,7 @@ dataset :
   partition : 'ade_dataset'
   heuristic : 'lkh_col2_area1_pos0_cl7'
   resize : 256
-  context_length : 20
+  context_length : 10
   sequence_length : 8
   use_images : True
 model:
@@ -52,8 +52,8 @@ train:
     clip_grad : 4.0
   kl:
     warmup_type : 'cosine'
-    warm_up_epochs : 100
-    kl_lambda : 2.5e-4
+    warm_up_epochs : 125
+    kl_lambda : 5.0e-4
   auto_resume:
     active : False
     resume_path : ''
