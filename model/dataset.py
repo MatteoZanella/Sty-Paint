@@ -36,6 +36,11 @@ class StrokesDataset(Dataset):
         # Load csv file
         partition = self.config["dataset"]["partition"]
 
+        self.active_sampling = config["dataset"]["sampling"]["active"]
+        self.sampling_threshold = config["dataset"]["sampling"]["threshold"]
+        self.sampling_p = config["dataset"]["sampling"]["prob"]
+
+
         self.df = pd.read_csv(self.config["dataset"]["csv_file"])
         self.root_dir = os.path.join(self.config["dataset"]["root"], partition, 'brushstrokes_generation_dataset')
 
@@ -50,8 +55,8 @@ class StrokesDataset(Dataset):
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
+            transforms.ToTensor(),])
+            #transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
 
     def __len__(self):
         return len(self.filenames)
@@ -69,6 +74,9 @@ class StrokesDataset(Dataset):
         return strokes
 
     def sample_strokes(self, n):
+        if self.active_sampling:
+            if random.random() < self.sampling_p:
+                n = self.sampling_threshold
         t = random.randint(self.context_length, n-self.sequence_length)
         t_C = t-self.context_length
         t_T = t+self.sequence_length
@@ -150,8 +158,8 @@ class EvalDataset(Dataset):
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
+            transforms.ToTensor(),])
+            #transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
 
     def __len__(self):
         return len(self.filenames)

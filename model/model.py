@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from model.networks.image_encoders import resnet18
-from model.networks.layers import PE
+from model.networks.layers import PEWrapper
 from timm.models.layers import trunc_normal_
 
 
@@ -21,18 +21,11 @@ class Embedder(nn.Module) :
         self.seq_length = config["dataset"]["sequence_length"]
         self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
-        if config["model"]["encoder_pe"] == "sine" :
-            self.pe2D = PE(type='2d', d_model=self.d_model, h=self.visual_features_size, w=self.visual_features_size)()
-            self.pe1D_ctx = PE(type='1d', d_model=self.d_model, length=self.context_length)()
-            self.pe1D_seq = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
-        else :
-            # Learnable PE, length first
-            self.pe2D = nn.Parameter(torch.zeros(1, self.visual_features_size ** 2, self.d_model))
-            self.pe1D_ctx = nn.Parameter(torch.zeros(1, self.context_length, self.d_model))
-            self.pe1D_seq = nn.Parameter(torch.zeros(1, self.seq_length, self.d_model))
-            trunc_normal_(self.pe2D, std=0.02)
-            trunc_normal_(self.pe1D_ctx, std=0.02)
-            trunc_normal_(self.pe1D_seq, std=0.02)
+        self.PE = PEWrapper(config)
+        self.visual_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
+        self.stroke_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
+        trunc_normal_(self.visual_token, std=0.02)
+        trunc_normal_(self.stroke_token, std=0.02)
 
         self.img_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
                                     layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
@@ -50,28 +43,35 @@ class Embedder(nn.Module) :
         bs = img.shape[0]
 
         # Encode Img/Canvas
-        img_feat = self.img_encoder(img)
-        canvas_feat = self.canvas_encoder(canvas)
+        img_feat, _ = self.img_encoder(img)
+        canvas_feat, _ = self.canvas_encoder(canvas)
         visual_feat = self.conv_proj(torch.cat((img_feat, canvas_feat), dim=1))
+        visual_feat = rearrange(visual_feat, 'bs dim h w -> bs h w dim')  # channels last
 
-        visual_feat = visual_feat.reshape(bs, self.d_model, -1).permute(0, 2, 1)
-        visual_feat += self.pe2D.to(device=visual_feat.device)
+        # Strokes
+        strokes = torch.cat((strokes_ctx, strokes_seq), dim=1)
+        strokes_feat = self.proj_features(strokes)
+
+        # Add 3D PE
+        visual_feat, strokes_feat = self.PE(visual_feat, strokes_feat, strokes)
+        visual_feat = rearrange(visual_feat, 'bs h w dim -> bs (h w) dim')
+
+        visual_feat += self.visual_token
+        strokes_feat += self.stroke_token
+
+        # Rearrange
+        strokes_ctx_feat = strokes_feat[:, :self.context_length, :]
+        strokes_seq_feat = strokes_feat[:, self.context_length :, :]
 
         # Context
-        strokes_ctx_feat = self.proj_features(strokes_ctx)
-        strokes_ctx_feat += self.pe1D_ctx.to(device=strokes_ctx_feat.device)
-
         ctx_sequence = torch.cat((visual_feat, strokes_ctx_feat), dim=1)
 
-        # Sequence
-        x_sequence = self.proj_features(strokes_seq)
-        x_sequence += self.pe1D_seq.to(device=x_sequence.device)
-
-        # Permute sequences as length-first
-        ctx_sequence = ctx_sequence.permute(1, 0, 2)
-        x_sequence = x_sequence.permute(1, 0, 2)
+        # Length first
+        ctx_sequence = rearrange(ctx_sequence, 'bs L dim -> L bs dim')
+        x_sequence = rearrange(strokes_seq_feat, 'bs L dim -> L bs dim')
 
         return ctx_sequence, x_sequence
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -110,12 +110,8 @@ class TransformerVAE(nn.Module) :
         if self.ctx_z == 'proj' :
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
 
-        if config["model"]["decoder_pe"] == 'sine':
-            self.time_queries_PE = PE(type='1d', d_model=self.d_model, length=self.seq_length)()
-            self.time_queries_PE = self.time_queries_PE.permute(1, 0, 2)
-        else :
-            self.time_queries_PE = nn.Parameter(torch.zeros(self.seq_length, 1, self.d_model))
-            trunc_normal_(self.time_queries_PE, std=0.02)
+        self.time_queries_PE = nn.Parameter(torch.zeros(self.seq_length, 1, self.d_model))
+        trunc_normal_(self.time_queries_PE, std=0.02)
 
         self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
         self.log_sigma = nn.Parameter(torch.randn(1, 1, self.d_model))
@@ -168,8 +164,9 @@ class TransformerVAE(nn.Module) :
         z = eps.mul(sigma).add_(mu)
         return z
 
-    def decode(self, size, z, context) :
-        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=size[1])
+    def decode(self, z, context) :
+        bs = z.size(0)
+        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=bs)
 
         if self.ctx_z == 'proj' :
             # # Fuse z and context using projection
@@ -196,7 +193,7 @@ class TransformerVAE(nn.Module) :
         z = self.reparameterize(mu, log_sigma)
 
         # Replicate z and decode
-        out = self.decode(seq.size(), z, context)  # z is the input, context comes from the other branch
+        out = self.decode(z, context)  # z is the input, context comes from the other branch
 
         return out, mu, log_sigma
 
@@ -207,7 +204,7 @@ class TransformerVAE(nn.Module) :
         bs = ctx.size(1)
         # Sample z
         z = torch.randn(bs, self.d_model).to(self.device)
-        preds = self.decode(size=(L, bs, self.d_model), z=z, context=ctx)
+        preds = self.decode(z=z, context=ctx)
         return preds
 
 
@@ -231,7 +228,7 @@ class InteractivePainter(nn.Module) :
         return predictions, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, data, no_context=False, no_z=False) :
+    def generate(self, data, no_context=False, no_z=True) :
         context, x = self.embedder(data)
         context_features = self.context_encoder(context)
         if no_context :  # zero out the context to check if the model benefit from it
@@ -266,10 +263,10 @@ if __name__ == '__main__' :
     # data = next(iter(dataloader))
 
     data = {
-        'strokes_ctx' : torch.randn((1, 10, 11)),
-        'strokes_seq' : torch.randn((1, 8, 11)),
-        'canvas' : torch.randn((1, 3, 256, 256)),
-        'img' : torch.randn((1, 3, 256, 256))
+        'strokes_ctx' : torch.rand((3, 10, 11)),
+        'strokes_seq' : torch.rand((3, 8, 11)),
+        'canvas' : torch.randn((3, 3, 256, 256)),
+        'img' : torch.randn((3, 3, 256, 256))
     }
 
     # Define the model
@@ -288,3 +285,6 @@ if __name__ == '__main__' :
     # Predict with context
     net.train()
     clean_preds = net(data)
+    v = net.generate(data, no_z=True)
+
+    print(v.shape)

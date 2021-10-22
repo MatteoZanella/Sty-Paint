@@ -128,7 +128,7 @@ class PainterBase():
                 file_name + '_animated.mp4', cv2.VideoWriter_fourcc(*'MP4V'), 40,
                 (out_w, out_h))
 
-        print('rendering canvas...')
+        #print('rendering canvas...')
         self.rderr.create_empty_canvas()
         for i in range(v.shape[0]):  # for each stroke
             self.rderr.stroke_params = v[i, :]
@@ -376,7 +376,7 @@ class Painter(PainterBase):
                 path + '_animated.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 20,
                 (out_w, out_h))
 
-        print('rendering canvas...')
+        #print('rendering canvas...')
         if canvas_start is None:
             self.rderr.create_empty_canvas()
         else:

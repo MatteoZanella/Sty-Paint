@@ -44,9 +44,21 @@ class PaintTransformer:
             windows_size = 64
         else:
             windows_size = 128
-        #print(f'Area: {area}, ws: {windows_size}')
+        print(f'Area: {area}, ws: {windows_size}')
 
         return (x_start, y_start), windows_size
+
+    def generate(self, data):
+        original = data['img']
+        canvas_start = data['canvas']
+        strokes_ctx = data['strokes_ctx']
+
+        bs = original.shape[0]
+        out = np.empty([bs, 8, 11])
+        for b in range(bs):
+            res = self.main(original[b][None], canvas_start[b][None], strokes_ctx[b][None])
+            out[b] = res
+        return out
 
     def main(self, original, canvas_start, strokes_ctx):
         assert original.size(2) == canvas_start.size(2) == self.input_size
@@ -67,7 +79,7 @@ class PaintTransformer:
 
         # Refactor sparams to match stylized neural painter renderer
         n = sparms.shape[0]
-        sparms = np.concatenate((sparms, sparms[:, -3:], np.zeros((n,1))), axis=-1)   # replicate the color, add a 0 for transparency, note that it won't be used
+        sparms = np.concatenate((sparms, sparms[:, -3:]), axis=-1)   # replicate the color, add a 0 for transparency, note that it won't be used
         sparms[:, 0] = (sparms[:, 0] * ws + x1) / self.input_size
         sparms[:, 1] = (sparms[:, 1] * ws + y1) / self.input_size
         sparms[:, 2] = (sparms[:, 2] * ws) / self.input_size
@@ -77,7 +89,7 @@ class PaintTransformer:
         sparms = sparms[idx, :][None]
 
 
-        return sparms, dec
+        return sparms
 
     def predict(self, original_img, canvas_status) :
         patch_size = 32

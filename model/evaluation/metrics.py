@@ -1,25 +1,79 @@
 import numpy as np
 from scipy import linalg
 import torch
+from einops import rearrange
 
+class WassersteinDistance:
+    def __init__(self):
+        pass
 
-# Code from https://github.com/mseitzer/pytorch-fid/blob/master/src/pytorch_fid/fid_score.py
+    def get_sigma_sqrt(self, w, h, theta) :
+        sigma_00 = w * (torch.cos(theta) ** 2) / 2 + h * (torch.sin(theta) ** 2) / 2
+        sigma_01 = (w - h) * torch.cos(theta) * torch.sin(theta) / 2
+        sigma_11 = h * (torch.cos(theta) ** 2) / 2 + w * (torch.sin(theta) ** 2) / 2
+        sigma_0 = torch.stack([sigma_00, sigma_01], dim=-1)
+        sigma_1 = torch.stack([sigma_01, sigma_11], dim=-1)
+        sigma = torch.stack([sigma_0, sigma_1], dim=-2)
+        return sigma
 
+    def get_sigma(self, w, h, theta) :
+        sigma_00 = w * w * (torch.cos(theta) ** 2) / 4 + h * h * (torch.sin(theta) ** 2) / 4
+        sigma_01 = (w * w - h * h) * torch.cos(theta) * torch.sin(theta) / 4
+        sigma_11 = h * h * (torch.cos(theta) ** 2) / 4 + w * w * (torch.sin(theta) ** 2) / 4
+        sigma_0 = torch.stack([sigma_00, sigma_01], dim=-1)
+        sigma_1 = torch.stack([sigma_01, sigma_11], dim=-1)
+        sigma = torch.stack([sigma_0, sigma_1], dim=-2)
+        return sigma
+
+    def gaussian_w_distance(self, param_1, param_2) :
+        """
+        Args:
+            param_1: bs x length x 5
+            param_2:
+        Returns:
+            should average all to have a fair result
+        """
+        mu_1, w_1, h_1, theta_1 = torch.split(param_1, (2, 1, 1, 1), dim=-1)
+        w_1 = w_1.squeeze(-1)
+        h_1 = h_1.squeeze(-1)
+        theta_1 = torch.acos(torch.tensor(-1., device=param_1.device)) * theta_1.squeeze(-1)
+        trace_1 = (w_1 ** 2 + h_1 ** 2) / 4
+        mu_2, w_2, h_2, theta_2 = torch.split(param_2, (2, 1, 1, 1), dim=-1)
+        w_2 = w_2.squeeze(-1)
+        h_2 = h_2.squeeze(-1)
+        theta_2 = torch.acos(torch.tensor(-1., device=param_2.device)) * theta_2.squeeze(-1)
+        trace_2 = (w_2 ** 2 + h_2 ** 2) / 4
+        sigma_1_sqrt = self.get_sigma_sqrt(w_1, h_1, theta_1)
+        sigma_2 = self.get_sigma(w_2, h_2, theta_2)
+        trace_12 = torch.matmul(torch.matmul(sigma_1_sqrt, sigma_2), sigma_1_sqrt)
+        trace_12 = torch.sqrt(trace_12[..., 0, 0] + trace_12[..., 1, 1] + 2 * torch.sqrt(
+            trace_12[..., 0, 0] * trace_12[..., 1, 1] - trace_12[..., 0, 1] * trace_12[..., 1, 0]))
+        return torch.sum((mu_1 - mu_2) ** 2, dim=-1) + trace_1 + trace_2 - 2 * trace_12
+
+    def __call__(self, param1, param2):
+        assert param1.shape[-1] == 5
+        assert param1.shape == param2.shape
+
+        loss = self.gaussian_w_distance(param1, param2)
+
+        return loss.mean()  # average over the batch/length dimension
+
+#######################################################################################################################
 class FDMetric :
-    def __init__(self, n_files, seq_len=8) :
+    def __init__(self, seq_len=8) :
+        """
+        Compute batched FD metric
+        """
 
-        self.param_per_stroke = 11   # leave out the last parameter, i.e. alpha which is not used
-        self.n_files = n_files
-        self.ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
-        self.n = self.ids.shape[0]
+        self.param_per_stroke = 11
+        ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
+        self.id0 = ids[:, 0]
+        self.id1 = ids[:, 1]
+        self.n = ids.shape[0]
 
         #print(f'Numebr of permutations : {self.n}')
 
         self.dim_features = self.n * self.param_per_stroke
-        self.original_features = np.empty((self.n_files, self.dim_features))
-        self.generated_features = np.empty((self.n_files, self.dim_features))
-        self.counter = 0
-
         self.keys = ['all', 'position', 'color']   # Divide the FD for these parameters
 
     def _calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2, eps=1e-6) :
@@ -75,73 +129,50 @@ class FDMetric :
         return (diff.dot(diff) + np.trace(sigma1)
                 + np.trace(sigma2) - 2 * tr_covmean)
 
-    def update_queue(self, original, generated):
-
-        # Original
-        self.original_features[self.counter, :] = self.compute_features(original)
-        # Generated
-        self.generated_features[self.counter, :] = self.compute_features(generated)
-        # Update
-        self.counter += 1
-
     def compute_features(self, x) :
         if torch.is_tensor(x):
             x = x.detach().cpu().numpy()
-        feat = np.empty(self.dim_features)
+        bs = x.shape[0]
+        feat = np.empty((bs, self.dim_features))
         for j in range(self.param_per_stroke):
-            feat[j * self.n : (j + 1) * self.n] = x[:, self.ids[:, 0], j] - x[:, self.ids[:, 1], j]
+            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, j] - x[:, self.id1, j]
         return feat
 
-    def compute_mean_cov(self):
-        generated = dict(mu_all=np.mean(self.generated_features, axis=0),
-                   cov_all=np.cov(self.generated_features, rowvar=False),
-                   mu_position=np.mean(self.generated_features[:, :6 * self.n]),
-                   cov_position=np.cov(self.generated_features[:, :6 * self.n], rowvar=False),
-                   mu_color=np.mean(self.generated_features[:, 6 * self.n]),
-                   cov_color=np.cov(self.generated_features[:, 6 * self.n], rowvar=False))
+    def compute_mean_cov(self, feat):
+        out = dict(mu_all=np.mean(feat, axis=0),
+                   cov_all=np.cov(feat, rowvar=False),
+                   mu_position=np.mean(feat[:, :6 * self.n]),
+                   cov_position=np.cov(feat[:, :6 * self.n], rowvar=False),
+                   mu_color=np.mean(feat[:, 6 * self.n]),
+                   cov_color=np.cov(feat[:, 6 * self.n], rowvar=False))
+        return out
 
-        original =  dict(mu_all=np.mean(self.original_features, axis=0),
-                   cov_all=np.cov(self.original_features, rowvar=False),
-                   mu_position=np.mean(self.original_features[:, :6 * self.n]),
-                   cov_position=np.cov(self.original_features[:, :6 * self.n], rowvar=False),
-                   mu_color=np.mean(self.original_features[:, 6 * self.n]),
-                   cov_color=np.cov(self.original_features[:, 6 * self.n], rowvar=False))
+    def __call__(self, original, generated):
+        # Original
+        orig_feat = self.compute_features(original)
+        orig = self.compute_mean_cov(orig_feat)
 
-        return generated, original
-
-    def compute_fd(self):
-        assert self.counter == self.n_files
-        gen, orig = self.compute_mean_cov()
+        # Generated
+        gen_feat = self.compute_features(generated)
+        gen = self.compute_mean_cov(gen_feat)
 
         output = dict(
             all = self._calculate_frechet_distance(mu1=gen['mu_all'], sigma1=gen['cov_all'], mu2=orig['mu_all'], sigma2=orig['cov_all']),
             position = self._calculate_frechet_distance(mu1=gen['mu_position'], sigma1=gen['cov_position'], mu2=orig['mu_position'], sigma2=orig['cov_position']),
             color = self._calculate_frechet_distance(mu1=gen['mu_color'], sigma1=gen['cov_color'], mu2=orig['mu_color'], sigma2=orig['cov_color']))
 
-        return output
+        return output['all'], output
 
 
 # ======================================================================================================================
 import lpips
 import itertools
-import torchvision.transforms as transforms
 
 
 # code from https://github.com/richzhang/PerceptualSimilarity, pip install lpips
-class LPIPSMetric :
+class LPIPSDiversityMetric:
     def __init__(self, fn_backbone='vgg') :
         self.loss_fn = lpips.LPIPS(net=fn_backbone)
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ])
-
-    # def prepare_input(self, x):
-    #     bs = x.size(0)
-    #     x = rearrange(x, 'bs L c h w -> (bs L) c h w')
-    #     x = 2 * x - 1
-    #     x = rearrange(x, '(bs L) c h w -> bs L c h w', bs = bs)
-    #     return x
 
     def get_combinations(self, n) :
         return np.array([i for i in itertools.combinations(range(n), 2)])
@@ -150,57 +181,114 @@ class LPIPSMetric :
     def __call__(self, x) :
         """
         Args:
-            x: tensor of size [n_samples x H x W x 3], contains n_samples continuations suggested by the model
+            x: numpy array of size [bs x n_samples x H x W x 3], contains n_samples continuations suggested by the model
         Returns:
         """
-        n_samples = len(x)
+        bs = x.shape[0]
+        n_samples = x.shape[1]
         idxs = self.get_combinations(n_samples)
 
-        x_norm = [self.transform(x_i) for x_i in x]
-        x_norm = torch.stack(x_norm)
+        x_tensor = torch.empty(x.shape)
+        for b in range(bs):
+            for l in range(n_samples):
+                x_tensor[b,l] = torch.tensor( 0.5 * x[b, l] + 1)   # shift images in the range [-1,1]
 
+        x_tensor = x_tensor.permute(0, 1, 4, 2, 3)
         loss = []
-        for idx in idxs :
-            loss.append(self.loss_fn(x_norm[idx[0]],
-                                     x_norm[idx[1]]))
+        for b in range(bs):
+            for idx in idxs:
+                loss.append(self.loss_fn(x_tensor[b, idx[0]],
+                                         x_tensor[b, idx[1]]))
 
         loss = torch.tensor(loss)
         return loss.mean()
 
 
-    def cleanLPIPS(self, ref, gen):
-        gen = self.transform(gen)
-        return self.loss_fn(ref, gen)
+class FeaturesDiversity:
+    def __init__(self) :
+        seq_len = 8
+        self.param_per_stroke = 11
+        ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
+        self.id0 = ids[:, 0]
+        self.id1 = ids[:, 1]
+        self.n = ids.shape[0]
+
+        # print(f'Numebr of permutations : {self.n}')
+
+        self.dim_features = self.n * self.param_per_stroke
+
+    def get_combinations(self, n) :
+        return np.array([i for i in itertools.combinations(range(n), 2)])
+
+    def compute_features(self, x) :
+        if torch.is_tensor(x) :
+            x = x.detach().cpu().numpy()
+        bs = x.shape[0]
+        n_samples = x.shape[1]
+
+        feat = np.empty((bs, n_samples, self.dim_features))
+        for j in range(self.param_per_stroke) :
+            for n in range(n_samples) :
+                feat[:, n, j * self.n : (j + 1) * self.n] = x[:, n, self.id0, j] - x[:, n, self.id1, j]
+        return feat
+
+    def mse(self, x, y) :
+        return np.mse(np.subtract(x, y)).mean()
+
+    def __call__(self, x) :
+        """
+        Args:
+            x: [bs x n_samples x len x params]
+        Returns:
+        """
+        bs = x.shape[0]
+        n_samples = x.shape[1]
+        idxs = self.get_combinations(n_samples)
+
+        x_feat = self.compute_features(x)
+
+        loss = []
+        for b in range(bs) :
+            for idx in idxs :
+                loss.append(self.mse(x_feat[b, idx[0]], x_feat[b, idx[1]]))
+
+        print(len(loss))
+        loss = np.array(loss)
+        return loss.mean()
+
 
 
 # ======================================================================================================================
 from einops import repeat
-import torch.nn.functional as F
+from tslearn.metrics import dtw
 
+def maskedL2(ref_imgs, frames, alphas) :
+    """
+    All input between 0, 1 range
+    Args:
+        ref: [bs x 3 x h x w]
+        frames: [bs x L x h x w x 3]  rendered frames
+        alphas: [bs x L x h x w x 1]  0, 1 binary map showing the transparency matrix
 
-class MaskedL2 :
-    def __init__(self) :
-        pass
+    Returns:
 
-    def normalize_0_1(self, x) :
-        # Images are normalized between -1, 1. Shift to 0, 1
-        x = 0.5 * (x + 1)
-        return x[0].permute(1, 2, 0).cpu().numpy()
+    """
+    L = frames.shape[1]
 
-    @torch.no_grad()
-    def __call__(self, ref, gen, alphas) :
-        """
-        Args:
-            ref: reference images
-            gen: render of each stroke
-            alphas: alpha matrix of the last strokes
+    ref_imgs = repeat(ref_imgs.cpu(), 'bs ch h w -> bs L h w ch', L=L)
+    ref_imgs = ref_imgs.numpy()
 
-        Returns:
+    loss = np.square(np.subtract(ref_imgs, frames) * alphas)
+    area = alphas.sum(axis=(2, 3, 4))
+    loss = loss.sum(axis=(2,3,4)) / area
 
-        """
-        ref = self.normalize_0_1(ref)
-        alphas = (np.stack(alphas).sum(axis=0) > 0)[:, :, None]
-        loss_masked = (((ref - gen) * alphas) ** 2).sum()
-        loss_normalized = loss_masked / alphas.sum()
+    return loss.mean()
 
-        return loss_masked, loss_normalized
+def compute_dtw(x, y) :
+    bs = x.shape[0]
+    print(bs)
+
+    dtw_scores = np.empty(bs)
+    for b in range(bs) :
+        dtw_scores[b] = dtw(x[b], y[b])
+    return dtw_scores.mean()

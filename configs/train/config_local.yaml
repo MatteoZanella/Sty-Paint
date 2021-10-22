@@ -15,7 +15,7 @@ model:
   n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
-  encoder_pe: 'learnable'
+  encoder_pe: 'sine'
   decoder_pe : 'learnable'
   img_encoder:
     type : 'resnet18'
@@ -40,7 +40,7 @@ model:
     ff_dim : 1024
 train:
   n_epochs : 250
-  gpu_id : 0
+  gpu_id : -1
   batch_size : 256
   num_workers : 8
   seed : 43

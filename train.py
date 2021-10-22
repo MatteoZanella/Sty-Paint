@@ -4,7 +4,7 @@ import logging
 import numpy as np
 
 from model.utils.parse_config import ConfigParser
-from model import model_no_images, model, model_autoencoder, model_2_steps
+from model import model, model_2_steps
 from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
@@ -62,11 +62,8 @@ if __name__ == '__main__':
     if config["model"]["model_type"] == 'full':
         model = model.InteractivePainter(config)
     elif config["model"]["model_type"] == '2_steps':
+        logging.info('Two step model')
         model = model_2_steps.InteractivePainter(config)
-    elif config["model"]["model_type"] == 'autoencoder':
-        model = model_autoencoder.InteractivePainter(config)
-    elif config["model"]["model_type"] == 'no_images':
-        model = model_no_images.InteractivePainter(config)
     else:
         raise NotImplementedError(f'Wrong model type: {config["model"]["model_type"]}')
 

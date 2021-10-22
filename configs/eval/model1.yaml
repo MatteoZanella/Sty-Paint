@@ -10,6 +10,8 @@ dataset :
   use_images : True
 model:
   model_type : 'full'
+  name: None
+  checkpoint: ''
   d_model : 256
   n_strokes_params : 12
   ctx_z : 'cat'

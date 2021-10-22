@@ -267,13 +267,14 @@ class ResNet(nn.Module):
 
         x = self.layer1(x)
         x = self.layer2(x)
+        visual_feat = x
         x = self.layer3(x)
 
         if self.layer4 is not None:
             x = self.layer4(x)
         x = self.out(x)                # output is 256 x 8 x 8
 
-        return x
+        return x, visual_feat
 
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
