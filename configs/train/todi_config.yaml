@@ -1,16 +1,16 @@
 dataset :
   root : '/data/eperuzzo/IBG_dataset/'
   csv_file : '/data/eperuzzo/IBG_dataset/dataset_config.csv'
-  partition : 'ade_dataset'
+  partition : 'oxford_pet_dataset'
   heuristic : 'lkh_col2_area1_pos0_cl7'
   resize : 256
   context_length : 10
   sequence_length : 8
   use_images : True
   sampling:
-    active : False
-    threshold: None
-    prob: None
+    active : True
+    threshold: 150
+    prob: 0.35
 model:
   model_type : '2_steps'
   d_model : 256
@@ -30,16 +30,19 @@ model:
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
+    dropout: 0.1
   vae_encoder:
     act : 'gelu'
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
+    dropout: 0.1
   vae_decoder:
     act : 'gelu'
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
+    dropout : 0.1
 train:
   n_epochs : 250
   gpu_id : 0
@@ -56,8 +59,8 @@ train:
     clip_grad : 4.0
   kl:
     warmup_type : 'cosine'
-    warm_up_epochs : 125
-    kl_lambda : 5.0e-4
+    warm_up_epochs : 100
+    kl_lambda : 1.0e-4
   auto_resume:
     active : False
     resume_path : ''

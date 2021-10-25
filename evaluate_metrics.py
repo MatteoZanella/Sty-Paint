@@ -6,7 +6,7 @@ import pickle as pkl
 from model.utils.utils import dict_to_device, AverageMeter
 from model.utils.parse_config import ConfigParser
 from model import model, model_2_steps
-from model.baseline.torch_implementation import PaintTransformer
+#from model.baseline.torch_implementation import PaintTransformer
 from model.dataset import StrokesDataset
 from torch.utils.data import DataLoader
 
@@ -15,12 +15,35 @@ from dataset_acquisition.decomposition.utils import load_painter_config
 import torch
 import numpy as np
 
-from model.evaluation.metrics import FDMetric, FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance
+from model.evaluation.metrics import FDMetric, FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental
 from model.evaluation.metrics import maskedL2, compute_dtw
 
+from model.baseline.model import PaintTransformer as PaddlePT
+import warnings
+warnings.filterwarnings("ignore")
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
+
+
+def sample_color(params, img) :
+    width = img.shape[-1]
+    pos = np.rint(params[:, :, :2] * (width - 1) + 0.5).astype('uint8')
+
+    bs = img.size(0)
+    L = params.shape[1]
+
+    sampled_colors = np.empty([bs, L, 3])
+
+    for b in range(bs) :
+        for l in range(L) :
+            sampled_colors[b, l, :] = img[b, :, pos[b, l, 1], pos[b, l, 0]].cpu().numpy()
+
+    new_params = np.empty_like(params)
+    new_params[:, :, :5] = params[:, :, :5]
+    new_params[:, :, 5:] = np.tile(sampled_colors, reps=(1, 1, 2))
+
+    return new_params
 
 
 def render_frames(params, batch, renderer) :
@@ -127,8 +150,10 @@ if __name__ == '__main__' :
     models = dict(
         model = net1,
         model_two_steps = net2,
-        baseline = PaintTransformer(model_path=args.checkpoint_baseline, config=render_config, dev=config["device"]))
+        baseline = PaddlePT(model_path=args.checkpoint_baseline, config=render_config))
 
+    n_files = len(dataset_test) * args.n_iters_dataloader
+    print('Number of files')
     # ======= Metrics ========================
     LPIPS = LPIPSDiversityMetric()
     Wdist = WassersteinDistance()
@@ -140,12 +165,19 @@ if __name__ == '__main__' :
 
     for key in models.keys():
         average_meters.update({key : dict(
-                           fd = AverageMeter(name='fd'),
+                           fd = FDMetricIncremental(n_files=n_files),
                            dtw = AverageMeter(name='dtw'),
                            masked_l2=AverageMeter(name='Masked L2 / Area'),
                            lpips=AverageMeter(name='lpips'),
                             feature_div=AverageMeter(name='features_div'),
                             wd=AverageMeter(name='wd'))})
+    average_meters.update({'model_sc' : dict(
+        fd = FDMetricIncremental(n_files=n_files),
+        dtw=AverageMeter(name='dtw'),
+        masked_l2=AverageMeter(name='Masked L2 / Area'),
+        lpips=AverageMeter(name='lpips'),
+        feature_div=AverageMeter(name='features_div'),
+        wd=AverageMeter(name='wd'))})
 
     # ======= Run ========================
     for iter in range(args.n_iters_dataloader):
@@ -164,6 +196,7 @@ if __name__ == '__main__' :
                 if torch.is_tensor(preds):
                     preds = preds.cpu().numpy()
                 predictions.update({name : preds})
+            predictions.update({'model_sc' : sample_color(predictions['model'], batch['img'])})
 
             for name, params in predictions.items() :
                 visuals.update({name : render_frames(params, batch, renderer)})
@@ -180,11 +213,11 @@ if __name__ == '__main__' :
             for name in predictions.keys():
                 print(name)
                 wd = Wdist(batch['strokes_seq'][:, :, :5], torch.tensor(predictions[name][:, :, :5]))
-                fd = Fdist(batch['strokes_seq'], predictions[name])[0]  # keep all
+                average_meters[name]['fd'].update_queue(batch['strokes_seq'], predictions[name])  # keep all
                 dtw = compute_dtw(batch['strokes_seq'], predictions[name])
 
                 average_meters[name]['wd'].update(wd.item(), bs)
-                average_meters[name]['fd'].update(fd.item(), bs)
+                #average_meters[name]['fd'].update(fd.item(), bs)
                 average_meters[name]['dtw'].update(dtw.item(), bs)
 
             #####
@@ -194,13 +227,14 @@ if __name__ == '__main__' :
             predictions_lpips = dict()
 
             for key, model in models.items():
-                if key == 'baseline':
+                if key == 'baseline' or key == 'model_sc':
                     continue
                 predictions_lpips[key] = dict()
                 for n in range(args.n_samples_lpips):
                     predictions_lpips[key][n] = model.generate(data)
 
-            if idx % 10 == 0 :
+            flag = False
+            if idx % 5 == 0 :
                 visuals_lpips = render_lpips(inp=predictions_lpips, renderer=renderer,
                                              batch=batch, bs=bs, n_samples=args.n_samples_lpips)
 
@@ -213,6 +247,9 @@ if __name__ == '__main__' :
                 feat_div_score = feature_div(preds[name])
                 print(feat_div_score.item())
                 average_meters[name]['feature_div'].update(feat_div_score.item(), bs)
+
+    for key in average_meters.keys():
+        average_meters[key]['fd'] = average_meters[key]['fd'].compute_fd()
 
     os.makedirs(args.output_path, exist_ok=True)
     for key in average_meters.keys():

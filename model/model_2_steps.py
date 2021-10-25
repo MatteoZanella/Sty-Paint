@@ -105,6 +105,7 @@ class ContextEncoder(nn.Module) :
                 nhead=config["model"]["encoder"]["n_heads"],
                 dim_feedforward=config["model"]["encoder"]["ff_dim"],
                 activation=config["model"]["encoder"]["act"],
+                dropout=config["model"]["encoder"]["dropout"]
             ),
             num_layers=config["model"]["encoder"]["n_layers"])
 
@@ -147,6 +148,7 @@ class TransformerVAE(nn.Module) :
                 nhead=config["model"]["vae_encoder"]["n_heads"],
                 dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
                 activation=config["model"]["vae_encoder"]["act"],
+                dropout=config["model"]["vae_encoder"]["dropout"]
             ),
             num_layers=config["model"]["vae_encoder"]["n_layers"])
 
@@ -157,6 +159,7 @@ class TransformerVAE(nn.Module) :
                 nhead=config["model"]["vae_decoder"]["n_heads"],
                 dim_feedforward=config["model"]["vae_decoder"]["ff_dim"],
                 activation=config["model"]["vae_decoder"]["act"],
+                dropout=config["model"]["vae_decoder"]["dropout"]
             ),
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
@@ -170,6 +173,7 @@ class TransformerVAE(nn.Module) :
                 nhead=config["model"]["vae_decoder"]["n_heads"],
                 dim_feedforward=config["model"]["vae_decoder"]["ff_dim"],
                 activation=config["model"]["vae_decoder"]["act"],
+                dropout=config["model"]["vae_decoder"]["dropout"]
             ),
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
@@ -212,6 +216,7 @@ class TransformerVAE(nn.Module) :
 
         # Pool visual features
         idxs = pos_2_idx(preds_appearance, visual_features_size=int(np.sqrt(visual_features.shape[1])))
+        print(idxs)
         pooled_features = visual_features[np.arange(bs)[:, None], idxs]
         pooled_features = rearrange(pooled_features, 'bs L dim -> L bs dim')
 

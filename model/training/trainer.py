@@ -25,7 +25,7 @@ class Trainer:
         # Optimizers
         self.checkpoint_path = config["train"]["logging"]["checkpoint_path"]
         self.train_dataloader = train_dataloader
-        self.optimizer = AdamW(params=model.parameters(), lr=config["train"]["optimizer"]["max_lr"], weight_decay=config["train"]["optimizer"]['wd'])
+        self.optimizer = Adam(params=model.parameters(), lr=config["train"]["optimizer"]["max_lr"], weight_decay=config["train"]["optimizer"]['wd'])
         #self.LRScheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=config["train"]["optimizer"]["max_lr"], steps_per_epoch=len(dataloader), epochs=config["train"]["n_epochs"])
         self.n_iter_per_epoch = len(self.train_dataloader)
         self.LRScheduler = CosineLRScheduler(

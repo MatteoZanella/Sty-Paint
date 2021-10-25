@@ -141,10 +141,10 @@ class FDMetric :
     def compute_mean_cov(self, feat):
         out = dict(mu_all=np.mean(feat, axis=0),
                    cov_all=np.cov(feat, rowvar=False),
-                   mu_position=np.mean(feat[:, :6 * self.n]),
-                   cov_position=np.cov(feat[:, :6 * self.n], rowvar=False),
-                   mu_color=np.mean(feat[:, 6 * self.n]),
-                   cov_color=np.cov(feat[:, 6 * self.n], rowvar=False))
+                   mu_position=np.mean(feat[:, :5 * self.n]),
+                   cov_position=np.cov(feat[:, :5 * self.n], rowvar=False),
+                   mu_color=np.mean(feat[:, 5 * self.n:]),
+                   cov_color=np.cov(feat[:, 5 * self.n:], rowvar=False))
         return out
 
     def __call__(self, original, generated):
@@ -161,8 +161,129 @@ class FDMetric :
             position = self._calculate_frechet_distance(mu1=gen['mu_position'], sigma1=gen['cov_position'], mu2=orig['mu_position'], sigma2=orig['cov_position']),
             color = self._calculate_frechet_distance(mu1=gen['mu_color'], sigma1=gen['cov_color'], mu2=orig['mu_color'], sigma2=orig['cov_color']))
 
-        return output['all'], output
+        return output['all'], output, (orig_feat, gen_feat)
 
+########################################################################################################################
+class FDMetricIncremental :
+    def __init__(self, n_files, seq_len=8) :
+        """
+        Compute batched FD metric
+        """
+
+        self.param_per_stroke = 8
+        ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
+        self.id0 = ids[:, 0]
+        self.id1 = ids[:, 1]
+        self.n = ids.shape[0]
+
+        #print(f'Numebr of permutations : {self.n}')
+
+        self.dim_features = self.n * self.param_per_stroke
+
+        self.n_files = n_files
+        self.original_features = np.empty((self.n_files, self.dim_features))
+        self.generated_features = np.empty((self.n_files, self.dim_features))
+        self.counter = 0
+        self.keys = ['all', 'position', 'color']   # Divide the FD for these parameters
+
+    def _calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2, eps=1e-6) :
+        """Numpy implementation of the Frechet Distance.
+        The Frechet distance between two multivariate Gaussians X_1 ~ N(mu_1, C_1)
+        and X_2 ~ N(mu_2, C_2) is
+                d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2)).
+        Stable version by Dougal J. Sutherland.
+        Params:
+        -- mu1   : Numpy array containing the activations of a layer of the
+                   inception net (like returned by the function 'get_predictions')
+                   for generated samples.
+        -- mu2   : The sample mean over activations, precalculated on an
+                   representative data set.
+        -- sigma1: The covariance matrix over activations for generated samples.
+        -- sigma2: The covariance matrix over activations, precalculated on an
+                   representative data set.
+        Returns:
+        --   : The Frechet Distance.
+        """
+
+        mu1 = np.atleast_1d(mu1)
+        mu2 = np.atleast_1d(mu2)
+
+        sigma1 = np.atleast_2d(sigma1)
+        sigma2 = np.atleast_2d(sigma2)
+
+        assert mu1.shape == mu2.shape, \
+            'Training and test mean vectors have different lengths'
+        assert sigma1.shape == sigma2.shape, \
+            'Training and test covariances have different dimensions'
+
+        diff = mu1 - mu2
+
+        # Product might be almost singular
+        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+        if not np.isfinite(covmean).all() :
+            msg = ('fid calculation produces singular product; '
+                   'adding %s to diagonal of cov estimates') % eps
+            print(msg)
+            offset = np.eye(sigma1.shape[0]) * eps
+            covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
+
+        # Numerical error might give slight imaginary component
+        if np.iscomplexobj(covmean) :
+            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3) :
+                m = np.max(np.abs(covmean.imag))
+                raise ValueError('Imaginary component {}'.format(m))
+            covmean = covmean.real
+
+        tr_covmean = np.trace(covmean)
+
+        return (diff.dot(diff) + np.trace(sigma1)
+                + np.trace(sigma2) - 2 * tr_covmean)
+
+    def compute_features(self, x) :
+        if torch.is_tensor(x):
+            x = x.detach().cpu().numpy()
+        bs = x.shape[0]
+        feat = np.empty((bs, self.dim_features))
+        for j in range(self.param_per_stroke):
+            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, j] - x[:, self.id1, j]
+        return feat
+
+    def compute_mean_cov(self):
+        generated = dict(mu_all=np.mean(self.generated_features, axis=0),
+                   cov_all=np.cov(self.generated_features, rowvar=False),
+                   mu_position=np.mean(self.generated_features[:, :5 * self.n]),
+                   cov_position=np.cov(self.generated_features[:, :5 * self.n], rowvar=False),
+                   mu_color=np.mean(self.generated_features[:, 5 * self.n:]),
+                   cov_color=np.cov(self.generated_features[:, 5 * self.n:], rowvar=False))
+
+        original =  dict(mu_all=np.mean(self.original_features, axis=0),
+                   cov_all=np.cov(self.original_features, rowvar=False),
+                   mu_position=np.mean(self.original_features[:, :5 * self.n]),
+                   cov_position=np.cov(self.original_features[:, :5 * self.n], rowvar=False),
+                   mu_color=np.mean(self.original_features[:, 5 * self.n:]),
+                   cov_color=np.cov(self.original_features[:, 5 * self.n:], rowvar=False))
+
+        return generated, original
+
+    def update_queue(self, original, generated):
+        bs = original.shape[0]
+        # Original
+        self.original_features[self.counter:self.counter+bs, :] = self.compute_features(original)
+        # Generated
+        self.generated_features[self.counter:self.counter+bs, :] = self.compute_features(generated)
+        # Update
+        self.counter += bs
+
+    def compute_fd(self):
+        assert self.counter == self.n_files
+        gen, orig = self.compute_mean_cov()
+
+        output = dict(
+            all = self._calculate_frechet_distance(mu1=gen['mu_all'], sigma1=gen['cov_all'], mu2=orig['mu_all'], sigma2=orig['cov_all']),
+            position = self._calculate_frechet_distance(mu1=gen['mu_position'], sigma1=gen['cov_position'], mu2=orig['mu_position'], sigma2=orig['cov_position']),
+            color = self._calculate_frechet_distance(mu1=gen['mu_color'], sigma1=gen['cov_color'], mu2=orig['mu_color'], sigma2=orig['cov_color']))
+
+        return output['all'], output
 
 # ======================================================================================================================
 import lpips
@@ -204,6 +325,7 @@ class LPIPSDiversityMetric:
         return loss.mean()
 
 
+
 class FeaturesDiversity:
     def __init__(self) :
         seq_len = 8
@@ -233,7 +355,7 @@ class FeaturesDiversity:
         return feat
 
     def mse(self, x, y) :
-        return np.mse(np.subtract(x, y)).mean()
+        return np.square(np.subtract(x, y)).mean()
 
     def __call__(self, x) :
         """
@@ -251,8 +373,6 @@ class FeaturesDiversity:
         for b in range(bs) :
             for idx in idxs :
                 loss.append(self.mse(x_feat[b, idx[0]], x_feat[b, idx[1]]))
-
-        print(len(loss))
         loss = np.array(loss)
         return loss.mean()
 
@@ -286,8 +406,6 @@ def maskedL2(ref_imgs, frames, alphas) :
 
 def compute_dtw(x, y) :
     bs = x.shape[0]
-    print(bs)
-
     dtw_scores = np.empty(bs)
     for b in range(bs) :
         dtw_scores[b] = dtw(x[b], y[b])

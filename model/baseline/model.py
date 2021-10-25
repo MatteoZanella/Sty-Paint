@@ -17,7 +17,7 @@ class PaintTransformer:
         self.model_path = model_path
 
         # Create and load net
-        paddle.set_device('cpu')
+        paddle.set_device('gpu')
         self.net_g = network.Painter(5, self.stroke_num, 256, 8, 3, 3)
         self.net_g.set_state_dict(paddle.load(model_path))
         self.net_g.eval()
@@ -44,7 +44,7 @@ class PaintTransformer:
             windows_size = 64
         else:
             windows_size = 128
-        print(f'Area: {area}, ws: {windows_size}')
+        # print(f'Area: {area}, ws: {windows_size}')
 
         return (x_start, y_start), windows_size
 
@@ -58,7 +58,7 @@ class PaintTransformer:
         for b in range(bs):
             res = self.main(original[b][None], canvas_start[b][None], strokes_ctx[b][None])
             out[b] = res
-        return out
+        return out.astype('float32')
 
     def main(self, original, canvas_start, strokes_ctx):
         assert original.size(2) == canvas_start.size(2) == self.input_size

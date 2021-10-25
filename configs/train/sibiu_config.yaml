@@ -1,7 +1,7 @@
 dataset :
   root: '/home/eperuzzo/IBG_dataset'
-  csv_file: '/home/eperuzzo/IBG_dataset/ade_test.csv'
-  partition: 'ade_dataset'
+  csv_file: '/home/eperuzzo/IBG_dataset/dataset_test_config.csv'
+  partition: 'oxford_pet_dataset'
   heuristic: 'lkh_col2_area1_pos0_cl7'
   resize : 256
   context_length : 10
@@ -42,22 +42,22 @@ model:
     ff_dim : 1024
 train:
   n_epochs: 250
-  gpu_id: 1
+  gpu_id: -1
   batch_size: 256
   num_workers: 8
   seed: 43
   amp_enabled: True
   optimizer:
-    max_lr: 1.0e-3
-    min_lr: 1.0e-4
-    warmup_lr: 1.0e-5
-    warmup_ep: 50
+    max_lr: 1.0e-4
+    min_lr: 1.0e-5
+    warmup_lr: 1.0e-6
+    warmup_ep: 30
     wd: 0.05
     clip_grad: 4.0
   kl:
     warmup_type: 'cosine'
-    warm_up_epochs: 125
-    kl_lambda: 5.0e-4
+    warm_up_epochs: 100
+    kl_lambda: 1.0e-4
   auto_resume:
     active: False
     resume_path: ''

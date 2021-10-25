@@ -124,8 +124,7 @@ class PaintTransformer:
         self.model_path = model_path
         self.patch_size = 32
 
-        device = 'cpu'  # torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.net_g = Painter(5, self.stroke_num, 256, 8, 3, 3).to(device)
+        self.net_g = Painter(5, self.stroke_num, 256, 8, 3, 3)
         self.net_g.load_state_dict(torch.load(model_path))
         self.net_g.to(dev)
         self.net_g.eval()
@@ -156,7 +155,6 @@ class PaintTransformer:
             windows_size = 64
         else:
             windows_size = 128
-        print(f'Area: {area}, ws: {windows_size}')
 
         return (x_start, y_start), windows_size
 
