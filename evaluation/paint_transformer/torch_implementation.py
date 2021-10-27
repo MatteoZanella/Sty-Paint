@@ -1,5 +1,3 @@
-import os
-import torch
 import torch.nn.functional as F
 import PIL.Image as Image
 import numpy as np

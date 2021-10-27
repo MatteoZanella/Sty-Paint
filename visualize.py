@@ -1,12 +1,10 @@
 import argparse
-import logging
 import os
-import pickle as pkl
 
-from model.utils.utils import dict_to_device, AverageMeter
+from model.utils.utils import dict_to_device
 from model.utils.parse_config import ConfigParser
 from model import model, model_2_steps
-from model.dataset import StrokesDataset, EvalDataset
+from model.dataset import EvalDataset
 
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
@@ -16,7 +14,7 @@ import cv2
 from collections import OrderedDict
 import matplotlib.pyplot as plt
 
-from model.baseline.model import PaintTransformer as PaddlePT
+from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -208,7 +206,9 @@ if __name__ == '__main__' :
         original='Original',
         baseline='Baseline',
         model='Our',
-        model_two_steps='Our+')
+        model_sc='Our (sc)',
+        model_two_steps='Our+'
+        )
 
     for filename, ts in files.items():
         batch = dataset_test.sample(filename, ts)
@@ -226,7 +226,7 @@ if __name__ == '__main__' :
             if torch.is_tensor(preds) :
                 preds = preds.cpu().numpy()
             predictions.update({name : preds})
-        #predictions.update({'model_sc' : sample_color(predictions['model'], batch['img'])})
+        predictions.update({'model_sc' : sample_color(predictions['model'], batch['img'])})
 
         visuals.update({'original' : produce_visuals(batch['strokes_seq'], batch['strokes_ctx'], renderer, starting_point)})
         visuals.update({'reference' : img})
@@ -237,7 +237,7 @@ if __name__ == '__main__' :
         fig = plt.figure(figsize=(30, 10))
         ii = 1
         for key, title in key_to_title.items():
-            plt.subplot(1, 5, ii)
+            plt.subplot(1, 6, ii)
             plt.imshow(visuals[key])
             plt.title(title)
             plt.axis('off')

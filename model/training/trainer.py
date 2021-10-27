@@ -115,10 +115,7 @@ class Trainer:
             self.optimizer.zero_grad()
             #loss.backward()
             self.scaler.scale(mse_loss).backward(retain_graph=True)
-            if self.model_type == 'autoencoder':
-                kl_div = torch.tensor([0])
-            else:
-                self.scaler.scale(kl_div * kl_lambda).backward()
+            self.scaler.scale(kl_div * kl_lambda).backward()
 
             # Gradient clipping
             self.scaler.unscale_(self.optimizer)
@@ -173,18 +170,18 @@ class Trainer:
             targets = data['strokes_seq']
             bs = targets.size(0)
 
-            # Predict with context
-            clean_preds = model.module.generate(data)
+            # Predict with context and z
+            clean_preds = model.module.generate(data, no_context=False, no_z=False)
             clean_mse = self.MSELoss(clean_preds, targets)
             mse_loss_meter.update(clean_mse.item(), bs)
 
             # Predict without context
-            noctx_preds = model.module.generate(data, no_context=True)
+            noctx_preds = model.module.generate(data, no_context=True, no_z=False)
             noctx_mse = self.MSELoss(noctx_preds, targets)
             mse_no_context_meter.update(noctx_mse.item(), bs)
 
             # Prediction without z
-            noz_preds = model.module.generate(data, no_z=True)
+            noz_preds = model.module.generate(data, no_z=True, no_context=False)
             noz_mse = self.MSELoss(noz_preds, targets)
             mse_no_z_meter.update(noz_mse.item(), bs)
 

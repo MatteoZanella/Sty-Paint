@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
-from model.networks.image_encoders import resnet18
-from model.networks.layers import PEWrapper
 from timm.models.layers import trunc_normal_
 
+from model.networks.image_encoders import resnet18
+from model.networks.layers import PEWrapper
+from model.networks.layers import positionalencoding1d
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
@@ -40,35 +41,30 @@ class Embedder(nn.Module) :
         strokes_ctx = data['strokes_ctx']
         img = data['img']
         canvas = data['canvas']
-        bs = img.shape[0]
 
         # Encode Img/Canvas
         img_feat, _ = self.img_encoder(img)
         canvas_feat, _ = self.canvas_encoder(canvas)
         visual_feat = self.conv_proj(torch.cat((img_feat, canvas_feat), dim=1))
-        visual_feat = rearrange(visual_feat, 'bs dim h w -> bs h w dim')  # channels last
+        visual_feat = self.PE.pe_visual_tokens(visual_feat)               # add pe
+        visual_feat = rearrange(visual_feat, 'bs ch h w -> bs (h w) ch')  # channels last
+        visual_feat += self.visual_token
 
         # Strokes
-        strokes = torch.cat((strokes_ctx, strokes_seq), dim=1)
-        strokes_feat = self.proj_features(strokes)
+        strokes_ctx_feat = self.proj_features(strokes_ctx)
+        strokes_ctx_feat = self.PE.pe_strokes_tokens(strokes_ctx_feat, strokes_ctx)
+        strokes_ctx_feat += self.stroke_token
 
-        # Add 3D PE
-        visual_feat, strokes_feat = self.PE(visual_feat, strokes_feat, strokes)
-        visual_feat = rearrange(visual_feat, 'bs h w dim -> bs (h w) dim')
+        x_sequence = self.proj_features(strokes_seq)
+        x_sequence = self.PE.pe_strokes_tokens(x_sequence, strokes_seq)
+        x_sequence += self.stroke_token
 
-        visual_feat += self.visual_token
-        strokes_feat += self.stroke_token
-
-        # Rearrange
-        strokes_ctx_feat = strokes_feat[:, :self.context_length, :]
-        strokes_seq_feat = strokes_feat[:, self.context_length :, :]
-
-        # Context
+        # Merge Context
         ctx_sequence = torch.cat((visual_feat, strokes_ctx_feat), dim=1)
 
         # Length first
         ctx_sequence = rearrange(ctx_sequence, 'bs L dim -> L bs dim')
-        x_sequence = rearrange(strokes_seq_feat, 'bs L dim -> L bs dim')
+        x_sequence = rearrange(x_sequence, 'bs L dim -> L bs dim')
 
         return ctx_sequence, x_sequence
 
@@ -76,7 +72,6 @@ class Embedder(nn.Module) :
 # ----------------------------------------------------------------------------------------------------------------------
 
 class ContextEncoder(nn.Module) :
-
     def __init__(self, config) :
         super().__init__()
 
@@ -111,8 +106,6 @@ class TransformerVAE(nn.Module) :
         if self.ctx_z == 'proj' :
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
 
-        self.time_queries_PE = nn.Parameter(torch.zeros(self.seq_length, 1, self.d_model))
-        trunc_normal_(self.time_queries_PE, std=0.02)
 
         self.mu = nn.Parameter(torch.randn(1, 1, self.d_model))
         self.log_sigma = nn.Parameter(torch.randn(1, 1, self.d_model))
@@ -144,7 +137,7 @@ class TransformerVAE(nn.Module) :
         if config["model"]["activation_last_layer"] == "sigmoid" :
             self.prediction_head.add_module('act', nn.Sigmoid())
 
-    def encode(self, x, context) :
+    def encode(self, x, context):
         bs = x.size(1)
 
         # add learnable tokens
@@ -167,27 +160,17 @@ class TransformerVAE(nn.Module) :
         z = eps.mul(sigma).add_(mu)
         return z
 
-    def decode(self, z, context) :
+    def decode(self, length, z, context) :
         bs = z.size(0)
-        time_queries = repeat(self.time_queries_PE.to(device=z.device), 'L 1 d_model -> L bs d_model', bs=bs)
+        time_queries = positionalencoding1d(x=length, orig_channels=self.d_model)
+        time_queries = repeat(time_queries, '1 L dim -> L bs dim', bs=bs).to(z.device)
 
-        if self.ctx_z == 'proj' :
-            # # Fuse z and context using projection
-            z = repeat(z, 'bs n_feat -> ctx_len bs n_feat', ctx_len=self.context_length)
-            z_ctx = torch.cat([context, z], dim=-1)  # concatenate on the feature dimension
-            z_ctx = self.proj_ctx_z(z_ctx)
-        elif self.ctx_z == 'cat' :
-            # Fuse z and context with concatenation on length dim
-            z_ctx = torch.cat((context, z[None]), dim=0)
-        else :
-            raise NotImplementedError()
+        # Concatenate z and context
+        context = torch.cat((context, z[None]), dim=0)
 
-        out = self.vae_decoder(time_queries, z_ctx)
-
-        # Linear proj
-        out = out.permute(1, 0, 2)  # bs x L x dim
+        out = self.vae_decoder(time_queries, context)
         out = self.prediction_head(out)
-
+        out = rearrange(out, 'L bs dim -> bs L dim')
         return out
 
     def forward(self, seq, context) :
@@ -196,7 +179,9 @@ class TransformerVAE(nn.Module) :
         z = self.reparameterize(mu, log_sigma)
 
         # Replicate z and decode
-        out = self.decode(z, context)  # z is the input, context comes from the other branch
+        out = self.decode(length=self.seq_length,
+                          z=z,
+                          context=context)  # z is the input, context comes from the other branch
 
         return out, mu, log_sigma
 
@@ -207,7 +192,9 @@ class TransformerVAE(nn.Module) :
         bs = ctx.size(1)
         # Sample z
         z = torch.randn(bs, self.d_model).to(self.device)
-        preds = self.decode(z=z, context=ctx)
+        preds = self.decode(length=L,
+                            z=z,
+                            context=ctx)
         return preds
 
 
@@ -244,8 +231,6 @@ class InteractivePainter(nn.Module) :
 
 
 if __name__ == '__main__' :
-    from dataset import StrokesDataset
-    from torch.utils.data import DataLoader
     from utils.parse_config import ConfigParser
     import argparse
 
@@ -260,11 +245,6 @@ if __name__ == '__main__' :
     c_parser.parse_config(args)
     config = c_parser.get_config()
 
-    # dataset = StrokesDataset(config=config, isTrain=True)
-
-    # dataloader = DataLoader(dataset, batch_size=2)
-    # data = next(iter(dataloader))
-
     data = {
         'strokes_ctx' : torch.rand((3, 10, 11)),
         'strokes_seq' : torch.rand((3, 8, 11)),
@@ -274,9 +254,6 @@ if __name__ == '__main__' :
 
     # Define the model
     net = InteractivePainter(config)
-
-
-    # preds = net(data)
 
     def count_parameters(model) :
         return sum(p.numel() for p in model.parameters() if p.requires_grad)

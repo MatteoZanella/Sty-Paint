@@ -249,6 +249,10 @@ class FDMetricIncremental :
         return feat
 
     def compute_mean_cov(self):
+        print(f'Orinal : {self.original_features.shape}')
+        print(f'Gene: {self.generated_features.shape}')
+        print(f'Color : {self.generated_features[:, 5 * self.n:].shape}')
+
         generated = dict(mu_all=np.mean(self.generated_features, axis=0),
                    cov_all=np.cov(self.generated_features, rowvar=False),
                    mu_position=np.mean(self.generated_features[:, :5 * self.n]),
@@ -266,6 +270,10 @@ class FDMetricIncremental :
         return generated, original
 
     def update_queue(self, original, generated):
+        #
+        original = original[:, :, :self.param_per_stroke]
+        generated = generated[:, :, :self.param_per_stroke]
+
         bs = original.shape[0]
         # Original
         self.original_features[self.counter:self.counter+bs, :] = self.compute_features(original)

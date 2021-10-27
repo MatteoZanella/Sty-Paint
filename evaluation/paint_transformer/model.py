@@ -1,4 +1,4 @@
-from . import network, render, render_utils
+from . import network, render_utils
 import paddle
 import paddle.nn as nn
 import numpy as np

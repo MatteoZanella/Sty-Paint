@@ -17,7 +17,7 @@ cd /data/eperuzzo/brushstrokes-generation/
 python evaluate_metrics.py \
         --model_1_config /data/eperuzzo/model_checkpoints/full_clean_as_oxford/latest.pth.tar \
         --model_2_config /data/eperuzzo/model_checkpoints/2_steps_clean_as_oxford/latest.pth.tar \
-        --output_path /data/eperuzzo/metrics_v1 \
+        --output_path /data/eperuzzo/metrics_v2 \
         --checkpoint_baseline /data/eperuzzo/model_checkpoints/painttransformer/paint_best.pdparams \
         --n_iters_dataloader 3 \
         --config /data/eperuzzo/brushstrokes-generation/configs/train/todi_config.yaml & wait

@@ -27,69 +27,32 @@ class PositionalEncoding(nn.Module) :
 ########################################################################################################################
 class PEWrapper:
     def __init__(self, config):
-        self.pe_type = config["model"]["encoder_pe"]
-
-    def pe3d(self, visual_features, strokes_features, strokes_params):
-        assert visual_features.size(-1) == strokes_features.size(-1)
-
-        h = visual_features.size(2)
-        bs, length, dim = strokes_features.shape
-
-        pe3d = positionalencoding3d(size=(h, h, length+1, dim))
-
-        # Visual Features
-        visual_features += pe3d[:, :, :, 0, :].to(device=visual_features.device)
-
-        # Strokes Features
-        x_i, y_i = pos_2_idx(strokes_params[:, :, :2])   # (x,y)
-        pe_strokes = torch.empty_like(strokes_features)
-        for b_idx in range(bs):
-            for l_idx in range(length):
-                pe_strokes[b_idx, l_idx] = pe3d[0, y_i[b_idx, l_idx], x_i[b_idx, l_idx], l_idx+1, :]
-        strokes_features += pe_strokes.to(device=strokes_features.device)
-
-        return visual_features, strokes_features
-
-    def pe_old(self, visual_features, strokes_features):
-        assert visual_features.size(-1) == strokes_features.size(-1)
-
-        h = visual_features.size(2)
-        bs, length, dim = strokes_features.shape
-
-        pe2d = positionalencoding2d(size=(h, h, dim))
-        pe1d = positionalencoding1d(size=(length, dim))
-
-        # Visual Features
-        visual_features += pe2d.to(device=visual_features.device)
-
-        # Strokes Features
-        strokes_features += pe1d.to(device=strokes_features.device)
-
-        return visual_features, strokes_features
+        self.input_dim = 256   # dimension of the image
+        self.channels = 256
+        self.encoder_dim = 8
 
 
-    def __call__(self, visual_features, strokes_features, strokes_params):
-        if self.pe_type == '3d_sine':
-            return self.pe3d(visual_features, strokes_features, strokes_params)
-        elif self.pe_type == 'sine':
-            return self.pe_old(visual_features, strokes_features)
-        else:
-            raise NotImplementedError()
+    def pe_visual_tokens(self, x):
 
-def pos_2_idx(pos):
-    width = 256
-    vis = 8
-    n = int(256 / 8)
-    with torch.no_grad():
-        pos = pos.detach().cpu().numpy()
-        pos = np.rint(pos * (width - 1) + 0.5)
-    x_i = (pos[:, :, 0] // n).astype('int')
-    y_i = (pos[:, :, 1] // n).astype('int')
-    return x_i, y_i
+        hw = x.shape[-1]
+        k = int(self.input_dim / hw)
+        pe = positionalencoding3d(x=self.input_dim, y=self.input_dim, z=1, orig_channels=self.channels)
+        pe = pe.permute(0, 4, 1, 2, 3)[:, :, :, :, 0]   # bs x ch x h x w
+        pe = nn.AvgPool2d((k, k))(pe)
 
+        return x + pe.to(x.device)
 
-def positionalencoding1d(size):
-    x, orig_channels = size
+    def pe_strokes_tokens(self, x, params):
+        pos = params[:, :, :2]
+        idxs = torch.round(pos * (self.input_dim - 1) + 0.5).long()    # [0,1] -> [0, input_dim]
+        pe = positionalencoding3d(x=self.input_dim, y=self.input_dim, z=x.size(1), orig_channels=self.channels)
+        pe = pe[0, idxs[:, :, 1], idxs[:, :, 0], torch.arange(x.size(1)), :]         # bs x L x ch
+
+        return x + pe.to(x.device)
+
+########################################################################################################################
+
+def positionalencoding1d(x, orig_channels):
 
     channels = orig_channels
     inv_freq = 1. / (10000 ** (torch.arange(0, channels, 2).float() / channels))
@@ -100,7 +63,7 @@ def positionalencoding1d(size):
     emb = torch.zeros((x, channels))
     emb[:, :channels] = emb_x
 
-    return emb[None, :, :orig_channels].detach()
+    return emb[None, :, :orig_channels]
 
 
 def positionalencoding2d(size):
@@ -120,12 +83,9 @@ def positionalencoding2d(size):
     emb[:, :, :channels] = emb_x
     emb[:, :, channels :2 * channels] = emb_y
 
-    return emb[None, :, :, :orig_channels].detach()
+    return emb[None, :, :, :orig_channels]
 
-def positionalencoding3d(size):
-
-    # Unpack size
-    x, y, z, orig_channels = size
+def positionalencoding3d(x,y,z,orig_channels):
 
     channels = int(np.ceil(orig_channels / 6) * 2)
     if channels % 2 :
@@ -146,7 +106,4 @@ def positionalencoding3d(size):
     emb[:, :, :, channels :2 * channels] = emb_y
     emb[:, :, :, 2 * channels :] = emb_z
 
-    # Set firs channel of z axis to 0, used for visual tokens
-    emb[:, :, 0, :] = torch.zeros((x, y, emb.size(3)))
-
-    return emb[None, :, :, :, :orig_channels].detach()
+    return emb[None, :, :, :, :orig_channels]

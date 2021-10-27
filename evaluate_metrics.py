@@ -1,12 +1,11 @@
 import argparse
-import logging
 import os
 import pickle as pkl
 
 from model.utils.utils import dict_to_device, AverageMeter
 from model.utils.parse_config import ConfigParser
 from model import model, model_2_steps
-#from model.baseline.torch_implementation import PaintTransformer
+#from model.paint_transformer.torch_implementation import PaintTransformer
 from model.dataset import StrokesDataset
 from torch.utils.data import DataLoader
 
@@ -15,35 +14,27 @@ from dataset_acquisition.decomposition.utils import load_painter_config
 import torch
 import numpy as np
 
-from model.evaluation.metrics import FDMetric, FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental
-from model.evaluation.metrics import maskedL2, compute_dtw
+from evaluation.metrics import FDMetric, FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental
+from evaluation.metrics import maskedL2, compute_dtw
 
-from model.baseline.model import PaintTransformer as PaddlePT
+from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
 import warnings
 warnings.filterwarnings("ignore")
+import torch.nn.functional as F
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
 
-def sample_color(params, img) :
-    width = img.shape[-1]
-    pos = np.rint(params[:, :, :2] * (width - 1) + 0.5).astype('uint8')
-
-    bs = img.size(0)
-    L = params.shape[1]
-
-    sampled_colors = np.empty([bs, L, 3])
-
-    for b in range(bs) :
-        for l in range(L) :
-            sampled_colors[b, l, :] = img[b, :, pos[b, l, 1], pos[b, l, 0]].cpu().numpy()
-
-    new_params = np.empty_like(params)
-    new_params[:, :, :5] = params[:, :, :5]
-    new_params[:, :, 5:] = np.tile(sampled_colors, reps=(1, 1, 2))
-
-    return new_params
+def sample_color(params, imgs) :
+    b, _, h, w = imgs
+    n_strokes = 8
+    img_temp = imgs.unsqueeze(1).repeat(1, n_strokes, 1, 1, 1).view(b * n_strokes, 3, h, w)
+    grid = params[:, :, :2].view(b * n_strokes, 1, 1, 2).contiguous()
+    color = F.grid_sample(img_temp, 2 * grid - 1, align_corners=False).view(b, n_strokes, 3).contiguous()
+    color = color.repeat(1, 1, 2)
+    out_params = torch.cat((params.clone()[:, :, :5], color), dim=-1)
+    return out_params
 
 
 def render_frames(params, batch, renderer) :
@@ -138,11 +129,13 @@ if __name__ == '__main__' :
     renderer = Painter(args=render_config)
 
     net1 = model.InteractivePainter(config)
+    print(f'==> Loading model form {args.model_1_config}')
     net1.load_state_dict(torch.load(args.model_1_config, map_location=device)["model"])
     net1.to(config["device"])
     net1.eval()
 
     net2 = model_2_steps.InteractivePainter(config)
+    print(f'==> Loading model form {args.model_2_config}')
     net2.load_state_dict(torch.load(args.model_2_config, map_location=device)["model"])
     net2.to(config["device"])
     net2.eval()
@@ -227,14 +220,14 @@ if __name__ == '__main__' :
             predictions_lpips = dict()
 
             for key, model in models.items():
-                if key == 'baseline' or key == 'model_sc':
+                if key == 'paint_transformer' or key == 'model_sc':
                     continue
                 predictions_lpips[key] = dict()
                 for n in range(args.n_samples_lpips):
                     predictions_lpips[key][n] = model.generate(data)
 
             flag = False
-            if idx % 5 == 0 :
+            if flag:#idx % 5 == 0 :
                 visuals_lpips = render_lpips(inp=predictions_lpips, renderer=renderer,
                                              batch=batch, bs=bs, n_samples=args.n_samples_lpips)
 
