@@ -314,3 +314,46 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     return _resnet("resnet18", BasicBlock, [2, 2, 2, 2], pretrained, progress, **kwargs)
+
+
+########################################################################################################################
+class ConvEncoder(nn.Module):
+    def __init__(self):
+        super(ConvEncoder, self).__init__()
+
+        self.enc1 = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(True),
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True))
+
+        self.enc2 = nn.Sequential(
+
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=2),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True)
+
+        )
+
+        self.avg = nn.AvgPool2d((2,2))
+
+    def forward(self, x):
+        vis_feat = self.enc1(x)
+        out = self.enc2(vis_feat)
+        out = self.avg(out)
+        vis_feat = self.avg(vis_feat)
+
+        return out, vis_feat

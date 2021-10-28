@@ -12,8 +12,8 @@ dataset :
     threshold: 150
     prob: 0.35
 model:
-  model_type : '2_steps'
-  d_model : 256
+  model_type : 'full'
+  d_model : 384
   n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
@@ -27,19 +27,19 @@ model:
   encoder:
     canvas_strokes : 'add'
     act : 'gelu'
-    n_heads : 8
-    n_layers : 5
-    ff_dim : 1024
+    n_heads : 6
+    n_layers : 8
+    ff_dim : 1536
   vae_encoder:
     act : 'gelu'
-    n_heads : 8
-    n_layers : 5
-    ff_dim : 1024
+    n_heads : 6
+    n_layers : 8
+    ff_dim : 1536
   vae_decoder:
     act : 'gelu'
-    n_heads : 8
-    n_layers : 5
-    ff_dim : 1024
+    n_heads : 6
+    n_layers : 8
+    ff_dim : 1536
 train:
   n_epochs : 250
   gpu_id : 0
@@ -48,16 +48,16 @@ train:
   seed : 43
   amp_enabled : True
   optimizer:
-    max_lr : 1.0e-3
-    min_lr : 1.0e-4
-    warmup_lr : 1.0e-5
+    max_lr : 5.0e-4
+    min_lr : 5.0e-5
+    warmup_lr : 5.0e-6
     warmup_ep : 50
     wd : 0.05
     clip_grad : 4.0
   kl:
     warmup_type : 'cosine'
-    warm_up_epochs : 100
-    kl_lambda : 5.0e-4
+    warm_up_epochs : 125
+    kl_lambda : 1.0e-4
   auto_resume:
     active : False
     resume_path : ''

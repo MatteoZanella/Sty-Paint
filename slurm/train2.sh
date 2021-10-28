@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH -p gpupart
-#SBATCH --gres gpu:1
+#SBATCH -p chaos -A shared-mhug-staff
+#SBATCH --gres gpu:2
 #SBATCH --mem-per-cpu=4000
 #SBATCH -c 8
-#SBATCH -o /data/eperuzzo/brush_std.out
-#SBATCH -e /data/eperuzzo/brush_errors.out
+#SBATCH -o /data/eperuzzo/train2.out
+#SBATCH -e /data/eperuzzo/train2e.out
 #SBATCH --signal=B:SIGTERM@120
 
 # Make conda available:

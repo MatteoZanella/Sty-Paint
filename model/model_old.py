@@ -3,6 +3,8 @@ import torch.nn as nn
 from einops import rearrange, repeat
 from model.networks.image_encoders import resnet18
 from timm.models.layers import trunc_normal_
+import numpy as np
+
 ########################################################################################################################
 class PEWrapper:
     def __init__(self, config):
@@ -48,7 +50,7 @@ class PEWrapper:
 
 
     def __call__(self, visual_features, strokes_features, strokes_params):
-        if self.pe_type == '3d_sine':
+        if self.pe_type == '3dsine':
             return self.pe3d(visual_features, strokes_features, strokes_params)
         elif self.pe_type == 'sine':
             return self.pe_old(visual_features, strokes_features)
@@ -157,7 +159,7 @@ class Embedder(nn.Module) :
         self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
                                        layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
 
-        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=self.d_model, kernel_size=(3, 3), padding=1, stride=1)
+        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3, 3), padding=1, stride=1)
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
     def forward(self, data) :
@@ -211,7 +213,6 @@ class ContextEncoder(nn.Module) :
                 nhead=config["model"]["encoder"]["n_heads"],
                 dim_feedforward=config["model"]["encoder"]["ff_dim"],
                 activation=config["model"]["encoder"]["act"],
-                dropout=config["model"]["encoder"]["dropout"]
             ),
             num_layers=config["model"]["encoder"]["n_layers"])
 
@@ -249,7 +250,6 @@ class TransformerVAE(nn.Module) :
                 nhead=config["model"]["vae_encoder"]["n_heads"],
                 dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
                 activation=config["model"]["vae_encoder"]["act"],
-                dropout=config["model"]["vae_encoder"]["dropout"]
             ),
             num_layers=config["model"]["vae_encoder"]["n_layers"])
 
@@ -259,7 +259,6 @@ class TransformerVAE(nn.Module) :
                 nhead=config["model"]["vae_decoder"]["n_heads"],
                 dim_feedforward=config["model"]["vae_decoder"]["ff_dim"],
                 activation=config["model"]["vae_decoder"]["act"],
-                dropout=config["model"]["vae_decoder"]["dropout"]
             ),
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 

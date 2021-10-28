@@ -15,10 +15,10 @@ model:
   n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
-  encoder_pe: '3d_sine'
+  encoder_pe: 'new'
   decoder_pe : 'learnable'
   img_encoder:
-    type : 'resnet18'
+    type : 'convenc'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
     visual_features_dim : 8

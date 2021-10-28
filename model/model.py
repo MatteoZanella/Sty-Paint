@@ -2,10 +2,14 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
+# from model.networks.image_encoders import resnet18, ConvEncoder
+# from model.networks.layers import PEWrapper, PositionalEncoding
+# from model.networks.layers import positionalencoding1d
 
-from model.networks.image_encoders import resnet18
-from model.networks.layers import PEWrapper
-from model.networks.layers import positionalencoding1d
+from networks.image_encoders import resnet18, ConvEncoder
+from networks.layers import PEWrapper, PositionalEncoding
+from networks.layers import positionalencoding1d
+
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
@@ -22,16 +26,24 @@ class Embedder(nn.Module) :
         self.seq_length = config["dataset"]["sequence_length"]
         self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
-        self.PE = PEWrapper(config)
+        if config["model"]["encoder_pe"] == "new":
+            print('Using new encodings')
+            self.PE = PositionalEncoding(config)
+        else:
+            self.PE = PEWrapper(config)
         self.visual_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
         self.stroke_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
         trunc_normal_(self.visual_token, std=0.02)
         trunc_normal_(self.stroke_token, std=0.02)
 
-        self.img_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
-                                    layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
-        self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
-                                       layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
+        if config["model"]["img_encoder"]["type"] == 'resnet18':
+            self.img_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
+                                        layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
+            self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
+                                           layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
+        else:
+            self.img_encoder = ConvEncoder()
+            self.canvas_encoder = ConvEncoder()
 
         self.conv_proj = nn.Conv2d(in_channels=512, out_channels=self.d_model, kernel_size=(3, 3), padding=1, stride=1)
         self.proj_features = nn.Linear(self.s_params, self.d_model)
@@ -43,29 +55,29 @@ class Embedder(nn.Module) :
         canvas = data['canvas']
 
         # Encode Img/Canvas
-        img_feat, _ = self.img_encoder(img)
-        canvas_feat, _ = self.canvas_encoder(canvas)
-        visual_feat = self.conv_proj(torch.cat((img_feat, canvas_feat), dim=1))
-        visual_feat = self.PE.pe_visual_tokens(visual_feat)               # add pe
-        visual_feat = rearrange(visual_feat, 'bs ch h w -> bs (h w) ch')  # channels last
-        visual_feat += self.visual_token
+        img, _ = self.img_encoder(img)
+        canvas, _ = self.canvas_encoder(canvas)
+        visual_feat = self.conv_proj(torch.cat((img, canvas), dim=1))
+
+        # Everything as length first
+        visual_feat = rearrange(visual_feat, 'bs ch h w -> (h w) bs ch')
+        strokes_ctx = rearrange(strokes_ctx, 'bs L dim -> L bs dim')
+        strokes_seq = rearrange(strokes_seq, 'bs L dim -> L bs dim')
 
         # Strokes
-        strokes_ctx_feat = self.proj_features(strokes_ctx)
-        strokes_ctx_feat = self.PE.pe_strokes_tokens(strokes_ctx_feat, strokes_ctx)
-        strokes_ctx_feat += self.stroke_token
-
+        ctx_sequence = self.proj_features(strokes_ctx)
         x_sequence = self.proj_features(strokes_seq)
-        x_sequence = self.PE.pe_strokes_tokens(x_sequence, strokes_seq)
+
+        # Add PE
+        visual_feat += self.PE.pe_visual_tokens(device=visual_feat.device)
+        visual_feat += self.visual_token
+        ctx_sequence += self.PE.pe_strokes_tokens(pos = strokes_ctx, device=ctx_sequence.device)
+        ctx_sequence += self.stroke_token
+        x_sequence += self.PE.pe_strokes_tokens(pos=strokes_seq, device=x_sequence.device)
         x_sequence += self.stroke_token
 
         # Merge Context
-        ctx_sequence = torch.cat((visual_feat, strokes_ctx_feat), dim=1)
-
-        # Length first
-        ctx_sequence = rearrange(ctx_sequence, 'bs L dim -> L bs dim')
-        x_sequence = rearrange(x_sequence, 'bs L dim -> L bs dim')
-
+        ctx_sequence = torch.cat((visual_feat, ctx_sequence), dim=0)
         return ctx_sequence, x_sequence
 
 
@@ -81,7 +93,6 @@ class ContextEncoder(nn.Module) :
                 nhead=config["model"]["encoder"]["n_heads"],
                 dim_feedforward=config["model"]["encoder"]["ff_dim"],
                 activation=config["model"]["encoder"]["act"],
-                dropout=config["model"]["encoder"]["dropout"]
             ),
             num_layers=config["model"]["encoder"]["n_layers"])
 
@@ -117,7 +128,6 @@ class TransformerVAE(nn.Module) :
                 nhead=config["model"]["vae_encoder"]["n_heads"],
                 dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
                 activation=config["model"]["vae_encoder"]["act"],
-                dropout=config["model"]["vae_encoder"]["dropout"]
             ),
             num_layers=config["model"]["vae_encoder"]["n_layers"])
 
@@ -127,7 +137,6 @@ class TransformerVAE(nn.Module) :
                 nhead=config["model"]["vae_decoder"]["n_heads"],
                 dim_feedforward=config["model"]["vae_decoder"]["ff_dim"],
                 activation=config["model"]["vae_decoder"]["act"],
-                dropout=config["model"]["vae_decoder"]["dropout"]
             ),
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 

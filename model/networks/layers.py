@@ -2,53 +2,69 @@ import torch
 import torch.nn as nn
 import numpy as np
 import math
-from einops import rearrange
-
-
-class PositionalEncoding(nn.Module) :
-    def __init__(self, d_model, dropout=0.1, max_len=5000) :
-        super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
-        pe[:, 0 : :2] = torch.sin(position * div_term)
-        pe[:, 1 : :2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
-
-        self.register_buffer('pe', pe)
-
-    def forward(self, x) :
-        # not used in the final model
-        x = x + self.pe[:x.shape[0], :]
-        return self.dropout(x)
+from einops import rearrange, repeat
+import torch.nn.functional as F
 
 ########################################################################################################################
-class PEWrapper:
-    def __init__(self, config):
-        self.input_dim = 256   # dimension of the image
-        self.channels = 256
-        self.encoder_dim = 8
+class PEWrapper :
+    def __init__(self, config) :
+        self.input_dim = config["dataset"]["resize"]
+        self.encoder_dim = config["model"]["img_encoder"]["visual_features_dim"]
+        self.d_model = config["model"]["d_model"]
+
+    def pe_visual_tokens(self, device):
+        pe_spatial, pe_time = self.positionalencoding3d(self.encoder_dim, self.encoder_dim, 0, self.d_model, device)
+        pe = torch.cat((pe_spatial, pe_time), dim=0)
+        pe = rearrange(pe, 'ch h w -> (h w) 1 ch')
+        return pe[:, :, :self.d_model]
+
+    def pe_strokes_tokens(self, pos, device):
+        n_strokes, bs, _ = pos.shape
+        pe_spatial, pe_time = self.positionalencoding3d(self.encoder_dim, self.encoder_dim, n_strokes, self.d_model,
+                                                        device)
+        pe_spatial = self.bilinear_sampling_length_first(pe_spatial, pos[:, :, :2])
+        pe_time = repeat(pe_time, 'L ch -> L bs ch', bs=bs)
+        pe = torch.cat((pe_spatial, pe_time), dim=-1)
+        return pe[:, :, :self.d_model]
+
+    def bilinear_sampling_length_first(self, feat, pos) :
+        n_strokes, bs, _ = pos.shape
+        feat_temp = repeat(feat, 'ch h w -> n_reps ch h w', n_reps=n_strokes * bs)
+        grid = rearrange(pos, 'L bs p -> (L bs) 1 1 p')
+
+        pooled_features = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False)
+        pooled_features = rearrange(pooled_features, '(L bs) ch 1 1 -> L bs ch', L=n_strokes)
+
+        return pooled_features
 
 
-    def pe_visual_tokens(self, x):
+    def positionalencoding3d(self, x, y, z, orig_channels, device) :
+        channels = int(np.ceil(orig_channels / 6) * 2)
+        if channels % 2 :
+            channels += 1
+        inv_freq = 1. / (10000 ** (torch.arange(0, channels, 2).float() / channels))
 
-        hw = x.shape[-1]
-        k = int(self.input_dim / hw)
-        pe = positionalencoding3d(x=self.input_dim, y=self.input_dim, z=1, orig_channels=self.channels)
-        pe = pe.permute(0, 4, 1, 2, 3)[:, :, :, :, 0]   # bs x ch x h x w
-        pe = nn.AvgPool2d((k, k))(pe)
+        pos_x = torch.arange(x).type(inv_freq.type())
+        pos_y = torch.arange(y).type(inv_freq.type())
+        sin_inp_x = torch.einsum("i,j->ij", pos_x, inv_freq)
+        sin_inp_y = torch.einsum("i,j->ij", pos_y, inv_freq)
 
-        return x + pe.to(x.device)
+        emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1).unsqueeze(1)
+        emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1)
 
-    def pe_strokes_tokens(self, x, params):
-        pos = params[:, :, :2]
-        idxs = torch.round(pos * (self.input_dim - 1) + 0.5).long()    # [0,1] -> [0, input_dim]
-        pe = positionalencoding3d(x=self.input_dim, y=self.input_dim, z=x.size(1), orig_channels=self.channels)
-        pe = pe[0, idxs[:, :, 1], idxs[:, :, 0], torch.arange(x.size(1)), :]         # bs x L x ch
+        spatial_emb = torch.zeros((x, y, channels * 2))
+        spatial_emb[:, :, :channels] = emb_x
+        spatial_emb[:, :, channels :2 * channels] = emb_y
+        spatial_emb = rearrange(spatial_emb, 'h w ch -> ch h w')
 
-        return x + pe.to(x.device)
+        # Time
+        if z == 0 :
+            time_emb = torch.zeros((channels, x, y))
+        else :
+            pos_z = torch.arange(z).type(inv_freq.type())
+            sin_inp_z = torch.einsum("i,j->ij", pos_z, inv_freq)
+            time_emb = torch.cat((sin_inp_z.sin(), sin_inp_z.cos()), dim=-1)
+        return spatial_emb.to(device), time_emb.to(device)
 
 ########################################################################################################################
 
@@ -66,44 +82,66 @@ def positionalencoding1d(x, orig_channels):
     return emb[None, :, :orig_channels]
 
 
-def positionalencoding2d(size):
-    x, y, orig_channels = size
+########################################################################################################################
+class PositionalEncoding:
 
-    channels = int(np.ceil(orig_channels / 4) * 2)
-    channels = channels
-    inv_freq = 1. / (10000 ** (torch.arange(0, channels, 2).float() / channels))
+    def __init__(self, config) :
 
-    pos_x = torch.arange(x).type(inv_freq.type())
-    pos_y = torch.arange(y).type(inv_freq.type())
-    sin_inp_x = torch.einsum("i,j->ij", pos_x, inv_freq)
-    sin_inp_y = torch.einsum("i,j->ij", pos_y, inv_freq)
-    emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1).unsqueeze(1)
-    emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1)
-    emb = torch.zeros((x, y, channels * 2))
-    emb[:, :, :channels] = emb_x
-    emb[:, :, channels :2 * channels] = emb_y
+        self.input_dim = config["dataset"]["resize"]
+        self.encoder_dim = config["model"]["img_encoder"]["visual_features_dim"]
+        self.d_model = config["model"]["d_model"]
 
-    return emb[None, :, :, :orig_channels]
+        # Parameters for PE
+        self.channels = int(np.ceil(self.d_model / 6) * 2)
+        if self.channels % 2 :
+            self.channels += 1
+        self.inv_freq = 1. / (10000 ** (torch.arange(0, self.channels, 2).float() / self.channels))
 
-def positionalencoding3d(x,y,z,orig_channels):
+        # Store spatial PE
+        self.spatial_pe = self._get_2d_pe(self.input_dim, self.input_dim)
 
-    channels = int(np.ceil(orig_channels / 6) * 2)
-    if channels % 2 :
-        channels += 1
-    inv_freq = 1. / (10000 ** (torch.arange(0, channels, 2).float() / channels))
+    def _get_2d_pe(self, x, y) :
+        pos_x = torch.arange(x)
+        pos_y = torch.arange(y)
+        sin_inp_x = torch.einsum("i,j->ij", pos_x, self.inv_freq)
+        sin_inp_y = torch.einsum("i,j->ij", pos_y, self.inv_freq)
+        emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1).unsqueeze(1)
+        emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1)
+        emb = torch.zeros((x, y, self.channels * 2))
+        emb[:, :, :self.channels] = emb_x
+        emb[:, :, self.channels :] = emb_y
 
-    pos_x = torch.arange(x).type(inv_freq.type())
-    pos_y = torch.arange(y).type(inv_freq.type())
-    pos_z = torch.arange(z).type(inv_freq.type())
-    sin_inp_x = torch.einsum("i,j->ij", pos_x, inv_freq)
-    sin_inp_y = torch.einsum("i,j->ij", pos_y, inv_freq)
-    sin_inp_z = torch.einsum("i,j->ij", pos_z, inv_freq)
-    emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1).unsqueeze(1).unsqueeze(1)
-    emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1).unsqueeze(1)
-    emb_z = torch.cat((sin_inp_z.sin(), sin_inp_z.cos()), dim=-1)
-    emb = torch.zeros((x, y, z, channels * 3))
-    emb[:, :, :, :channels] = emb_x
-    emb[:, :, :, channels :2 * channels] = emb_y
-    emb[:, :, :, 2 * channels :] = emb_z
+        emb = rearrange(emb, 'h w ch -> 1 ch h w')
+        return emb
 
-    return emb[None, :, :, :, :orig_channels]
+    def _get_1d_pe(self, x) :
+        pos_x = torch.arange(x)
+        sin_inp_x = torch.einsum("i,j->ij", pos_x, self.inv_freq)
+        emb = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1)
+        return emb
+
+    def pe_visual_tokens(self, device) :
+        k = int(self.input_dim / self.encoder_dim)
+        spatial_pe = nn.AvgPool2d((k, k))(self.spatial_pe)
+        time_pe = torch.zeros((1, (self.d_model - 2 * self.channels), self.encoder_dim, self.encoder_dim))
+        pe = torch.cat((spatial_pe, time_pe), dim=1)
+        pe = rearrange(pe, 'bs ch h w -> (h w) bs ch')
+        return pe.to(device)
+
+    def pe_strokes_tokens(self, pos, device) :
+        L, bs, _ = pos.shape
+        pos = pos[:, :, :2]
+
+        # Spatial
+        feat = repeat(self.spatial_pe, '1 ch h w -> n_reps ch h w', n_reps=L*bs)
+        grid = rearrange(pos[:, :, :2], 'L bs p -> (L bs) 1 1 p')
+        spatial_pe = F.grid_sample(feat, 2 * grid - 1, align_corners=False, mode='nearest')
+        spatial_pe = rearrange(spatial_pe, '(L bs) ch 1 1 -> L bs ch', L=L)
+
+        # Time
+        time_pe = self._get_1d_pe(L)
+        time_pe = repeat(time_pe, 'L ch -> L bs ch', bs=bs)
+
+        # Cat
+        pe = torch.cat((spatial_pe, time_pe), dim=-1)
+        return pe[:, :, :self.d_model].to(device)

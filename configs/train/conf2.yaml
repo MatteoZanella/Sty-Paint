@@ -1,8 +1,8 @@
 dataset :
-  root: '/home/eperuzzo/IBG_dataset'
-  csv_file: '/home/eperuzzo/IBG_dataset/dataset_test_config.csv'
-  partition: 'oxford_pet_dataset'
-  heuristic: 'lkh_col2_area1_pos0_cl7'
+  root : '/data/eperuzzo/IBG_dataset/'
+  csv_file : '/data/eperuzzo/IBG_dataset/dataset_config.csv'
+  partition : 'oxford_pet_dataset'
+  heuristic : 'lkh_col2_area1_pos0_cl7'
   resize : 256
   context_length : 10
   sequence_length : 8
@@ -12,15 +12,15 @@ dataset :
     threshold: 150
     prob: 0.35
 model:
-  model_type : 'full'
+  model_type : '2_steps'
   d_model : 256
   n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
-  encoder_pe: 'old'
+  encoder_pe: 'new'
   decoder_pe : 'sine'
   img_encoder:
-    type : 'resnet18'
+    type : 'convenc'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
     visual_features_dim : 8
@@ -42,7 +42,7 @@ model:
     ff_dim : 1024
 train:
   n_epochs : 250
-  gpu_id : 1
+  gpu_id : 0
   batch_size : 256
   num_workers : 8
   seed : 43
@@ -55,17 +55,17 @@ train:
     wd : 0.05
     clip_grad : 4.0
   kl:
-    warmup_type: 'cosine'
-    warm_up_epochs: 100
-    kl_lambda: 1.0e-4
+    warmup_type : 'cosine'
+    warm_up_epochs : 100
+    kl_lambda : 5.0e-4
   auto_resume:
-    active: False
-    resume_path: ''
+    active : False
+    resume_path : ''
   logging:
-    wandb_api_key: "5745461314f5f4abb2c957bb991d2df97144ba06"
-    checkpoint_path: '/data/eperuzzo/model_checkpoints/'
-    save_freq: 1000
-    print_freq: 10
+    wandb_api_key : "5745461314f5f4abb2c957bb991d2df97144ba06"
+    checkpoint_path : '/data/eperuzzo/model_checkpoints/'
+    save_freq : 1000
+    print_freq : 10
 render:
-  painter_config : '/home/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config_sibiu.yaml'
+  painter_config : '/data/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config.yaml'
   freq : 1

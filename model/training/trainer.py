@@ -25,7 +25,8 @@ class Trainer:
         # Optimizers
         self.checkpoint_path = config["train"]["logging"]["checkpoint_path"]
         self.train_dataloader = train_dataloader
-        self.optimizer = Adam(params=model.parameters(), lr=config["train"]["optimizer"]["max_lr"], weight_decay=config["train"]["optimizer"]['wd'])
+        print(config["train"]["optimizer"]['wd'])
+        self.optimizer = AdamW(params=model.parameters(), lr=config["train"]["optimizer"]["max_lr"], weight_decay=config["train"]["optimizer"]['wd'])
         #self.LRScheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=config["train"]["optimizer"]["max_lr"], steps_per_epoch=len(dataloader), epochs=config["train"]["n_epochs"])
         self.n_iter_per_epoch = len(self.train_dataloader)
         self.LRScheduler = CosineLRScheduler(
@@ -115,7 +116,10 @@ class Trainer:
             self.optimizer.zero_grad()
             #loss.backward()
             self.scaler.scale(mse_loss).backward(retain_graph=True)
-            self.scaler.scale(kl_div * kl_lambda).backward()
+            if self.model_type == 'autoencoder':
+                kl_div = torch.tensor([0])
+            else:
+                self.scaler.scale(kl_div * kl_lambda).backward()
 
             # Gradient clipping
             self.scaler.unscale_(self.optimizer)

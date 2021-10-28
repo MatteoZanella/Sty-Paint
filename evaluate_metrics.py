@@ -21,20 +21,23 @@ from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
 import warnings
 warnings.filterwarnings("ignore")
 import torch.nn.functional as F
+from einops import rearrange, repeat
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
 
 def sample_color(params, imgs) :
-    b, _, h, w = imgs
-    n_strokes = 8
-    img_temp = imgs.unsqueeze(1).repeat(1, n_strokes, 1, 1, 1).view(b * n_strokes, 3, h, w)
-    grid = params[:, :, :2].view(b * n_strokes, 1, 1, 2).contiguous()
-    color = F.grid_sample(img_temp, 2 * grid - 1, align_corners=False).view(b, n_strokes, 3).contiguous()
-    color = color.repeat(1, 1, 2)
+    if not torch.is_tensor(params):
+        params = torch.tensor(params)
+    bs, n_strokes, _ = params.shape
+    img_temp = repeat(imgs, 'bs ch h w -> (bs L) ch h w', L=n_strokes)
+    grid = rearrange(params[:, :, :2], 'bs L p -> (bs L) 1 1 p')
+    color = F.grid_sample(img_temp, 2 * grid - 1, align_corners=False)
+    color = rearrange(color, '(bs L) ch 1 1 -> bs L ch', L=n_strokes)
+    color = color.repeat(1,1,2)
     out_params = torch.cat((params.clone()[:, :, :5], color), dim=-1)
-    return out_params
+    return out_params.cpu().numpy()
 
 
 def render_frames(params, batch, renderer) :
@@ -96,13 +99,13 @@ def build_models(config):
 if __name__ == '__main__' :
     # Extra parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_1_config", type=str, required=True)
-    parser.add_argument("--model_2_config", type=str, required=True)
-    parser.add_argument("--config", default='../configs/train/sibiu_config.yaml')
+    parser.add_argument("--ckpt_1", type=str, required=True)
+    parser.add_argument("--ckpt_2", type=str, required=True)
+    parser.add_argument("--config", default='/home/eperuzzo/brushstrokes-generation/configs/train/sibiu_config.yaml')
 
     parser.add_argument("--output_path", type=str, default='/home/eperuzzo/eval_metrics/')
     parser.add_argument("--checkpoint_baseline", type=str,
-                        default='/home/eperuzzo/OfficialPaintTransformer/inference/model.pth')
+                        default='/home/eperuzzo/PaintTransformer/inference/paint_best.pdparams')
     parser.add_argument("--n_samples_lpips", type=int, default=3,
                         help="number of samples to test lpips, diverstiy in generation")
     parser.add_argument("--n_iters_dataloader", default=1, type=int)
@@ -129,21 +132,21 @@ if __name__ == '__main__' :
     renderer = Painter(args=render_config)
 
     net1 = model.InteractivePainter(config)
-    print(f'==> Loading model form {args.model_1_config}')
-    net1.load_state_dict(torch.load(args.model_1_config, map_location=device)["model"])
+    print(f'==> Loading model form {args.ckpt_1}')
+    net1.load_state_dict(torch.load(args.ckpt_1, map_location=device)["model"])
     net1.to(config["device"])
     net1.eval()
 
     net2 = model_2_steps.InteractivePainter(config)
-    print(f'==> Loading model form {args.model_2_config}')
-    net2.load_state_dict(torch.load(args.model_2_config, map_location=device)["model"])
+    print(f'==> Loading model form {args.ckpt_2}')
+    net2.load_state_dict(torch.load(args.ckpt_2, map_location=device)["model"])
     net2.to(config["device"])
     net2.eval()
 
     models = dict(
         model = net1,
         model_two_steps = net2,
-        baseline = PaddlePT(model_path=args.checkpoint_baseline, config=render_config))
+        paint_transformer = PaddlePT(model_path=args.checkpoint_baseline, config=render_config))
 
     n_files = len(dataset_test) * args.n_iters_dataloader
     print('Number of files')
