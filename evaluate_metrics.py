@@ -22,6 +22,7 @@ import warnings
 warnings.filterwarnings("ignore")
 import torch.nn.functional as F
 from einops import rearrange, repeat
+import pandas as pd
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
@@ -94,6 +95,20 @@ def build_models(config):
     net.to(config["device"])
     net.eval()
 
+
+def to_df(data):
+    out = dict()
+    for name, results in data.items():
+        out[name] = dict()
+        for metric in results.keys() :
+            if metric == 'fd' :
+                out[name]['fd_all'] = results['fd'][1]['all']
+                out[name]['fd_position'] = results['fd'][1]['position']
+                out[name]['fd_color'] = results['fd'][1]['color']
+            else :
+                out[name][metric] = results[metric].avg
+
+    return out
 
 
 if __name__ == '__main__' :
@@ -198,16 +213,13 @@ if __name__ == '__main__' :
                 visuals.update({name : render_frames(params, batch, renderer)})
 
             # Maksedl2
-            print('MaskedL2')
             for name, model in visuals.items():
                 print(name)
                 tmp = maskedL2(batch['img'], visuals[name]['frames'], visuals[name]['alphas'])
                 average_meters[name]['masked_l2'].update(tmp.item(), bs)
 
             # Wasserstein/Frechet/Dtw Distance
-            print('WD/FD/DTW')
             for name in predictions.keys():
-                print(name)
                 wd = Wdist(batch['strokes_seq'][:, :, :5], torch.tensor(predictions[name][:, :, :5]))
                 average_meters[name]['fd'].update_queue(batch['strokes_seq'], predictions[name])  # keep all
                 dtw = compute_dtw(batch['strokes_seq'], predictions[name])
@@ -218,8 +230,6 @@ if __name__ == '__main__' :
 
             #####
             # Diversity
-
-            print('\nLPIPS TIME')
             predictions_lpips = dict()
 
             for key, model in models.items():
@@ -241,13 +251,15 @@ if __name__ == '__main__' :
             preds = prepare_feature_difference(predictions_lpips, bs, args.n_samples_lpips)
             for name in preds.keys():
                 feat_div_score = feature_div(preds[name])
-                print(feat_div_score.item())
                 average_meters[name]['feature_div'].update(feat_div_score.item(), bs)
 
     for key in average_meters.keys():
         average_meters[key]['fd'] = average_meters[key]['fd'].compute_fd()
 
     os.makedirs(args.output_path, exist_ok=True)
-    for key in average_meters.keys():
-        with open(os.path.join(args.output_path, f'{key}.pkl'), 'wb') as f:
-            pkl.dump(average_meters[key], f)
+    results = to_df(average_meters)
+
+    with open(os.path.join(args.output_path, f'results.pkl'), 'wb') as f:
+        pkl.dump(results, f)
+    results_df = pd.DataFrame.from_dict(results, orient='index')
+    results_df.to_csv(os.path.join(args.output_path, 'metrics.csv'))

@@ -5,11 +5,12 @@ import math
 from einops import rearrange, repeat
 import torch.nn.functional as F
 
+
 ########################################################################################################################
 class PEWrapper :
     def __init__(self, config) :
         self.input_dim = config["dataset"]["resize"]
-        self.encoder_dim = config["model"]["img_encoder"]["visual_features_dim"]
+        self.encoder_dim = config["model"]["img_encoder"]["visual_feat_hw"]
         self.d_model = config["model"]["d_model"]
 
     def pe_visual_tokens(self, device):
@@ -88,7 +89,7 @@ class PositionalEncoding:
     def __init__(self, config) :
 
         self.input_dim = config["dataset"]["resize"]
-        self.encoder_dim = config["model"]["img_encoder"]["visual_features_dim"]
+        self.encoder_dim = config["model"]["img_encoder"]["visual_feat_hw"]
         self.d_model = config["model"]["d_model"]
 
         # Parameters for PE
@@ -129,19 +130,21 @@ class PositionalEncoding:
         return pe.to(device)
 
     def pe_strokes_tokens(self, pos, device) :
-        L, bs, _ = pos.shape
         pos = pos[:, :, :2]
+        L, bs, _ = pos.shape
 
         # Spatial
-        feat = repeat(self.spatial_pe, '1 ch h w -> n_reps ch h w', n_reps=L*bs)
-        grid = rearrange(pos[:, :, :2], 'L bs p -> (L bs) 1 1 p')
-        spatial_pe = F.grid_sample(feat, 2 * grid - 1, align_corners=False, mode='nearest')
-        spatial_pe = rearrange(spatial_pe, '(L bs) ch 1 1 -> L bs ch', L=L)
+        pe = torch.empty([L, bs, 2 * self.channels])
+        for l in range(L) :
+            for b in range(bs) :
+                tmp = 2 * pos[l, b] - 1
+                pe[l, b] = F.grid_sample(self.spatial_pe, tmp.reshape(1, 1, 1, 2).float().cpu(), align_corners=False,
+                                         mode='nearest').squeeze()
 
         # Time
         time_pe = self._get_1d_pe(L)
         time_pe = repeat(time_pe, 'L ch -> L bs ch', bs=bs)
 
         # Cat
-        pe = torch.cat((spatial_pe, time_pe), dim=-1)
+        pe = torch.cat((pe, time_pe), dim=-1)
         return pe[:, :, :self.d_model].to(device)

@@ -12,13 +12,13 @@ dataset :
     threshold: 150
     prob: 0.35
 model:
-  model_type : 'full'
+  model_type : '2_steps'
   d_model : 256
   n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
-  encoder_pe: 'old'
-  decoder_pe : 'sine'
+  encoder_pe: '3d_sine'
+  decoder_pe : 'learnable'
   img_encoder:
     type : 'resnet18'
     pretrained : True
@@ -30,16 +30,19 @@ model:
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
+    dropout: 0.1
   vae_encoder:
     act : 'gelu'
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
+    dropout: 0.1
   vae_decoder:
     act : 'gelu'
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
+    dropout : 0.1
 train:
   n_epochs : 250
   gpu_id : 1

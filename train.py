@@ -4,7 +4,8 @@ import logging
 import numpy as np
 
 from model.utils.parse_config import ConfigParser
-from model import model, model_2_steps, model_old
+from model import model, model_2_steps
+from model.old_models import old2s
 from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
@@ -66,7 +67,7 @@ if __name__ == '__main__':
         model = model_2_steps.InteractivePainter(config)
     elif config["model"]["model_type"] == 'old':
         logging.info('Model old')
-        model = model_old.InteractivePainter(config)
+        model = old2s.InteractivePainter(config)
     else:
         raise NotImplementedError(f'Wrong model type: {config["model"]["model_type"]}')
 

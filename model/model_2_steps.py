@@ -21,7 +21,6 @@ class Embedder(nn.Module) :
         self.d_model = config["model"]["d_model"]
         self.context_length = config["dataset"]["context_length"]
         self.seq_length = config["dataset"]["sequence_length"]
-        self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
         if config["model"]["encoder_pe"] == "new":
             print('Using new encodings')
@@ -42,8 +41,12 @@ class Embedder(nn.Module) :
             self.img_encoder = ConvEncoder()
             self.canvas_encoder = ConvEncoder()
 
-        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=self.d_model, kernel_size=(3, 3), padding=1, stride=1)
-        self.conv_proj_hres = nn.Conv2d(in_channels=256, out_channels=self.d_model, kernel_size=(1,1))
+        self.conv_proj = nn.Conv2d(in_channels=2 * config["model"]["img_encoder"]["visual_feat_dim"],
+                                   out_channels=self.d_model,
+                                   kernel_size=(3, 3),
+                                   padding=1,
+                                   stride=1)
+        #self.conv_proj_hres = nn.Conv2d(in_channels=256, out_channels=self.d_model, kernel_size=(1,1))
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
 
@@ -57,7 +60,7 @@ class Embedder(nn.Module) :
         img, img_feat = self.img_encoder(img)
         canvas, canvas_feat = self.canvas_encoder(canvas)
         visual_feat = self.conv_proj(torch.cat((img, canvas), dim=1))
-        hres_visual_feat = self.conv_proj_hres(torch.cat((img_feat, canvas_feat), dim=1))
+        hres_visual_feat = torch.cat((img_feat, canvas_feat), dim=1)
 
         # Everything as length first
         visual_feat = rearrange(visual_feat, 'bs ch h w -> (h w) bs ch')
@@ -111,7 +114,6 @@ class TransformerVAE(nn.Module) :
         self.seq_length = config["dataset"]["sequence_length"]
         self.context_length = config["dataset"]["context_length"]
         self.width = config["dataset"]["resize"]
-        self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
         if config["model"]["encoder_pe"] == "new" :
             print('Using new encodings')
@@ -152,6 +154,8 @@ class TransformerVAE(nn.Module) :
             nn.Linear(self.d_model, 2),
             nn.Sigmoid())
 
+        # Color
+        self.color_tokens_proj = nn.Linear(2 * config["model"]["img_encoder"]["hres_feat_dim"], self.d_model)
         self.color_decoder = nn.TransformerDecoder(
             decoder_layer=nn.TransformerDecoderLayer(
                 d_model=self.d_model,
@@ -209,6 +213,7 @@ class TransformerVAE(nn.Module) :
 
         # Pool visual features with bilinear sampling
         color_tokens = self.bilinear_sampling_length_first(visual_features, pos_pred)
+        color_tokens = self.color_tokens_proj(color_tokens)
         color_tokens += self.PE.pe_strokes_tokens(pos=pos_pred, device=color_tokens.device)
 
         color_tokens = self.color_decoder(color_tokens, context)
@@ -273,6 +278,7 @@ class InteractivePainter(nn.Module) :
 
     @torch.no_grad()
     def generate(self, data, no_context=False, no_z=True) :
+        self.eval()
         context, x, vs_features = self.embedder(data)
         context_features = self.context_encoder(context)
 

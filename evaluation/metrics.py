@@ -249,10 +249,6 @@ class FDMetricIncremental :
         return feat
 
     def compute_mean_cov(self):
-        print(f'Orinal : {self.original_features.shape}')
-        print(f'Gene: {self.generated_features.shape}')
-        print(f'Color : {self.generated_features[:, 5 * self.n:].shape}')
-
         generated = dict(mu_all=np.mean(self.generated_features, axis=0),
                    cov_all=np.cov(self.generated_features, rowvar=False),
                    mu_position=np.mean(self.generated_features[:, :5 * self.n]),

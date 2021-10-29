@@ -2,14 +2,9 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-# from model.networks.image_encoders import resnet18, ConvEncoder
-# from model.networks.layers import PEWrapper, PositionalEncoding
-# from model.networks.layers import positionalencoding1d
-
-from networks.image_encoders import resnet18, ConvEncoder
-from networks.layers import PEWrapper, PositionalEncoding
-from networks.layers import positionalencoding1d
-
+from model.networks.image_encoders import resnet18, ConvEncoder
+from model.networks.layers import PEWrapper, PositionalEncoding
+from model.networks.layers import positionalencoding1d
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
@@ -24,7 +19,6 @@ class Embedder(nn.Module) :
         self.d_model = config["model"]["d_model"]
         self.context_length = config["dataset"]["context_length"]
         self.seq_length = config["dataset"]["sequence_length"]
-        self.visual_features_size = config["model"]["img_encoder"]["visual_features_dim"]
 
         if config["model"]["encoder_pe"] == "new":
             print('Using new encodings')
@@ -45,7 +39,11 @@ class Embedder(nn.Module) :
             self.img_encoder = ConvEncoder()
             self.canvas_encoder = ConvEncoder()
 
-        self.conv_proj = nn.Conv2d(in_channels=512, out_channels=self.d_model, kernel_size=(3, 3), padding=1, stride=1)
+        self.conv_proj = nn.Conv2d(in_channels=2 * config["model"]["img_encoder"]["visual_feat_dim"],
+                                   out_channels=self.d_model,
+                                   kernel_size=(3, 3),
+                                   padding=1,
+                                   stride=1)
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
     def forward(self, data) :
@@ -227,7 +225,8 @@ class InteractivePainter(nn.Module) :
         return predictions, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, data, no_context=False, no_z=True) :
+    def generate(self, data, no_z=True, no_context=False) :
+        self.eval()
         context, x = self.embedder(data)
         context_features = self.context_encoder(context)
         if no_context :  # zero out the context to check if the model benefit from it
@@ -274,6 +273,6 @@ if __name__ == '__main__' :
     # Predict with context
     net.train()
     clean_preds = net(data)
-    v = net.generate(data, no_z=True)
+    v = net.generate(data, no_context=True, no_z=False)
 
     print(v.shape)

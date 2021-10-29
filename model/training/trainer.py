@@ -9,7 +9,6 @@ import torch.nn as nn
 from model.utils.utils import AverageMeter, dict_to_device, LambdaScheduler, render_save_strokes
 from model.training.losses import KLDivergence
 from timm.scheduler.cosine_lr import CosineLRScheduler
-from torch.cuda.amp import GradScaler
 
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
@@ -40,7 +39,6 @@ class Trainer:
                                             t_in_epochs=False,
                                         )
 
-        self.scaler = GradScaler()
         self.clip_grad = config["train"]["optimizer"]["clip_grad"]
 
         # Losses
@@ -74,7 +72,6 @@ class Trainer:
         torch.save({"model": model_state_dict,
                     "optimizer": self.optimizer.state_dict(),
                     "lr_scheduler": self.LRScheduler.state_dict(),
-                    "scaler" : self.scaler.state_dict(),
                     "epoch" : epoch,
                     "config" : self.config}, path),
 
@@ -93,7 +90,6 @@ class Trainer:
 
         mse_loss_meter = AverageMeter(name='mse_loss')
         kl_loss_meter = AverageMeter(name='kl')
-        #loss_meter = AverageMeter(name='tot_loss')
         batch_time = AverageMeter(name='batch_time')
         grad_norm_meter = AverageMeter(name='Gradient norm')
         mu_meter = AverageMeter(name='Mu')
@@ -106,33 +102,23 @@ class Trainer:
             batch = dict_to_device(batch, self.device)
             targets = batch['strokes_seq']
 
-            with torch.cuda.amp.autocast():
-                predictions, mu, log_sigma = model(batch)
-                mse_loss = self.MSELoss(predictions, targets)
-                kl_div = self.KLDivergence(mu, log_sigma)
+            predictions, mu, log_sigma = model(batch)
+            mse_loss = self.MSELoss(predictions, targets)
+            kl_div = self.KLDivergence(mu, log_sigma)
 
-                #loss = mse_loss + kl_div * kl_lambda
+            loss = mse_loss + kl_div * kl_lambda
 
             self.optimizer.zero_grad()
-            #loss.backward()
-            self.scaler.scale(mse_loss).backward(retain_graph=True)
-            if self.model_type == 'autoencoder':
-                kl_div = torch.tensor([0])
-            else:
-                self.scaler.scale(kl_div * kl_lambda).backward()
-
-            # Gradient clipping
-            self.scaler.unscale_(self.optimizer)
+            loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), self.clip_grad)
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            self.optimizer.step()
+            # Gradient clipping
             self.LRScheduler.step_update(ep * self.n_iter_per_epoch + idx)
 
             # Update logging
             bs = targets.size(0)
             mse_loss_meter.update(mse_loss.item(), bs)
             kl_loss_meter.update(kl_div.item(), bs)
-            #loss_meter.update(torch.tensor(0).item(), bs)
             mu_meter.update(torch.abs(mu).mean().data.item(), bs)
             sigma_meter.update(log_sigma.exp().mean().data.item(), bs)
             grad_norm_meter.update(grad_norm.item(), bs)
@@ -150,7 +136,6 @@ class Trainer:
         # Logging
         stats = {'train/mse' : mse_loss_meter.avg,
                  'train/kl' : kl_loss_meter.avg,
-                 #'loss' : loss_meter.avg,
                  'train/epoch' : ep,
                  'train/lr' : self.optimizer.param_groups[0]["lr"],
                  'train/kl_lambda' : kl_lambda,

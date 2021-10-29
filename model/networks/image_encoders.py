@@ -317,43 +317,42 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
 
 
 ########################################################################################################################
+# class ConvEncoder(nn.Module):
+#     def __init__(self):
+#         super(ConvEncoder, self).__init__()
+#         # self.conv1 = nn.Conv2d(3, 32, kernel_size=7, stride=2, padding=3, bias=False)
+#         # self.bn1 = nn.BatchNorm2d(32)
+#         # self.relu = nn.ReLU(inplace=True)
+#         self.block1 = BasicBlock(inplanes=3, planes=32, stride=2, downsample=nn.Sequential(conv1x1(in_planes=3, out_planes=32, stride=2)))
+#         self.block2 = BasicBlock(inplanes=32, planes=64, stride=2, downsample=nn.Sequential(conv1x1(in_planes=32, out_planes=64, stride=2)))
+#         self.block3 = BasicBlock(inplanes=64, planes=128, stride=2, downsample=nn.Sequential(conv1x1(in_planes=64, out_planes=128, stride=2)))
+#         self.block4 = BasicBlock(inplanes=128, planes=256, stride=2, downsample=nn.Sequential(conv1x1(in_planes=128, out_planes=256, stride=2)))
+#
+#
+#     def forward(self, x):
+#         # x = self.conv1(x)
+#         # x = self.bn1(x)
+#         x = self.block1(x)
+#         x = self.block2(x)
+#         x = self.block3(x)
+#         x = self.block4(x)
+#         return x, x
+
+
 class ConvEncoder(nn.Module):
     def __init__(self):
         super(ConvEncoder, self).__init__()
-
-        self.enc1 = nn.Sequential(
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(True),
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2),
-            nn.BatchNorm2d(64),
-            nn.ReLU(True),
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2),
-            nn.BatchNorm2d(128),
-            nn.ReLU(True))
-
-        self.enc2 = nn.Sequential(
-
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2),
-            nn.BatchNorm2d(256),
-            nn.ReLU(True),
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=2),
-            nn.BatchNorm2d(256),
-            nn.ReLU(True)
-
-        )
-
-        self.avg = nn.AvgPool2d((2,2))
+        self.block1 = BasicBlock(inplanes=3, planes=32, stride=2, downsample=nn.Sequential(conv1x1(in_planes=3, out_planes=32, stride=2)))
+        self.block2 = BasicBlock(inplanes=32, planes=64, stride=2, downsample=nn.Sequential(conv1x1(in_planes=32, out_planes=64, stride=2)))
+        self.block3 = BasicBlock(inplanes=64, planes=128, stride=2, downsample=nn.Sequential(conv1x1(in_planes=64, out_planes=128, stride=2)))
+        self.block4 = BasicBlock(inplanes=128, planes=256, stride=2, downsample=nn.Sequential(conv1x1(in_planes=128, out_planes=256, stride=2)))
+        self.out = nn.AvgPool2d((2,2))
 
     def forward(self, x):
-        vis_feat = self.enc1(x)
-        out = self.enc2(vis_feat)
-        out = self.avg(out)
-        vis_feat = self.avg(vis_feat)
-
-        return out, vis_feat
+        x = self.block1(x)
+        x = self.block2(x)
+        hres = x
+        x = self.block3(x)
+        x = self.block4(x)
+        x = self.out(x)
+        return x, hres

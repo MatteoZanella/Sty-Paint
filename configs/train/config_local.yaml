@@ -9,38 +9,42 @@ dataset :
   context_length : 10
   sequence_length : 8
   use_images : True
+  sampling:
+    active : True
+    threshold: 150
+    prob: 0.35
 model:
-  model_type : '2_steps'
+  model_type : 'full'
   d_model : 256
   n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
-  encoder_pe: 'new'
-  decoder_pe : 'learnable'
+  encoder_pe: 'old'
+  decoder_pe : 'sine'
   img_encoder:
     type : 'convenc'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
-    visual_features_dim : 8
+    visual_feat_hw : 8
+    visual_feat_dim : 256
+    hres_feat_hw : 64
+    hres_feat_dim : 64
   encoder:
     canvas_strokes : 'add'
     act : 'gelu'
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
-    dropout: 0.1
   vae_encoder:
     act : 'gelu'
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
-    dropout: 0.1
   vae_decoder:
     act : 'gelu'
     n_heads : 8
     n_layers : 5
     ff_dim : 1024
-    dropout : 0.1
 train:
   n_epochs : 250
   gpu_id : -1

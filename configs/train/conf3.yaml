@@ -17,29 +17,32 @@ model:
   n_strokes_params : 11
   ctx_z : 'cat'
   activation_last_layer : 'sigmoid'
-  encoder_pe: 'new'
+  encoder_pe: 'old'
   decoder_pe : 'sine'
   img_encoder:
-    type : 'resnet18'
+    type : 'convenc'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
-    visual_features_dim : 8
+    visual_feat_hw : 8
+    visual_feat_dim : 256
+    hres_feat_hw : 64
+    hres_feat_dim : 64
   encoder:
     canvas_strokes : 'add'
     act : 'gelu'
     n_heads : 6
     n_layers : 8
-    ff_dim : 1536
+    ff_dim : 1024
   vae_encoder:
     act : 'gelu'
     n_heads : 6
     n_layers : 8
-    ff_dim : 1536
+    ff_dim : 1024
   vae_decoder:
     act : 'gelu'
     n_heads : 6
     n_layers : 8
-    ff_dim : 1536
+    ff_dim : 1024
 train:
   n_epochs : 250
   gpu_id : 0
@@ -57,7 +60,7 @@ train:
   kl:
     warmup_type : 'cosine'
     warm_up_epochs : 125
-    kl_lambda : 1.0e-4
+    kl_lambda : 5.0e-4
   auto_resume:
     active : False
     resume_path : ''
