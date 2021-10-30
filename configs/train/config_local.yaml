@@ -18,7 +18,7 @@ model:
   d_model : 256
   n_strokes_params : 11
   ctx_z : 'cat'
-  activation_last_layer : 'sigmoid'
+  activation_last_layer : 'identity'
   encoder_pe: 'old'
   decoder_pe : 'sine'
   img_encoder:

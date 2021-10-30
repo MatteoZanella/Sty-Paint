@@ -12,7 +12,7 @@ dataset :
     threshold: 0
     prob: 0
 model:
-  model_type : 'full'
+  model_type : '2_steps'
   d_model : 256
   n_strokes_params : 11
   ctx_z : 'cat'

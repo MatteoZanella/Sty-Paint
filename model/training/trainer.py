@@ -9,10 +9,12 @@ import torch.nn as nn
 from model.utils.utils import AverageMeter, dict_to_device, LambdaScheduler, render_save_strokes
 from model.training.losses import KLDivergence
 from timm.scheduler.cosine_lr import CosineLRScheduler
+from evaluation.metrics import FDMetric, maskedL2
+from evaluation import tools as etools
 
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
-
+import wandb
 
 class Trainer:
 
@@ -147,15 +149,34 @@ class Trainer:
 
     @torch.no_grad()
     def evaluate(self, model, ep) :
+        global fd_calculator, average_meters_full_eval
         model.eval()
         mse_loss_meter = AverageMeter(name='mse_loss')
         mse_no_context_meter = AverageMeter(name='mse_without_context')
         mse_no_z_meter = AverageMeter(name='mse_no_z')
 
+        full_eval_flag = ep % 5 == 0
+        if full_eval_flag:
+            logging.info('Full evalutation active')
+            fd_calculator = FDMetric()
+            average_meters_full_eval = dict(
+                z = dict(
+                    fd_all = AverageMeter(name='z_fd'),
+                    fd_color = AverageMeter(name='fd_color'),
+                    fd_position = AverageMeter(name='fd_pos'),
+                    l2 = AverageMeter(name='maskedl2')
+                ),
+                test = dict(
+                    fd_all=AverageMeter(name='z_fd'),
+                    fd_color=AverageMeter(name='fd_color'),
+                    fd_position=AverageMeter(name='fd_pos'),
+                    l2=AverageMeter(name='maskedl2')
+                ))
+
         logs = {}
 
-        for idx, data in enumerate(self.test_dataloader) :
-            data = dict_to_device(data, self.device, to_skip=['strokes', 'time_steps'])
+        for idx, batch in enumerate(self.test_dataloader) :
+            data = dict_to_device(batch, self.device, to_skip=['strokes', 'time_steps'])
             targets = data['strokes_seq']
             bs = targets.size(0)
 
@@ -174,23 +195,80 @@ class Trainer:
             noz_mse = self.MSELoss(noz_preds, targets)
             mse_no_z_meter.update(noz_mse.item(), bs)
 
-            # Log some images
-            if idx == 0 :
-                # TOFIX: for now just plot the first element of the first batch
-                imgs_to_log = render_save_strokes(generated_strokes=clean_preds[0][None],
-                                                  original_strokes=targets[0][None],
-                                                  painter=self.pt,
-                                                  output_path=self.checkpoint_path_render,
-                                                  ep=ep)
-                logs.update(imgs_to_log)
+            if full_eval_flag and idx % 3 == 0:
+                clean_preds = etools.check_strokes(clean_preds)
+                noz_preds = etools.check_strokes(noz_preds)
+                # Use z as during training
+                visuals_z = etools.render_frames(params=clean_preds.cpu().numpy(),
+                                                 batch=batch,
+                                                 renderer=self.pt)
+
+                l2 = maskedL2(batch['img'], visuals_z['frames'], visuals_z['alphas'])
+                fd = fd_calculator(original = batch['strokes_seq'],
+                                   generated= clean_preds.cpu().numpy())
+
+                average_meters_full_eval['z']['l2'].update(l2.item(), bs)
+                average_meters_full_eval['z']['fd_all'].update(fd['all'].item(), bs)
+                average_meters_full_eval['z']['fd_color'].update(fd['color'].item(), bs)
+                average_meters_full_eval['z']['fd_position'].update(fd['position'], bs)
+
+
+                # No z, as at test time
+                visuals_test = etools.render_frames(params=noz_preds.cpu().numpy(),
+                                                    batch=batch,
+                                                    renderer=self.pt)
+
+                l2 = maskedL2(batch['img'], visuals_test['frames'], visuals_test['alphas'])
+                fd = fd_calculator(original=batch['strokes_seq'],
+                                   generated=noz_preds.cpu().numpy())
+
+                average_meters_full_eval['test']['l2'].update(l2.item(), bs)
+                average_meters_full_eval['test']['fd_all'].update(fd['all'].item(), bs)
+                average_meters_full_eval['test']['fd_color'].update(fd['color'].item(), bs)
+                average_meters_full_eval['test']['fd_position'].update(fd['position'], bs)
+
+                if idx == 0:
+                    logging.info('Rendering Images')
+                    img_ref = etools.produce_visuals(params=batch['strokes_seq'],
+                                                     batch=batch,
+                                                     renderer=self.pt,
+                                                     batch_id=0)
+                    img_z = etools.produce_visuals(params=clean_preds,
+                                                   batch=batch,
+                                                   renderer=self.pt,
+                                                   batch_id=0)
+                    img_test = etools.produce_visuals(params=noz_preds,
+                                                   batch=batch,
+                                                   renderer=self.pt,
+                                                   batch_id=0)
+
+                    logs.update({
+                        "media/img_ref" : wandb.Image(img_ref, caption=f"Reference Image"),
+                        "media/img_z" : wandb.Image(img_z, caption=f"Img w z"),
+                        "media/img_test" : wandb.Image(img_test, caption=f"Img w/o z")})
+
 
         logging.info(f'TEST: '
                      f'Clean MSE : {mse_loss_meter.avg}\t||\t'
                      f'No ctx MSE : {mse_no_context_meter.avg}\t||\t'
                      f'No z MSE : {mse_no_z_meter.avg}')
 
-        logs.update({'test/clean_mse' : mse_loss_meter.avg,
-                     'test/no_context_mse' : mse_no_context_meter.avg,
-                     'test/no_z_mse' : mse_no_z_meter.avg})
+        logs.update({'eval/z/mse' : mse_loss_meter.avg,
+                     'eval/z/no_context_mse' : mse_no_context_meter.avg,
+                     'eval/test/mse' : mse_no_z_meter.avg})
+
+        if full_eval_flag:
+            logs.update(
+                {
+                    'eval/z/fd_all' : average_meters_full_eval['z']['fd_all'].avg,
+                    'eval/z/fd_color' : average_meters_full_eval['z']['fd_color'].avg,
+                    'eval/z/fd_position' : average_meters_full_eval['z']['fd_position'].avg,
+                    'eval/z/l2' : average_meters_full_eval['z']['l2'].avg,
+
+                    'eval/test/fd_all' : average_meters_full_eval['test']['fd_all'].avg,
+                    'eval/test/fd_color' : average_meters_full_eval['test']['fd_color'].avg,
+                    'eval/test/fd_position' : average_meters_full_eval['test']['fd_position'].avg,
+                    'eval/test/l2' : average_meters_full_eval['test']['l2'].avg
+                })
 
         return logs

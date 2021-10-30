@@ -51,16 +51,16 @@ train:
   seed : 1432
   amp_enabled : False
   optimizer:
-    max_lr : 1.0e-4
-    min_lr : 1.0e-5
-    warmup_lr : 1.0e-6
+    max_lr : 2.5e-4
+    min_lr : 2.5e-5
+    warmup_lr : 2.5e-6
     warmup_ep : 50
     wd : 0.05
     clip_grad : 5.0
   kl:
     warmup_type : 'cosine'
     warm_up_epochs : 300
-    kl_lambda : 2.5e-4
+    kl_lambda : 1.0e-5
   auto_resume:
     active : False
     resume_path : ''

@@ -8,9 +8,9 @@ dataset :
   sequence_length : 8
   use_images : True
   sampling:
-    active : True
-    threshold: 150
-    prob: 0.35
+    active : False
+    threshold: 0
+    prob: 0
 model:
   model_type : 'full'
   d_model : 256
@@ -51,9 +51,9 @@ train:
   seed : 1432
   amp_enabled : False
   optimizer:
-    max_lr : 1.0e-3
-    min_lr : 1.0e-4
-    warmup_lr : 1.0e-5
+    max_lr : 1.0e-4
+    min_lr : 1.0e-5
+    warmup_lr : 1.0e-6
     warmup_ep : 50
     wd : 0.05
     clip_grad : 5.0
@@ -66,7 +66,7 @@ train:
     resume_path : ''
   logging:
     wandb_api_key : "5745461314f5f4abb2c957bb991d2df97144ba06"
-    checkpoint_path : '/data/eperuzzo/model_checkpoints/'
+    checkpoint_path : '/data/eperuzzo/ablation/'
     save_freq : 1000
     print_freq : 10
 render:

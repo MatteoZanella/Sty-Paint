@@ -79,7 +79,7 @@ class PaintTransformer:
 
         # Refactor sparams to match stylized neural painter renderer
         n = sparms.shape[0]
-        sparms = np.concatenate((sparms, sparms[:, -3:]), axis=-1)   # replicate the color, add a 0 for transparency, note that it won't be used
+        sparms = np.concatenate((sparms, sparms[:, -3:]), axis=-1)   # replicate the color
         sparms[:, 0] = (sparms[:, 0] * ws + x1) / self.input_size
         sparms[:, 1] = (sparms[:, 1] * ws + y1) / self.input_size
         sparms[:, 2] = (sparms[:, 2] * ws) / self.input_size

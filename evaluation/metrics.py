@@ -161,7 +161,7 @@ class FDMetric :
             position = self._calculate_frechet_distance(mu1=gen['mu_position'], sigma1=gen['cov_position'], mu2=orig['mu_position'], sigma2=orig['cov_position']),
             color = self._calculate_frechet_distance(mu1=gen['mu_color'], sigma1=gen['cov_color'], mu2=orig['mu_color'], sigma2=orig['cov_color']))
 
-        return output['all'], output, (orig_feat, gen_feat)
+        return output
 
 ########################################################################################################################
 class FDMetricIncremental :

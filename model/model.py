@@ -36,14 +36,12 @@ class Embedder(nn.Module) :
             self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
                                            layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
         else:
-            self.img_encoder = ConvEncoder()
-            self.canvas_encoder = ConvEncoder()
+            self.img_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"])
+            self.canvas_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"])
 
         self.conv_proj = nn.Conv2d(in_channels=2 * config["model"]["img_encoder"]["visual_feat_dim"],
                                    out_channels=self.d_model,
-                                   kernel_size=(3, 3),
-                                   padding=1,
-                                   stride=1)
+                                   kernel_size=(1, 1))
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
     def forward(self, data) :
@@ -72,7 +70,6 @@ class Embedder(nn.Module) :
         ctx_sequence += self.PE.pe_strokes_tokens(pos = strokes_ctx, device=ctx_sequence.device)
         ctx_sequence += self.stroke_token
         x_sequence += self.PE.pe_strokes_tokens(pos=strokes_seq, device=x_sequence.device)
-        x_sequence += self.stroke_token
 
         # Merge Context
         ctx_sequence = torch.cat((visual_feat, ctx_sequence), dim=0)
@@ -110,6 +107,14 @@ class TransformerVAE(nn.Module) :
         self.d_model = config["model"]["d_model"]
         self.seq_length = config["dataset"]["sequence_length"]
         self.context_length = config["dataset"]["context_length"]
+        if config["model"]["activation_last_layer"] == "sigmoid" :
+            act = nn.Sigmoid()
+        elif config["model"]["activation_last_layer"] == "relu":
+            act = nn.ReLU()
+        elif config["model"]["activation_last_layer"] == "identity":
+            act = nn.Identity()
+        else:
+            raise NotImplementedError('Activation can be either: sigmoid, relu or identity')
 
         self.ctx_z = config["model"]["ctx_z"]  # how to merge context and z
         if self.ctx_z == 'proj' :
@@ -141,8 +146,7 @@ class TransformerVAE(nn.Module) :
         # Final projection head
         self.prediction_head = nn.Sequential(
             nn.Linear(self.d_model, self.s_params))
-        if config["model"]["activation_last_layer"] == "sigmoid" :
-            self.prediction_head.add_module('act', nn.Sigmoid())
+        self.prediction_head.add_module('act', act)
 
     def encode(self, x, context):
         bs = x.size(1)
@@ -173,7 +177,11 @@ class TransformerVAE(nn.Module) :
         time_queries = repeat(time_queries, '1 L dim -> L bs dim', bs=bs).to(z.device)
 
         # Concatenate z and context
-        context = torch.cat((context, z[None]), dim=0)
+        if self.ctx_z == 'proj':
+            z = repeat(z, 'bs dim -> ctx_len bs dim', ctx_len=context.size(0))
+            context = self.proj_ctx_z(torch.cat((context, z), dim=-1))  # cat on the channel dimension and project
+        elif self.ctx_z == 'cat':
+            context = torch.cat((context, z[None]), dim=0)              # cat on the length dimension
 
         out = self.vae_decoder(time_queries, context)
         out = self.prediction_head(out)
@@ -249,7 +257,7 @@ if __name__ == '__main__' :
     parser.add_argument("--debug", action='store_true')
     args = parser.parse_args()
 
-    c_parser = ConfigParser(args)
+    c_parser = ConfigParser(args.config)
     c_parser.parse_config(args)
     config = c_parser.get_config()
 

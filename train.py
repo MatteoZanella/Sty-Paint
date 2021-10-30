@@ -5,7 +5,6 @@ import numpy as np
 
 from model.utils.parse_config import ConfigParser
 from model import model, model_2_steps
-from model.old_models import old2s
 from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
@@ -23,13 +22,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", type= str, required=True)
     parser.add_argument("--config", type=str, required=True)
-    parser.add_argument("--ctx_z", type=str, choices=['cat', 'proj'])
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
 
     # Create config
-    c_parser = ConfigParser(args)
+    c_parser = ConfigParser(config_path=args.config)
     c_parser.parse_config(args)
     config = c_parser.get_config()
     c_parser.crate_directory_output()
@@ -51,11 +49,18 @@ if __name__ == '__main__':
 
     # Train
     dataset = StrokesDataset(config, isTrain=True)
-    train_loader = DataLoader(dataset=dataset, batch_size=config["train"]["batch_size"], shuffle=True, num_workers=config["train"]["num_workers"], pin_memory=True)
+    train_loader = DataLoader(dataset=dataset,
+                              batch_size=config["train"]["batch_size"],
+                              shuffle=True,
+                              num_workers=config["train"]["num_workers"],
+                              pin_memory=False)
 
     # Test
     dataset_test = StrokesDataset(config, isTrain=False)
-    test_loader = DataLoader(dataset=dataset_test, batch_size=config["train"]["batch_size"], shuffle=True, pin_memory=False)
+    test_loader = DataLoader(dataset=dataset_test,
+                             batch_size=config["train"]["batch_size"],
+                             shuffle=True,
+                             pin_memory=False)
 
     logging.info(f'Dataset stats: Train {len(dataset)} samples, Test : {len(dataset_test)} samples')
 
@@ -65,9 +70,6 @@ if __name__ == '__main__':
     elif config["model"]["model_type"] == '2_steps':
         logging.info('Two step model')
         model = model_2_steps.InteractivePainter(config)
-    elif config["model"]["model_type"] == 'old':
-        logging.info('Model old')
-        model = old2s.InteractivePainter(config)
     else:
         raise NotImplementedError(f'Wrong model type: {config["model"]["model_type"]}')
 

@@ -12,7 +12,7 @@ dataset :
     threshold: 0
     prob: 0
 model:
-  model_type : 'full'
+  model_type : '2_steps'
   d_model : 256
   n_strokes_params : 11
   ctx_z : 'cat'
@@ -60,7 +60,7 @@ train:
   kl:
     warmup_type : 'cosine'
     warm_up_epochs : 300
-    kl_lambda : 2.5e-4
+    kl_lambda : 5.0e-4
   auto_resume:
     active : False
     resume_path : ''

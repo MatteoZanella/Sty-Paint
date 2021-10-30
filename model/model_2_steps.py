@@ -38,15 +38,12 @@ class Embedder(nn.Module) :
             self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
                                            layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
         else:
-            self.img_encoder = ConvEncoder()
-            self.canvas_encoder = ConvEncoder()
+            self.img_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"])
+            self.canvas_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"])
 
         self.conv_proj = nn.Conv2d(in_channels=2 * config["model"]["img_encoder"]["visual_feat_dim"],
                                    out_channels=self.d_model,
-                                   kernel_size=(3, 3),
-                                   padding=1,
-                                   stride=1)
-        #self.conv_proj_hres = nn.Conv2d(in_channels=256, out_channels=self.d_model, kernel_size=(1,1))
+                                   kernel_size=(1, 1))
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
 
@@ -114,6 +111,14 @@ class TransformerVAE(nn.Module) :
         self.seq_length = config["dataset"]["sequence_length"]
         self.context_length = config["dataset"]["context_length"]
         self.width = config["dataset"]["resize"]
+        if config["model"]["activation_last_layer"] == "sigmoid" :
+            act = nn.Sigmoid()
+        elif config["model"]["activation_last_layer"] == "relu":
+            act = nn.ReLU()
+        elif config["model"]["activation_last_layer"] == "identity":
+            act = nn.Identity()
+        else:
+            raise NotImplementedError('Activation can be either: sigmoid, relu or identity')
 
         if config["model"]["encoder_pe"] == "new" :
             print('Using new encodings')
@@ -151,8 +156,8 @@ class TransformerVAE(nn.Module) :
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
         self.position_head = nn.Sequential(
-            nn.Linear(self.d_model, 2),
-            nn.Sigmoid())
+            nn.Linear(self.d_model, 2))
+        self.position_head.add_module('act', act)
 
         # Color
         self.color_tokens_proj = nn.Linear(2 * config["model"]["img_encoder"]["hres_feat_dim"], self.d_model)
@@ -166,8 +171,8 @@ class TransformerVAE(nn.Module) :
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
         self.color_head = nn.Sequential(
-            nn.Linear(self.d_model, 9),
-            nn.Sigmoid())
+            nn.Linear(self.d_model, 9))
+        self.color_head.add_module('act', act)
 
     def encode(self, x, context):
         bs = x.size(1)
@@ -202,10 +207,17 @@ class TransformerVAE(nn.Module) :
 
         return pooled_features
 
-    def decode(self, length, context, visual_features):
+    def decode(self, length, z, context, visual_features):
         bs = context.size(1)
         pos_tokens = positionalencoding1d(x=length, orig_channels=self.d_model)
         pos_tokens = repeat(pos_tokens, '1 L dim -> L bs dim', bs=bs).to(context.device)
+
+        # Concatenate z and context
+        if self.ctx_z == 'proj':
+            z = repeat(z, 'bs dim -> ctx_len bs dim', ctx_len=context.size(0))
+            context = self.proj_ctx_z(torch.cat((context, z), dim=-1))  # cat on the channel dimension and project
+        elif self.ctx_z == 'cat':
+            context = torch.cat((context, z[None]), dim=0)              # cat on the length dimension
 
         # Decode Position
         pos_tokens = self.position_decoder(pos_tokens, context)
@@ -230,11 +242,9 @@ class TransformerVAE(nn.Module) :
         mu, log_sigma = self.encode(seq, context)
         z = self.reparameterize(mu, log_sigma)
 
-        # Concatenate z and context
-        context = torch.cat((context, z[None]), dim=0)
-
         # Decode
         out = self.decode(length=self.seq_length,
+                          z = z,
                           context=context,
                           visual_features=visual_features)
 
@@ -252,6 +262,7 @@ class TransformerVAE(nn.Module) :
 
 
         preds = self.decode(length=L,
+                            z = z,
                             context=context,
                             visual_features=visual_features)
         return preds

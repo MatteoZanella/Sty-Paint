@@ -14,7 +14,8 @@ class PEWrapper :
         self.d_model = config["model"]["d_model"]
 
     def pe_visual_tokens(self, device):
-        pe_spatial, pe_time = self.positionalencoding3d(self.encoder_dim, self.encoder_dim, 0, self.d_model, device)
+        pe_spatial, pe_time = self.positionalencoding3d(self.encoder_dim, self.encoder_dim, 1, self.d_model, device)
+        pe_time = repeat(pe_time, '1 ch -> ch h w', h=self.encoder_dim, w=self.encoder_dim)
         pe = torch.cat((pe_spatial, pe_time), dim=0)
         pe = rearrange(pe, 'ch h w -> (h w) 1 ch')
         return pe[:, :, :self.d_model]

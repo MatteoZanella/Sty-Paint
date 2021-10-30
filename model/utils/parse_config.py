@@ -4,9 +4,9 @@ from pathlib import Path
 import torch
 
 class ConfigParser:
-    def __init__(self, args, isTrain=True):
+    def __init__(self, config_path, isTrain=True):
         self.isTrain = isTrain
-        self.config_path = args.config
+        self.config_path = config_path
 
         with open(self.config_path, 'r') as f:
             self.config = yaml.safe_load(f)
