@@ -60,7 +60,7 @@ train:
   kl:
     warmup_type : 'cosine'
     warm_up_epochs : 50
-    kl_lambda : 5.0e-4
+    kl_lambda : 5.0e-5
   auto_resume:
     active : False
     resume_path : ''

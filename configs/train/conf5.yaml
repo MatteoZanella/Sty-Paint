@@ -46,7 +46,7 @@ model:
 train:
   n_epochs : 500
   gpu_id : 0
-  batch_size : 32
+  batch_size : 64
   num_workers : 8
   seed : 1432
   amp_enabled : False

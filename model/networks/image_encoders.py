@@ -25,7 +25,6 @@ model_urls = {
     "wide_resnet101_2": "https://download.pytorch.org/models/wide_resnet101_2-32ee1156.pth",
 }
 
-
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
     """3x3 convolution with padding"""
     return nn.Conv2d(
@@ -267,13 +266,14 @@ class ResNet(nn.Module):
 
         x = self.layer1(x)
         x = self.layer2(x)
+        visual_feat = x
         x = self.layer3(x)
 
         if self.layer4 is not None:
             x = self.layer4(x)
         x = self.out(x)                # output is 256 x 8 x 8
 
-        return x
+        return x, visual_feat
 
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
@@ -313,3 +313,29 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     return _resnet("resnet18", BasicBlock, [2, 2, 2, 2], pretrained, progress, **kwargs)
+
+
+########################################################################################################################
+class ConvEncoder(nn.Module):
+    def __init__(self, spatial_output_dim=8):
+        super(ConvEncoder, self).__init__()
+        self.block1 = BasicBlock(inplanes=3, planes=32, stride=2, downsample=nn.Sequential(conv1x1(in_planes=3, out_planes=32, stride=2)))
+        self.block2 = BasicBlock(inplanes=32, planes=64, stride=2, downsample=nn.Sequential(conv1x1(in_planes=32, out_planes=64, stride=2)))
+        self.block3 = BasicBlock(inplanes=64, planes=128, stride=2, downsample=nn.Sequential(conv1x1(in_planes=64, out_planes=128, stride=2)))
+        self.block4 = BasicBlock(inplanes=128, planes=256, stride=2, downsample=nn.Sequential(conv1x1(in_planes=128, out_planes=256, stride=2)))
+
+        if spatial_output_dim == 8:
+            self.out = nn.AvgPool2d((2,2))
+        elif spatial_output_dim == 16:
+            self.out = nn.Identity()
+        else:
+            raise NotImplementedError('Spatial dimension of visual features can be either 8x8 or 16x16')
+
+    def forward(self, x):
+        x = self.block1(x)
+        x = self.block2(x)
+        hres = x
+        x = self.block3(x)
+        x = self.block4(x)
+        x = self.out(x)
+        return x, hres

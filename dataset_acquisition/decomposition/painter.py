@@ -10,9 +10,6 @@ from .networks import *
 import torch
 import torch.optim as optim
 
-# Decide which device we want to run on
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
 
 class PainterBase():
     def __init__(self, args):
@@ -24,7 +21,10 @@ class PainterBase():
                                        )
 
         # define G
-        self.device = torch.device(f'cuda:{args.gpu_id}')
+        if args.gpu_id < 0:
+            self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(f'cuda:{args.gpu_id}')
         self.net_G = define_G(rdrr=self.rderr, netG=args.net_G,device=self.device).to(self.device)
 
         # define some other vars to record the training states
@@ -128,7 +128,7 @@ class PainterBase():
                 file_name + '_animated.mp4', cv2.VideoWriter_fourcc(*'MP4V'), 40,
                 (out_w, out_h))
 
-        print('rendering canvas...')
+        #print('rendering canvas...')
         self.rderr.create_empty_canvas()
         for i in range(v.shape[0]):  # for each stroke
             self.rderr.stroke_params = v[i, :]
@@ -376,7 +376,7 @@ class Painter(PainterBase):
                 path + '_animated.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 20,
                 (out_w, out_h))
 
-        print('rendering canvas...')
+        #print('rendering canvas...')
         if canvas_start is None:
             self.rderr.create_empty_canvas()
         else:

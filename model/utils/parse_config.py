@@ -4,9 +4,9 @@ from pathlib import Path
 import torch
 
 class ConfigParser:
-    def __init__(self, args, isTrain=True):
+    def __init__(self, config_path, isTrain=True):
         self.isTrain = isTrain
-        self.config_path = args.config
+        self.config_path = config_path
 
         with open(self.config_path, 'r') as f:
             self.config = yaml.safe_load(f)
@@ -16,8 +16,8 @@ class ConfigParser:
             assert self.config["model"]["encoder"]["canvas_strokes"] == 'proj' or self.config["model"]["encoder"]["canvas_strokes"] == 'add'
             assert self.config["model"]["ctx_z"] == 'proj' or self.config["model"]["ctx_z"] == 'cat'
             assert self.config["dataset"]["partition"] == 'ade_dataset' or self.config["dataset"]["partition"] == 'oxford_pet_dataset'
-            assert self.config["model"]["encoder_pe"] == 'sine' or self.config["model"]["encoder_pe"] == 'learnable'
-            assert self.config["model"]["decoder_pe"] == 'sine' or self.config["model"]["decoder_pe"] == 'learnable'
+            # assert self.config["model"]["encoder_pe"] == 'sine' or self.config["model"]["encoder_pe"] == '3dsine'
+            # assert self.config["model"]["decoder_pe"] == 'sine' or self.config["model"]["decoder_pe"] == 'learnable'
 
             self.config["train"]["logging"]["checkpoint_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], args.exp_name)
             f = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'latest.pth.tar')

@@ -60,14 +60,14 @@ train:
   kl:
     warmup_type : 'cosine'
     warm_up_epochs : 50
-    kl_lambda : 5.0e-4
+    kl_lambda : 2.5e-4
   auto_resume:
     active : False
     resume_path : ''
   logging:
     wandb_api_key : "5745461314f5f4abb2c957bb991d2df97144ba06"
     checkpoint_path : '/data/eperuzzo/ablation/'
-    save_freq : 100
+    save_freq : 200
     print_freq : 10
 render:
   painter_config : '/data/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config.yaml'

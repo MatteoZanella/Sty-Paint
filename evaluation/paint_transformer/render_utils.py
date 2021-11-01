@@ -104,7 +104,6 @@ def pad(img, H, W):
 
 def torch_to_paddle(x):
     x = x.cpu().numpy().squeeze().transpose([1,2,0])
-    x = (x * 0.5) + 0.5   # range [0,1] as in PT
     return paddle.to_tensor(x).transpose((2,0,1)).unsqueeze(0)
 
 
