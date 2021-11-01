@@ -124,7 +124,7 @@ class Renderer():
             r_ = max(self.stroke_params[2], self.stroke_params[3])
         elif self.renderer in ['rectangle']:
             r_ = max(self.stroke_params[2], self.stroke_params[3])
-        if r_ > 0.025:
+        if r_ >= 0.025:
             return True
         else:
             return False

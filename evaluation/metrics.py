@@ -165,12 +165,12 @@ class FDMetric :
 
 ########################################################################################################################
 class FDMetricIncremental :
-    def __init__(self, n_files, seq_len=8) :
+    def __init__(self, seq_len=8) :
         """
         Compute batched FD metric
         """
 
-        self.param_per_stroke = 8
+        self.param_per_stroke = 11
         ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
         self.id0 = ids[:, 0]
         self.id1 = ids[:, 1]
@@ -179,11 +179,8 @@ class FDMetricIncremental :
         #print(f'Numebr of permutations : {self.n}')
 
         self.dim_features = self.n * self.param_per_stroke
-
-        self.n_files = n_files
-        self.original_features = np.empty((self.n_files, self.dim_features))
-        self.generated_features = np.empty((self.n_files, self.dim_features))
-        self.counter = 0
+        self.original_features = []
+        self.generated_features = []
         self.keys = ['all', 'position', 'color']   # Divide the FD for these parameters
 
     def _calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2, eps=1e-6) :
@@ -249,6 +246,7 @@ class FDMetricIncremental :
         return feat
 
     def compute_mean_cov(self):
+        self.generated_features = np.concatenate(self.generated_features)
         generated = dict(mu_all=np.mean(self.generated_features, axis=0),
                    cov_all=np.cov(self.generated_features, rowvar=False),
                    mu_position=np.mean(self.generated_features[:, :5 * self.n]),
@@ -256,6 +254,9 @@ class FDMetricIncremental :
                    mu_color=np.mean(self.generated_features[:, 5 * self.n:]),
                    cov_color=np.cov(self.generated_features[:, 5 * self.n:], rowvar=False))
 
+
+        # Original
+        self.original_features = np.concatenate(self.original_features)
         original =  dict(mu_all=np.mean(self.original_features, axis=0),
                    cov_all=np.cov(self.original_features, rowvar=False),
                    mu_position=np.mean(self.original_features[:, :5 * self.n]),
@@ -266,20 +267,13 @@ class FDMetricIncremental :
         return generated, original
 
     def update_queue(self, original, generated):
-        #
         original = original[:, :, :self.param_per_stroke]
         generated = generated[:, :, :self.param_per_stroke]
 
-        bs = original.shape[0]
-        # Original
-        self.original_features[self.counter:self.counter+bs, :] = self.compute_features(original)
-        # Generated
-        self.generated_features[self.counter:self.counter+bs, :] = self.compute_features(generated)
-        # Update
-        self.counter += bs
+        self.original_features.append(self.compute_features(original))
+        self.generated_features.append(self.compute_features(generated))
 
     def compute_fd(self):
-        assert self.counter == self.n_files
         gen, orig = self.compute_mean_cov()
 
         output = dict(

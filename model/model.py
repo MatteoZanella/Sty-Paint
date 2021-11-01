@@ -249,6 +249,7 @@ class InteractivePainter(nn.Module) :
 if __name__ == '__main__' :
     from utils.parse_config import ConfigParser
     import argparse
+    from training.losses import MSECalculator
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", default='a')
@@ -260,6 +261,8 @@ if __name__ == '__main__' :
     c_parser = ConfigParser(args.config)
     c_parser.parse_config(args)
     config = c_parser.get_config()
+
+    mse = MSECalculator(config["train"]["loss_weights"])
 
     data = {
         'strokes_ctx' : torch.rand((3, 10, 11)),
@@ -280,7 +283,8 @@ if __name__ == '__main__' :
 
     # Predict with context
     net.train()
-    clean_preds = net(data)
+    clean_preds = net(data)[0]
     v = net.generate(data, no_context=True, no_z=False)
 
-    print(v.shape)
+    loss, res = mse(predictions=clean_preds, targets=data['strokes_seq'], ref_imgs=data['img'])
+    print(res)

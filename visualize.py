@@ -117,7 +117,7 @@ if __name__ == '__main__' :
 
 
     # Create config
-    c_parser = ConfigParser(args, isTrain=False)
+    c_parser = ConfigParser(args.config, isTrain=False)
     c_parser.parse_config(args)
     config = c_parser.get_config()
     print(config)
@@ -140,7 +140,7 @@ if __name__ == '__main__' :
     net1.to(config["device"])
     net1.eval()
 
-    net2 = model_2_steps.InteractivePainter(config)
+    net2 = model.InteractivePainter(config)
     net2.load_state_dict(torch.load(args.ckpt_2, map_location=device)["model"])
     net2.to(config["device"])
     net2.eval()
@@ -161,39 +161,39 @@ if __name__ == '__main__' :
         'Abyssinian_117':590,
         'Abyssinian_206' : 50,
         'Abyssinian_120' : 120,
-        'beagle_62' : 260,
-        'beagle_27' : 273,
-        'Maine_Coon_264' : 60,
-        'beagle_67' : 260,
-        'beagle_125' : 75,
-        'beagle_32' : 225,
-        'basset_hound_81' : 65,
-        'boxer_27' : 60,
-        'Bengal_85' : 72,
-        'shiba_inu_123' : 50,
-        'shiba_inu_191' : 60,
-        'Egyptian_Mau_74': 85,
-        'beagle_162' : 75,
-        'Maine_Coon_123' : None,
-        'shiba_inu_155' : 120,
-        'Sphynx_244' : 45,
-        'yorkshire_terrier_34' : None,
-        'american_pit_bull_terrier_184' : 65,
-        'saint_bernard_187' : 65,
-        'staffordshire_bull_terrier_81' : 92,
-        'Bombay_33' : None,
-        'american_pit_bull_terrier_16' : None,
-        'Bengal_154' : 56,
-        'British_Shorthair_58' : None,
-        'Egyptian_Mau_111' : 75,
-        'Russian_Blue_82' : None,
-        'Siamese_30' : None,
-        'staffordshire_bull_terrier_4' : 45,
-        'scottish_terrier_55' : None,
-        'staffordshire_bull_terrier_169' : None,
-        'staffordshire_bull_terrier_144' : None,
-        'staffordshire_bull_terrier_119' : None,
-        'wheaten_terrier_94' : None}
+        'beagle_62' : 260,}
+        # 'beagle_27' : 273,
+        # 'Maine_Coon_264' : 60,
+        # 'beagle_67' : 260,
+        # 'beagle_125' : 75,
+        # 'beagle_32' : 225,
+        # 'basset_hound_81' : 65,
+        # 'boxer_27' : 60,
+        # 'Bengal_85' : 72,
+        # 'shiba_inu_123' : 50,
+        # 'shiba_inu_191' : 60,
+        # 'Egyptian_Mau_74': 85,
+        # 'beagle_162' : 75,
+        # 'Maine_Coon_123' : None,
+        # 'shiba_inu_155' : 120,
+        # 'Sphynx_244' : 45,
+        # 'yorkshire_terrier_34' : None,
+        # 'american_pit_bull_terrier_184' : 65,
+        # 'saint_bernard_187' : 65,
+        # 'staffordshire_bull_terrier_81' : 92,
+        # 'Bombay_33' : None,
+        # 'american_pit_bull_terrier_16' : None,
+        # 'Bengal_154' : 56,
+        # 'British_Shorthair_58' : None,
+        # 'Egyptian_Mau_111' : 75,
+        # 'Russian_Blue_82' : None,
+        # 'Siamese_30' : None,
+        # 'staffordshire_bull_terrier_4' : 45,
+        # 'scottish_terrier_55' : None,
+        # 'staffordshire_bull_terrier_169' : None,
+        # 'staffordshire_bull_terrier_144' : None,
+        # 'staffordshire_bull_terrier_119' : None,
+        # 'wheaten_terrier_94' : None}
 
 
     os.makedirs(args.output_path, exist_ok=True)

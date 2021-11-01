@@ -45,7 +45,32 @@ def produce_visuals(params, batch, renderer, batch_id=0) :
     return cont
 
 def check_strokes(params):
-    params = torch.clamp(params, min=0, max=1)
-    params[:, :, 2:4] = torch.clamp(params[:, :, 2:4], min=0.025, max=1)
-
+    if torch.is_tensor(params):
+        params = torch.clamp(params, min=0, max=1)
+        params[:, :, 2:4] = torch.clamp(params[:, :, 2:4], min=0.025, max=1)
+    else:
+        params = np.clip(params, a_min=0, a_max=1)
+        params[:, :, 2:4] = np.clip(params[:, :, 2:4], a_min=0.025, a_max=1)
     return params
+
+def render_lpips(inp, renderer, batch, bs, n_samples) :
+    out = dict()
+    for name in inp.keys() :
+        out[name] = np.empty([bs, n_samples, 256, 256, 3])
+
+        for b in range(bs) :
+            for n in range(n_samples) :
+                cs = batch['canvas'][b].permute(1, 2, 0).cpu().numpy()
+                out[name][b, n :, :, :] = \
+                renderer.inference(inp[name][n][b, :, :][None].cpu().numpy(), canvas_start=cs)[0]
+
+    return out
+
+def prepare_feature_difference(preds_lpips, bs, n_samples):
+    out = dict()
+    for key in preds_lpips.keys():
+        out[key] = torch.empty((bs, n_samples, 8, 11))
+        for n in range(n_samples) :
+            out[key][:, n, :, :] = preds_lpips[key][n]
+
+    return out

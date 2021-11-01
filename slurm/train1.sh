@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -p chaos -A shared-mhug-staff
-#SBATCH --gres gpu:2
+#SBATCH --gres gpu:1
 #SBATCH --mem-per-cpu=5000
 #SBATCH -c 8
 #SBATCH -o /data/eperuzzo/train1.out
@@ -14,4 +14,4 @@ conda activate brush
 
 trap "trap ' ' TERM INT; kill -TERM 0; wait" TERM INT
 cd /data/eperuzzo/brushstrokes-generation/
-python train.py --exp_name 1-our --config /data/eperuzzo/brushstrokes-generation/configs/train/conf1.yaml & wait
+python train.py --exp_name exp1 --config /data/eperuzzo/brushstrokes-generation/configs/train/conf1.yaml & wait

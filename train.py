@@ -41,7 +41,7 @@ if __name__ == '__main__':
 
     # Initialize wandb
     os.environ["WANDB_API_KEY"] = config["train"]["logging"]["wandb_api_key"]
-    wandb.init(project='Brushstrokes-Generation', config=config)
+    wandb.init(project='Brushstrokes-Ablation', config=config)
     wandb.run.name = args.exp_name
 
     # Create dataset_acquisition

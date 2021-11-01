@@ -23,6 +23,7 @@ warnings.filterwarnings("ignore")
 import torch.nn.functional as F
 from einops import rearrange, repeat
 import pandas as pd
+import evaluation.tools as etools
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
@@ -39,61 +40,6 @@ def sample_color(params, imgs) :
     color = color.repeat(1,1,2)
     out_params = torch.cat((params.clone()[:, :, :5], color), dim=-1)
     return out_params.cpu().numpy()
-
-
-def render_frames(params, batch, renderer) :
-    bs = params.shape[0]
-    L = params.shape[1]
-    frames = np.empty([bs, L, 256, 256, 3])
-    alphas = np.empty([bs, L, 256, 256, 1])
-    for i in range(bs) :
-        x = batch['canvas'][i].permute(1, 2, 0).cpu().numpy()
-        for l in range(L) :
-            if (params[i, l, 2] <= 0.025) or (params[i, l, 3] <= 0.025) :
-                params[i, l, 2] = 0.026
-                params[i, l, 3] = 0.026
-
-            x, alpha = renderer.inference(params[i, l, :][None, None, :], canvas_start=x)
-            frames[i, l] = x
-            alphas[i, l] = alpha[0, :, :, None]
-
-    return dict(frames=frames, alphas=alphas)
-
-
-def render_lpips(inp, renderer, batch, bs, n_samples) :
-    out = dict()
-    for name in inp.keys() :
-        out[name] = np.empty([bs, n_samples, 256, 256, 3])
-
-        for b in range(bs) :
-            for n in range(n_samples) :
-                cs = batch['canvas'][b].permute(1, 2, 0).cpu().numpy()
-                out[name][b, n :, :, :] = \
-                renderer.inference(inp[name][n][b, :, :][None].cpu().numpy(), canvas_start=cs)[0]
-
-    return out
-
-def prepare_feature_difference(preds_lpips, bs, n_samples):
-    out = dict()
-    for key in preds_lpips.keys():
-        out[key] = torch.empty((bs, n_samples, 8, 11))
-        for n in range(n_samples) :
-            out[key][:, n, :, :] = preds_lpips[key][n]
-
-    return out
-
-
-def build_models(config):
-    model_type = config["model"]["model_type"]
-    if model_type == "full":
-        net = model.InteractivePainter(config)
-    elif model_type == "2_steps":
-        net = model_2_steps.InteractivePainter(config)
-    else:
-        raise NotImplementedError()
-    net.load_state_dict(torch.load(config["model"]["checkpoint"], map_location=device)["model"])
-    net.to(config["device"])
-    net.eval()
 
 
 def to_df(data):
@@ -121,6 +67,7 @@ if __name__ == '__main__' :
     parser.add_argument("--output_path", type=str, default='/home/eperuzzo/eval_metrics/')
     parser.add_argument("--checkpoint_baseline", type=str,
                         default='/home/eperuzzo/PaintTransformer/inference/paint_best.pdparams')
+    parser.add_argument('--lpips', action='store_true')
     parser.add_argument("--n_samples_lpips", type=int, default=3,
                         help="number of samples to test lpips, diverstiy in generation")
     parser.add_argument("--n_iters_dataloader", default=1, type=int)
@@ -128,7 +75,7 @@ if __name__ == '__main__' :
 
 
     # Create config
-    c_parser = ConfigParser(args, isTrain=False)
+    c_parser = ConfigParser(args.config, isTrain=False)
     c_parser.parse_config(args)
     config = c_parser.get_config()
     print(config)
@@ -152,15 +99,15 @@ if __name__ == '__main__' :
     net1.to(config["device"])
     net1.eval()
 
-    net2 = model_2_steps.InteractivePainter(config)
+    net2 = model.InteractivePainter(config)
     print(f'==> Loading model form {args.ckpt_2}')
     net2.load_state_dict(torch.load(args.ckpt_2, map_location=device)["model"])
     net2.to(config["device"])
     net2.eval()
 
     models = dict(
-        model = net1,
-        model_two_steps = net2,
+        our = net1.eval(),
+        our_plus = net2.eval(),
         paint_transformer = PaddlePT(model_path=args.checkpoint_baseline, config=render_config))
 
     n_files = len(dataset_test) * args.n_iters_dataloader
@@ -176,14 +123,17 @@ if __name__ == '__main__' :
 
     for key in models.keys():
         average_meters.update({key : dict(
-                           fd = FDMetricIncremental(n_files=n_files),
+                           fd = FDMetricIncremental(),
                            dtw = AverageMeter(name='dtw'),
                            masked_l2=AverageMeter(name='Masked L2 / Area'),
                            lpips=AverageMeter(name='lpips'),
                             feature_div=AverageMeter(name='features_div'),
                             wd=AverageMeter(name='wd'))})
+    average_meters.update({'original' : dict(
+        masked_l2 = AverageMeter(name='Masked L2 / Area')
+    )})
     average_meters.update({'model_sc' : dict(
-        fd = FDMetricIncremental(n_files=n_files),
+        fd = FDMetricIncremental(),
         dtw=AverageMeter(name='dtw'),
         masked_l2=AverageMeter(name='Masked L2 / Area'),
         lpips=AverageMeter(name='lpips'),
@@ -204,17 +154,19 @@ if __name__ == '__main__' :
             visuals = dict()
             for name, model in models.items():
                 preds = model.generate(data)
+                if name == 'our' or name == 'our_plus':
+                    preds = etools.check_strokes(preds)
                 if torch.is_tensor(preds):
                     preds = preds.cpu().numpy()
                 predictions.update({name : preds})
-            predictions.update({'model_sc' : sample_color(predictions['model'], batch['img'])})
+            predictions.update({'model_sc' : sample_color(predictions['our'], batch['img'])})
 
             for name, params in predictions.items() :
-                visuals.update({name : render_frames(params, batch, renderer)})
+                visuals.update({name : etools.render_frames(params, batch, renderer)})
+            visuals.update({'original' : etools.render_frames(batch['strokes_seq'], batch, renderer)})
 
-            # Maksedl2
+            # Maksed l2
             for name, model in visuals.items():
-                print(name)
                 tmp = maskedL2(batch['img'], visuals[name]['frames'], visuals[name]['alphas'])
                 average_meters[name]['masked_l2'].update(tmp.item(), bs)
 
@@ -239,22 +191,22 @@ if __name__ == '__main__' :
                 for n in range(args.n_samples_lpips):
                     predictions_lpips[key][n] = model.generate(data)
 
-            flag = False
-            if flag:#idx % 5 == 0 :
-                visuals_lpips = render_lpips(inp=predictions_lpips, renderer=renderer,
+            if args.lpips and idx % 5 == 0 :
+                visuals_lpips = etools.render_lpips(inp=predictions_lpips, renderer=renderer,
                                              batch=batch, bs=bs, n_samples=args.n_samples_lpips)
 
                 for name in visuals_lpips.keys():
                     lpips_score = LPIPS(visuals_lpips[name])
                     average_meters[name]['lpips'].update(lpips_score.item(), bs)
 
-            preds = prepare_feature_difference(predictions_lpips, bs, args.n_samples_lpips)
+            preds = etools.prepare_feature_difference(predictions_lpips, bs, args.n_samples_lpips)
             for name in preds.keys():
                 feat_div_score = feature_div(preds[name])
                 average_meters[name]['feature_div'].update(feat_div_score.item(), bs)
 
     for key in average_meters.keys():
-        average_meters[key]['fd'] = average_meters[key]['fd'].compute_fd()
+        if 'fd' in average_meters[key]:
+            average_meters[key]['fd'] = average_meters[key]['fd'].compute_fd()
 
     os.makedirs(args.output_path, exist_ok=True)
     results = to_df(average_meters)
