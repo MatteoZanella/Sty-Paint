@@ -187,7 +187,7 @@ class Trainer:
                     mse_color = AverageMeter(name='MSE color'),
                     mse_color_img = AverageMeter(name='MSE color img')))
 
-        full_eval_flag = ep % 5 == 0
+        full_eval_flag = ep % 25 == 0
         if full_eval_flag:
             logging.info('Full evalutation active')
 

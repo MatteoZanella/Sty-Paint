@@ -7,7 +7,7 @@ import math
 
 
 def dict_to_device(inp, device, to_skip=[]) :
-    return {k : t.to(device) for k, t in inp.items() if k not in to_skip}
+    return {k : t.to(device, non_blocking=True) for k, t in inp.items() if k not in to_skip}
 
 
 def render_save_strokes(generated_strokes, original_strokes, painter, output_path, ep) :
