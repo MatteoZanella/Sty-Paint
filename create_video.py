@@ -9,40 +9,12 @@ from model.dataset import EvalDataset
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 import torch
-import numpy as np
-import cv2
 import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
-import evaluation.tools as etools
 
 
 import warnings
 warnings.filterwarnings("ignore")
-
-
-def count_parameters(net) :
-    return sum(p.numel() for p in net.parameters() if p.requires_grad)
-
-
-
-def produce_visuals(params, ctx, renderer, st) :
-    fg, alpha = renderer.inference(params, canvas_start=st)
-    _, alpha_ctx = renderer.inference(ctx)
-    cont = visualize(fg, alpha, alpha_ctx)
-
-    return cont
-
-
-def visualize(foreground, alpha, alpha_ctx) :
-    tmp = ((alpha.sum(0) * 255)[:, :, None]).astype('uint8')
-    contours, hierarchy = cv2.findContours(tmp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    tmp_alpha = ((alpha_ctx.sum(0) * 255)[:, :, None]).astype('uint8')
-    contours_ctx, _ = cv2.findContours(tmp_alpha, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-    x = (np.copy(foreground) * 255).astype('uint8')
-    res = cv2.drawContours(x, contours_ctx, -1, (255, 0, 0), 1)
-    res = cv2.drawContours(res, contours, -1, (0, 255, 0), 1)
-    return res
 
 
 if __name__ == '__main__' :
@@ -90,7 +62,7 @@ if __name__ == '__main__' :
         transforms.Resize((256, 256)),
         transforms.ToTensor(), ])
 
-    filename = 'Abyssinian_2'
+    filename = 'Abyssinian_206'
     t_start = 50
     batch = dataset_test.sample(filename, t_start)
     ref_img = batch['img']
@@ -117,7 +89,6 @@ if __name__ == '__main__' :
                 'strokes_seq' : torch.randn([1, 8, 11])
             }
         else:
-            # maybe we should put as context the generated strokes
             t_start += 8
             batch = dataset_test.sample(filename, t_start)
             batch['strokes_ctx'][:, -8:, :] = preds

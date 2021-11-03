@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 import torch
+from einops import  repeat, rearrange
+import torch.nn.functional as F
 
 def render_frames(params, batch, renderer) :
     bs = params.shape[0]
@@ -74,3 +76,16 @@ def prepare_feature_difference(preds_lpips, bs, n_samples):
             out[key][:, n, :, :] = preds_lpips[key][n]
 
     return out
+
+
+def sample_color(params, imgs) :
+    if not torch.is_tensor(params):
+        params = torch.tensor(params)
+    bs, n_strokes, _ = params.shape
+    img_temp = repeat(imgs, 'bs ch h w -> (bs L) ch h w', L=n_strokes)
+    grid = rearrange(params[:, :, :2], 'bs L p -> (bs L) 1 1 p')
+    color = F.grid_sample(img_temp, 2 * grid - 1, align_corners=False)
+    color = rearrange(color, '(bs L) ch 1 1 -> bs L ch', L=n_strokes)
+    color = color.repeat(1,1,2)
+    out_params = torch.cat((params.clone()[:, :, :5], color), dim=-1)
+    return out_params.cpu().numpy()

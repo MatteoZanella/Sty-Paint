@@ -14,4 +14,4 @@ conda activate brush
 
 trap "trap ' ' TERM INT; kill -TERM 0; wait" TERM INT
 cd /data/eperuzzo/brushstrokes-generation/
-python train.py --exp_name exp-3 --config /data/eperuzzo/brushstrokes-generation/configs/train/conf3.yaml & wait
+python train.py --exp_name our+_bs32_kl0.001_pos1_col1_theta1_size1_ref0.1 --config /data/eperuzzo/brushstrokes-generation/configs/train/conf3.yaml & wait

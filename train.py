@@ -58,7 +58,8 @@ if __name__ == '__main__':
     # Test
     dataset_test = StrokesDataset(config, isTrain=False)
     test_loader = DataLoader(dataset=dataset_test,
-                             batch_size=config["train"]["batch_size"],
+                             batch_size=64,
+                             num_workers=config["train"]["num_workers"],
                              shuffle=True,
                              pin_memory=False)
 

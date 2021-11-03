@@ -5,41 +5,24 @@ import pickle as pkl
 from model.utils.utils import dict_to_device, AverageMeter
 from model.utils.parse_config import ConfigParser
 from model import model, model_2_steps
-#from model.paint_transformer.torch_implementation import PaintTransformer
 from model.dataset import StrokesDataset
 from torch.utils.data import DataLoader
 
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 import torch
-import numpy as np
 
-from evaluation.metrics import FDMetric, FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental
+from evaluation.metrics import FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental
 from evaluation.metrics import maskedL2, compute_dtw
 
 from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
-import warnings
-warnings.filterwarnings("ignore")
-import torch.nn.functional as F
-from einops import rearrange, repeat
 import pandas as pd
 import evaluation.tools as etools
+import warnings
+warnings.filterwarnings("ignore")
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
-
-
-def sample_color(params, imgs) :
-    if not torch.is_tensor(params):
-        params = torch.tensor(params)
-    bs, n_strokes, _ = params.shape
-    img_temp = repeat(imgs, 'bs ch h w -> (bs L) ch h w', L=n_strokes)
-    grid = rearrange(params[:, :, :2], 'bs L p -> (bs L) 1 1 p')
-    color = F.grid_sample(img_temp, 2 * grid - 1, align_corners=False)
-    color = rearrange(color, '(bs L) ch 1 1 -> bs L ch', L=n_strokes)
-    color = color.repeat(1,1,2)
-    out_params = torch.cat((params.clone()[:, :, :5], color), dim=-1)
-    return out_params.cpu().numpy()
 
 
 def to_df(data):
@@ -115,7 +98,6 @@ if __name__ == '__main__' :
     # ======= Metrics ========================
     LPIPS = LPIPSDiversityMetric()
     Wdist = WassersteinDistance()
-    Fdist = FDMetric()
     feature_div = FeaturesDiversity()
 
     # Average Meters
@@ -159,7 +141,7 @@ if __name__ == '__main__' :
                 if torch.is_tensor(preds):
                     preds = preds.cpu().numpy()
                 predictions.update({name : preds})
-            predictions.update({'model_sc' : sample_color(predictions['our'], batch['img'])})
+            predictions.update({'model_sc' : etools.sample_color(predictions['our'], batch['img'])})
 
             for name, params in predictions.items() :
                 visuals.update({name : etools.render_frames(params, batch, renderer)})

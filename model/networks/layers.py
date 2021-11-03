@@ -34,7 +34,7 @@ class PEWrapper :
         feat_temp = repeat(feat, 'ch h w -> n_reps ch h w', n_reps=n_strokes * bs)
         grid = rearrange(pos, 'L bs p -> (L bs) 1 1 p')
 
-        pooled_features = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False)
+        pooled_features = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='bicubic')
         pooled_features = rearrange(pooled_features, '(L bs) ch 1 1 -> L bs ch', L=n_strokes)
 
         return pooled_features
