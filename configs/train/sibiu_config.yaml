@@ -1,12 +1,7 @@
 dataset :
   root: '/home/eperuzzo/IBG_dataset'
-<<<<<<< HEAD
-  csv_file: '/home/eperuzzo/IBG_dataset/ade_test.csv'
-  partition: 'ade_dataset'
-=======
   csv_file: '/home/eperuzzo/IBG_dataset/dataset_test_config.csv'
   partition: 'oxford_pet_dataset'
->>>>>>> ablation
   heuristic: 'lkh_col2_area1_pos0_cl7'
   resize : 256
   context_length : 10

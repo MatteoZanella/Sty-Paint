@@ -14,9 +14,7 @@ conda activate brush
 
 trap "trap ' ' TERM INT; kill -TERM 0; wait" TERM INT
 cd /data/eperuzzo/brushstrokes-generation/
-<<<<<<< HEAD
-python evaluate_metrics.py --checkpoint_path /data/eperuzzo/model_checkpoints/full_big_v2/latest.pth.tar --config /data/eperuzzo/brushstrokes-generation/configs/train/todi_config.yaml & wait
-=======
+
 python evaluate_metrics.py \
         --model_1_config /data/eperuzzo/model_checkpoints/full_clean_as_oxford/latest.pth.tar \
         --model_2_config /data/eperuzzo/model_checkpoints/2_steps_clean_as_oxford/latest.pth.tar \
@@ -24,4 +22,3 @@ python evaluate_metrics.py \
         --checkpoint_baseline /data/eperuzzo/model_checkpoints/painttransformer/paint_best.pdparams \
         --n_iters_dataloader 3 \
         --config /data/eperuzzo/brushstrokes-generation/configs/train/todi_config.yaml & wait
->>>>>>> ablation

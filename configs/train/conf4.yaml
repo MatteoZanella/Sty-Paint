@@ -23,7 +23,7 @@ model:
     type : 'convenc'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
-    visual_feat_hw : 8
+    visual_feat_hw : 16
     visual_feat_dim : 256
     hres_feat_hw : 64
     hres_feat_dim : 64
@@ -60,12 +60,12 @@ train:
   kl:
     warmup_type : 'cosine'
     warm_up_epochs : 50
-    kl_lambda : 2.5e-3
+    kl_lambda : 1.0e-3
   loss_weights :
     position : 1
     size : 1
     theta : 1
-    color : 1
+    color : 0
     color_img : 0.1
   auto_resume:
     active : False

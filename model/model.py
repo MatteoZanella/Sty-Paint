@@ -2,13 +2,9 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-# from model.networks.image_encoders import resnet18, ConvEncoder
-# from model.networks.layers import PEWrapper, PositionalEncoding
-# from model.networks.layers import positionalencoding1d
-
-from networks.image_encoders import resnet18, ConvEncoder
-from networks.layers import PEWrapper, PositionalEncoding
-from networks.layers import positionalencoding1d
+from model.networks.image_encoders import resnet18, ConvEncoder
+from model.networks.layers import PEWrapper, PositionalEncoding
+from model.networks.layers import positionalencoding1d
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)

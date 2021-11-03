@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import repeat, rearrange
+import torchvision
 
 class KLDivergence(nn.Module):
 
@@ -36,6 +37,7 @@ class MSECalculator :
         self.lambda_color = loss_weights["color"]
         self.lambda_color_img = loss_weights["color_img"]
 
+        self.blur = torchvision.transforms.GaussianBlur(kernel_size=(7,7))
     def __call__(self,
                  predictions,
                  targets,
@@ -84,6 +86,7 @@ class MSECalculator :
         # Sample color from reference images
         if self.lambda_color_img > 0 or isEval:
             # Extract labels from the reference image
+            ref_imgs = self.blur(ref_imgs)
             ref_imgs = repeat(ref_imgs, 'bs ch h w -> (bs L) ch h w', L=predictions.size(1))
             grid = rearrange(preds_position, 'bs L dim -> (bs L) 1 1 dim')
             target_color_img = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False)

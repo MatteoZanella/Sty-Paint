@@ -12,7 +12,7 @@ dataset :
     threshold: 0
     prob: 0
 model:
-  model_type : '2_steps'
+  model_type : 'full'
   d_model : 256
   n_strokes_params : 11
   ctx_z : 'cat'
@@ -23,7 +23,7 @@ model:
     type : 'convenc'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
-    visual_feat_hw : 8
+    visual_feat_hw : 16
     visual_feat_dim : 256
     hres_feat_hw : 64
     hres_feat_dim : 64
@@ -65,7 +65,7 @@ train:
     position : 1
     size : 1
     theta : 1
-    color : 1
+    color : 0
     color_img : 0.1
   auto_resume:
     active : False
