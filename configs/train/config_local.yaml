@@ -16,7 +16,7 @@ dataset :
 model:
   model_type : 'full'
   d_model : 256
-  n_strokes_params : 11
+  n_strokes_params : 8
   ctx_z : 'cat'
   activation_last_layer : 'identity'
   encoder_pe: 'old'
@@ -47,7 +47,7 @@ model:
     ff_dim : 1024
 train:
   n_epochs : 500
-  gpu_id : 0
+  gpu_id : -1
   batch_size : 32
   num_workers : 8
   seed : 1432

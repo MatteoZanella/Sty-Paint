@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-import numpy as np
 from model.networks.image_encoders import resnet18, ConvEncoder
 from model.networks.layers import PEWrapper, PositionalEncoding
 from model.networks.layers import positionalencoding1d
@@ -173,7 +172,7 @@ class TransformerVAE(nn.Module) :
             num_layers=config["model"]["vae_decoder"]["n_layers"])
 
         self.color_head = nn.Sequential(
-            nn.Linear(self.d_model, 9))
+            nn.Linear(self.d_model, self.s_params-2))
         self.color_head.add_module('act', act)
 
     def encode(self, x, context):
@@ -317,7 +316,7 @@ if __name__ == '__main__' :
     parser.add_argument("--debug", action='store_true')
     args = parser.parse_args()
 
-    c_parser = ConfigParser(args)
+    c_parser = ConfigParser(args.config)
     c_parser.parse_config(args)
     config = c_parser.get_config()
 
@@ -327,8 +326,8 @@ if __name__ == '__main__' :
     # data = next(iter(dataloader))
 
     data = {
-        'strokes_ctx' : torch.rand((3, 10, 11)),
-        'strokes_seq' : torch.rand((3, 8, 11)),
+        'strokes_ctx' : torch.rand((3, 10, 8)),
+        'strokes_seq' : torch.rand((3, 8, 8)),
         'canvas' : torch.randn((3, 3, 256, 256)),
         'img' : torch.randn((3, 3, 256, 256))
     }

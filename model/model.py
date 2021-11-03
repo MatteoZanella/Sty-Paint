@@ -272,8 +272,8 @@ if __name__ == '__main__' :
     mse = MSECalculator(config["train"]["loss_weights"])
 
     data = {
-        'strokes_ctx' : torch.rand((3, 10, 11)),
-        'strokes_seq' : torch.rand((3, 8, 11)),
+        'strokes_ctx' : torch.rand((3, 10, 8)),
+        'strokes_seq' : torch.rand((3, 8, 8)),
         'canvas' : torch.randn((3, 3, 256, 256)),
         'img' : torch.randn((3, 3, 256, 256))
     }

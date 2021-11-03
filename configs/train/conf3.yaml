@@ -14,7 +14,7 @@ dataset :
 model:
   model_type : 'full'
   d_model : 256
-  n_strokes_params : 11
+  n_strokes_params : 8
   ctx_z : 'cat'
   activation_last_layer : 'identity'
   encoder_pe: 'old'
@@ -23,7 +23,7 @@ model:
     type : 'convenc'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
-    visual_feat_hw : 16
+    visual_feat_hw : 8
     visual_feat_dim : 256
     hres_feat_hw : 64
     hres_feat_dim : 64
@@ -44,7 +44,7 @@ model:
     n_layers : 6
     ff_dim : 1024
 train:
-  n_epochs : 500
+  n_epochs : 1500
   gpu_id : 0
   batch_size : 32
   num_workers : 8
@@ -66,7 +66,7 @@ train:
     size : 1
     theta : 1
     color : 0
-    color_img : 0.1
+    color_img : 0.25
   auto_resume:
     active : False
     resume_path : ''

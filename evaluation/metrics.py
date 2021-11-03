@@ -65,7 +65,7 @@ class FDMetric :
         Compute batched FD metric
         """
 
-        self.param_per_stroke = 11
+        self.param_per_stroke = 8
         ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
         self.id0 = ids[:, 0]
         self.id1 = ids[:, 1]
@@ -170,7 +170,7 @@ class FDMetricIncremental :
         Compute batched FD metric
         """
 
-        self.param_per_stroke = 11
+        self.param_per_stroke = 8
         ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
         self.id0 = ids[:, 0]
         self.id1 = ids[:, 1]

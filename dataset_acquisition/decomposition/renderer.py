@@ -294,7 +294,8 @@ class Renderer():
 
         # xc, yc, w, h, theta, R0, G0, B0, R2, G2, B2, A
         x0, y0, w, h, theta = self.stroke_params[0:5]
-        R0, G0, B0, R2, G2, B2 = self.stroke_params[5:]  # remove ALPHA
+        R0, G0, B0 = self.stroke_params[5:]  # remove ALPHA
+        R2, G2, B2 = R0, G0, B0   # use only 1 color
         x0 = _normalize(x0, self.CANVAS_WIDTH)
         y0 = _normalize(y0, self.CANVAS_WIDTH)
         w = (int)(1 + w * self.CANVAS_WIDTH)

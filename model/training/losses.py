@@ -92,9 +92,7 @@ class MSECalculator :
             target_color_img = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False)
             target_color_img = rearrange(target_color_img, '(bs L) ch 1 1 -> bs L ch', L=predictions.size(1))
 
-            # we predict two triplets as color, compute the mean color
-            mean_pred_color = rearrange(preds_color, 'bs L (n_color dim) -> bs L n_color dim', n_color=2, dim=3)
-            mse_color_img = self.MSE(mean_pred_color.mean(dim=2), target_color_img)
+            mse_color_img = self.MSE(preds_color, target_color_img)
 
             # Add to the main loss
             mse += mse_color_img * self.lambda_color_img

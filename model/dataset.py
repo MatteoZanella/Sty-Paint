@@ -68,7 +68,8 @@ class StrokesDataset(Dataset):
         '''
 
         data = np.load(os.path.join(self.root_dir, name, 'strokes_params.npz'))
-        strokes = np.concatenate([data['x_ctt'], data['x_color']], axis=-1)
+        color = 0.5*(data['x_color'][:, :, :3] + data['x_color'][:, :, 3:])
+        strokes = np.concatenate([data['x_ctt'], color], axis=-1)
         strokes = torch.tensor(strokes, dtype=torch.float).squeeze(0)
 
         return strokes
@@ -173,7 +174,8 @@ class EvalDataset(Dataset):
         '''
 
         data = np.load(os.path.join(self.root_dir, name, 'strokes_params.npz'))
-        strokes = np.concatenate([data['x_ctt'], data['x_color']], axis=-1)
+        color = 0.5*(data['x_color'][:, :, :3] + data['x_color'][:, :, 3:])
+        strokes = np.concatenate([data['x_ctt'], color], axis=-1)
         strokes = torch.tensor(strokes, dtype=torch.float).squeeze(0)
 
         return strokes
