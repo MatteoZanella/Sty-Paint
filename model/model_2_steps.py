@@ -38,8 +38,10 @@ class Embedder(nn.Module) :
             self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
                                            layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
         else:
-            self.img_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"])
-            self.canvas_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"])
+            self.img_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
+                                           features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
+            self.canvas_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
+                                              features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
 
         self.conv_proj = nn.Conv2d(in_channels=2 * config["model"]["img_encoder"]["visual_feat_dim"],
                                    out_channels=self.d_model,

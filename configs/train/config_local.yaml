@@ -25,7 +25,7 @@ model:
     type : 'convenc'
     pretrained : True
     layers_to_remove : ['fc', 'layer4']
-    visual_feat_hw : 8
+    visual_feat_hw : 14
     visual_feat_dim : 256
     hres_feat_hw : 64
     hres_feat_dim : 64

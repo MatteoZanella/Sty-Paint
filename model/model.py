@@ -2,9 +2,13 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-from model.networks.image_encoders import resnet18, ConvEncoder
-from model.networks.layers import PEWrapper, PositionalEncoding
-from model.networks.layers import positionalencoding1d
+# from model.networks.image_encoders import resnet18, ConvEncoder
+# from model.networks.layers import PEWrapper, PositionalEncoding
+# from model.networks.layers import positionalencoding1d
+
+from networks.image_encoders import resnet18, ConvEncoder
+from networks.layers import PEWrapper, PositionalEncoding
+from networks.layers import positionalencoding1d
 
 def count_parameters(net) :
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
@@ -35,8 +39,10 @@ class Embedder(nn.Module) :
             self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
                                            layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
         else:
-            self.img_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"])
-            self.canvas_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"])
+            self.img_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
+                                           features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
+            self.canvas_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
+                                              features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
 
         self.conv_proj = nn.Conv2d(in_channels=2 * config["model"]["img_encoder"]["visual_feat_dim"],
                                    out_channels=self.d_model,

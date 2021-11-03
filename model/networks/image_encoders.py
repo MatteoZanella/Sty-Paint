@@ -317,19 +317,21 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
 
 ########################################################################################################################
 class ConvEncoder(nn.Module):
-    def __init__(self, spatial_output_dim=8):
+    def __init__(self, spatial_output_dim=8, features_dim=256):
         super(ConvEncoder, self).__init__()
         self.block1 = BasicBlock(inplanes=3, planes=32, stride=2, downsample=nn.Sequential(conv1x1(in_planes=3, out_planes=32, stride=2)))
         self.block2 = BasicBlock(inplanes=32, planes=64, stride=2, downsample=nn.Sequential(conv1x1(in_planes=32, out_planes=64, stride=2)))
         self.block3 = BasicBlock(inplanes=64, planes=128, stride=2, downsample=nn.Sequential(conv1x1(in_planes=64, out_planes=128, stride=2)))
-        self.block4 = BasicBlock(inplanes=128, planes=256, stride=2, downsample=nn.Sequential(conv1x1(in_planes=128, out_planes=256, stride=2)))
+        self.block4 = BasicBlock(inplanes=128, planes=features_dim, stride=2, downsample=nn.Sequential(conv1x1(in_planes=128, out_planes=features_dim, stride=2)))
 
         if spatial_output_dim == 8:
-            self.out = nn.AvgPool2d((2,2))
+            self.out = nn.AvgPool2d((2, 2))
+        elif spatial_output_dim == 14:
+            self.out = nn.AdaptiveAvgPool2d((14, 14))
         elif spatial_output_dim == 16:
             self.out = nn.Identity()
         else:
-            raise NotImplementedError('Spatial dimension of visual features can be either 8x8 or 16x16')
+            raise NotImplementedError('Spatial dimension of visual features can be either 8x8, 14x14 or 16x16')
 
     def forward(self, x):
         x = self.block1(x)
