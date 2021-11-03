@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -p chaos -A shared-mhug-staff
-#SBATCH --gres gpu:2
+#SBATCH --gres gpu:1
 #SBATCH --mem-per-cpu=5000
 #SBATCH -c 8
 #SBATCH -o /data/eperuzzo/train11.out

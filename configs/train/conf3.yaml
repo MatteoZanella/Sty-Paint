@@ -12,7 +12,7 @@ dataset :
     threshold: 0
     prob: 0
 model:
-  model_type : 'full'
+  model_type : '2_steps'
   d_model : 256
   n_strokes_params : 11
   ctx_z : 'cat'
@@ -55,18 +55,18 @@ train:
     min_lr : 1.0e-4
     warmup_lr : 1.0e-6
     warmup_ep : 20
-    wd : 1.0e-6
-    clip_grad : 10.0
+    wd : 1.0e-4
+    clip_grad : 5.0
   kl:
     warmup_type : 'cosine'
     warm_up_epochs : 50
-    kl_lambda : 1.0e-4
+    kl_lambda : 1.0e-3
   loss_weights :
-    position : 0.18
-    size : 0.18
-    theta : 0.09
-    color : 0.55
-    color_img : 0
+    position : 1
+    size : 1
+    theta : 1
+    color : 1
+    color_img : 0.1
   auto_resume:
     active : False
     resume_path : ''
