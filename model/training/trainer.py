@@ -6,14 +6,13 @@ import logging
 import torch
 from torch.optim import AdamW, Adam, SGD
 import torch.nn as nn
-from model.utils.utils import AverageMeter, dict_to_device, LambdaScheduler, render_save_strokes
-from model.training.losses import KLDivergence, MSECalculator
+from model.utils.utils import AverageMeter, dict_to_device, LambdaScheduler
+from model.training.losses import KLDivergence, MSECalculator, GANLoss, ReferenceImageLoss
 from timm.scheduler.cosine_lr import CosineLRScheduler
 from evaluation.metrics import FDMetricIncremental, maskedL2
 from evaluation import tools as etools
 
-from dataset_acquisition.decomposition.painter import Painter
-from dataset_acquisition.decomposition.utils import load_painter_config
+from model.networks.light_renderer import LightRenderer
 import wandb
 
 class Trainer:
@@ -26,7 +25,6 @@ class Trainer:
         # Optimizers
         self.checkpoint_path = config["train"]["logging"]["checkpoint_path"]
         self.train_dataloader = train_dataloader
-        print(config["train"]["optimizer"]['wd'])
         self.optimizer = AdamW(params=model.parameters(), lr=config["train"]["optimizer"]["max_lr"], weight_decay=config["train"]["optimizer"]['wd'])
         self.n_iter_per_epoch = len(self.train_dataloader)
         self.LRScheduler = CosineLRScheduler(
@@ -44,20 +42,19 @@ class Trainer:
 
         # Losses
         self.MSE = MSECalculator(loss_weights=config["train"]["loss_weights"])
-        self.kl_lambda_scheduler = LambdaScheduler(config)
         self.KLDivergence = KLDivergence()
+        self.ContentLoss = ReferenceImageLoss(render=True, meta_brushes_path='' , canvas_size=256)
+
+        # Weights
+        self.kl_weight_schedule = LambdaScheduler(config) # use cosine anealing for KL weight, all the other are fixed
 
         # Misc
-        self.device = config["device"]
         self.print_freq = config["train"]["logging"]["print_freq"]
-
-        if config["train"]["auto_resume"]["active"]:
-            self.load_checkpoint(model, config["train"]["auto_resume"]["resume_path"])
 
         # Evaluation
         self.test_dataloader = test_dataloader
         self.checkpoint_path_render = config["train"]["logging"]["log_render_path"]
-        self.pt = Painter(args=load_painter_config(config["render"]["painter_config"]))
+        #self.renderer = LightRenderer()
 
     def save_checkpoint(self, model, epoch, filename=None):
         if filename is None:
@@ -95,9 +92,8 @@ class Trainer:
             mse_size = AverageMeter(name = 'MSE size'),
             mse_theta = AverageMeter(name='MSE theta'),
             mse_color = AverageMeter(name='MSE color'),
-            kl_div = AverageMeter(name='KL divergence'))
-        if self.config["train"]["loss_weights"]["color_img"] > 0:
-            loss_avg_meters.update({'mse_color_img' : AverageMeter(name='MSE color ref')})
+            kl_div = AverageMeter(name='KL divergence'),
+            mse_color_img=AverageMeter(name='MSE color img'))
 
         info_avg_meters = dict(
             batch_time = AverageMeter(name='Time of each batch'),
@@ -109,7 +105,7 @@ class Trainer:
         start = time.time()
         end = time.time()
 
-        kl_lambda = self.kl_lambda_scheduler(ep-1)
+        kl_weight = self.kl_weight_schedule(ep-1)
         for idx, batch in enumerate(self.train_dataloader):
             batch = dict_to_device(batch, self.device)
             targets = batch['strokes_seq']
@@ -117,38 +113,46 @@ class Trainer:
             predictions, mu, log_sigma = model(batch)
 
             # Compute Losses
-            mse, losses_dict = self.MSE(predictions=predictions,
-                                        targets=targets,
-                                        ref_imgs = batch['img'])
-            kl_div = self.KLDivergence(mu, log_sigma)
+            losses = {}
 
-            loss = mse + kl_div * kl_lambda
+            losses.update(
+                self.MSE(predictions=predictions, targets=targets))
+            losses.update(
+                self.ContentLoss(predictions=predictions, ref_imgs=batch['img']))
+            losses.update(
+                self.KLDivergence(mu, log_sigma))
 
+            # Sum loss components
+            total_loss = losses['mse_position'] * self.config["train"]["loss_weights"]["position"] + \
+                losses['mse_size'] * self.config["train"]["loss_weights"]["size"] + \
+                losses['mse_theta'] * self.config["train"]["loss_weights"]["theta"] + \
+                losses['mse_color'] * self.config["train"]["loss_weights"]["color"] + \
+                losses['mse_color_img'] * self.config["train"]["loss_weights"]["color_img"] + \
+                losses['kl_div'] * kl_weight
+
+            # Gradient step
             self.optimizer.zero_grad()
-            loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), self.clip_grad)
+            total_loss.backward()
             self.optimizer.step()
-            # Gradient clipping
             self.LRScheduler.step_update(ep * self.n_iter_per_epoch + idx)
 
             # Update logging
-            losses_dict.update({'kl_div' : kl_div})
             bs = targets.size(0)
-            for loss_name in losses_dict.keys():
-                loss_avg_meters[loss_name].update(losses_dict[loss_name], bs)
+            for loss_name in losses.keys():
+                loss_avg_meters[loss_name].update(losses[loss_name], bs)
 
             info_avg_meters["mu"].update(torch.abs(mu).mean().data.item(), bs)
             info_avg_meters["sigma"].update(log_sigma.exp().mean().data.item(), bs)
-            info_avg_meters["grad_norm"].update(grad_norm.item(), bs)
+            #info_avg_meters["grad_norm"].update(grad_norm.item(), bs)
             info_avg_meters["batch_time"].update(time.time()-end)
             end = time.time()
 
             if idx % self.print_freq == 0:
                 logging.info(f'Iter : {idx} / {self.n_iter_per_epoch}\t||\t'
                       f'Time : {str(datetime.timedelta(seconds=info_avg_meters["batch_time"].val))} \t||\t'
-                      f'MSE : {loss_avg_meters["mse"].val},  ({loss_avg_meters["mse"].avg})\t||\t'
-                      f'KL : {loss_avg_meters["kl_div"].val}, ({loss_avg_meters["kl_div"].avg})'
-                      f'Grad Norm: {info_avg_meters["grad_norm"].val}, ({info_avg_meters["grad_norm"].avg})')
+                      #f'MSE : {loss_avg_meters["mse"].val},  ({loss_avg_meters["mse"].avg})\t||\t'
+                      f'KL : {loss_avg_meters["kl_div"].val}, ({loss_avg_meters["kl_div"].avg})')
+                      #f'Grad Norm: {info_avg_meters["grad_norm"].val}, ({info_avg_meters["grad_norm"].avg})')
 
         logging.info(f'EPOCH : {ep} done! Time required : {str(datetime.timedelta(seconds=(time.time()-start)))} ')
 
@@ -159,133 +163,71 @@ class Trainer:
         stats.update({
                  'train/epoch' : ep,
                  'train/lr' : self.optimizer.param_groups[0]["lr"],
-                 'train/kl_lambda' : kl_lambda,
+                 'train/kl_lambda' : kl_weight,
                  'train/mu' : info_avg_meters["mu"].avg,
                  'train/sigma' : info_avg_meters["sigma"].avg})
-
 
         return stats
 
     @torch.no_grad()
-    def evaluate(self, model, ep) :
+    def evaluate(self, model) :
 
         model.eval()
 
-        loss_meters = dict(
-            z = dict(
-                    mse = AverageMeter(name='Total MSE'),
-                    mse_position = AverageMeter(name='MSE position'),
-                    mse_size = AverageMeter(name = 'MSE size'),
-                    mse_theta = AverageMeter(name='MSE theta'),
-                    mse_color = AverageMeter(name='MSE color'),
-                    mse_color_img = AverageMeter(name='MSE color img')),
-            test = dict(
-                    mse = AverageMeter(name='Total MSE'),
-                    mse_position = AverageMeter(name='MSE position'),
-                    mse_size = AverageMeter(name = 'MSE size'),
-                    mse_theta = AverageMeter(name='MSE theta'),
-                    mse_color = AverageMeter(name='MSE color'),
-                    mse_color_img = AverageMeter(name='MSE color img')))
+        fd_test = FDMetricIncremental()
+        fd_z = FDMetricIncremental()
+        test_avg_meters = dict(
+                            mse=AverageMeter(name='Total MSE'),
+                            mse_position=AverageMeter(name='MSE position'),
+                            mse_size=AverageMeter(name='MSE size'),
+                            mse_theta=AverageMeter(name='MSE theta'),
+                            mse_color=AverageMeter(name='MSE color'),
+                            kl_div=AverageMeter(name='KL divergence'),
+                            mse_color_img=AverageMeter(name='MSE color img'))
 
-        full_eval_flag = ep % 25 == 0
-        if full_eval_flag:
-            logging.info('Full evalutation active')
+        z_avg_meters = dict(
+                        mse = AverageMeter(name='Total MSE'),
+                        mse_position = AverageMeter(name='MSE position'),
+                        mse_size = AverageMeter(name = 'MSE size'),
+                        mse_theta = AverageMeter(name='MSE theta'),
+                        mse_color = AverageMeter(name='MSE color'),
+                        kl_div = AverageMeter(name='KL divergence'),
+                        mse_color_img=AverageMeter(name='MSE color img'))
 
-            z_maskedl2_avg_meter = AverageMeter(name='Masked l2 z')
-            fd_calculator_z = FDMetricIncremental()
-
-            test_maskedl2_avg_meter = AverageMeter(name='Masked l2 test')
-            fd_calculator_test = FDMetricIncremental()
-
-        logs = {}
         for idx, batch in enumerate(self.test_dataloader) :
             data = dict_to_device(batch, self.device, to_skip=['strokes', 'time_steps'])
             targets = data['strokes_seq']
             bs = targets.size(0)
 
-            # Predict with context and z
-            preds_z = model.module.generate(data, no_context=False, no_z=False)
-            _, mse_with_z = self.MSE(preds_z, targets, data['img'], isEval=True)
+            # Predict with context, sample z from gaussian
+            preds_test = model.generate(data, use_z=False)
+            test_losses = {}
+            test_losses.update(self.MSE(preds_test, data['strokes_seq']))
+            test_losses.update(self.ContentLoss(preds_test, data['img']))
+            fd_test.update_queue(original=data['strokes_seq'], generated=preds_test)
+            for name, val in test_losses.items():
+                test_avg_meters[name].update(val.item(), bs)
 
-            # Prediction without z, as at test time
-            preds_test = model.module.generate(data, no_z=True, no_context=False)
-            _, mse_without_z = self.MSE(preds_test, targets, data['img'], isEval=True)
+            # Predict with z and context
+            preds_z = model.generate(data, use_z=True)
+            z_losses = {}
+            z_losses.update(self.MSE(preds_z, data['strokes_seq']))
+            z_losses.update(self.ContentLoss(preds_z, data['img']))
+            fd_z.update_queue(original=data['strokes_seq'], generated=preds_z)
+            for name, val in z_losses.items():
+                z_avg_meters[name].update(val.item(), bs)
 
-            # Update average meters
-            for loss_name, value in mse_with_z.items():
-                loss_meters['z'][loss_name].update(value, bs)
+        # Compute FD
+        _, fd_test = fd_test.compute_fd()
+        _, fd_z = fd_z.compute_fd()
 
-            for loss_name, value in mse_without_z.items():
-                loss_meters['test'][loss_name].update(value, bs)
+        test_avg_meters.update({f'fd_{k}' for k, v in fd_test.items()})
+        z_avg_meters.update({f'fd_{k}' for k, v in fd_z.items()})
 
-            # Full eval
-            if full_eval_flag:
-                preds_z = etools.check_strokes(preds_z)
-                preds_test = etools.check_strokes(preds_test)
-
-                # Use z as during training
-                visuals_z = etools.render_frames(params=preds_z.cpu().numpy(),
-                                                 batch=batch,
-                                                 renderer=self.pt)
-
-                l2 = maskedL2(batch['img'], visuals_z['frames'], visuals_z['alphas'])
-                z_maskedl2_avg_meter.update(l2.item(), bs)
-                fd_calculator_z.update_queue(original=data['strokes_seq'], generated=preds_z)
-
-
-                # No z, as at test time
-                visuals_test = etools.render_frames(params=preds_test.cpu().numpy(),
-                                                    batch=batch,
-                                                    renderer=self.pt)
-                l2 = maskedL2(batch['img'], visuals_test['frames'], visuals_test['alphas'])
-                test_maskedl2_avg_meter.update(l2.item(), bs)
-                fd_calculator_test.update_queue(original=data['strokes_seq'], generated=preds_test)
-
-                if idx == 0:
-                    logging.info('Rendering Images')
-                    img_ref = etools.produce_visuals(params=batch['strokes_seq'],
-                                                     batch=batch,
-                                                     renderer=self.pt,
-                                                     batch_id=0)
-                    img_z = etools.produce_visuals(params=preds_z,
-                                                   batch=batch,
-                                                   renderer=self.pt,
-                                                   batch_id=0)
-                    img_test = etools.produce_visuals(params=preds_test,
-                                                   batch=batch,
-                                                   renderer=self.pt,
-                                                   batch_id=0)
-
-                    logs.update({
-                        "media/img_ref" : wandb.Image(img_ref, caption=f"Reference Image"),
-                        "media/img_z" : wandb.Image(img_z, caption=f"Img w z"),
-                        "media/img_test" : wandb.Image(img_test, caption=f"Img w/o z")})
-
-
-        logging.info(f'TEST: '
-                     f'Clean MSE : {loss_meters["z"]["mse"].avg}\t||\t'
-                     f'No z MSE : {loss_meters["test"]["mse"].avg}')
-
-
-        for phase in loss_meters.keys():  # phase = z or = test
-            for loss_name, avg_meter in loss_meters[phase].items():
-                logs.update({
-                    f'eval/{phase}/{loss_name}' : avg_meter.avg})
-
-        if full_eval_flag:
-            _, fd_z = fd_calculator_z.compute_fd()
-            _, fd_test = fd_calculator_test.compute_fd()
-            logs.update(
-                {
-                    'eval/z/fd_all' : fd_z['all'],
-                    'eval/z/fd_color' : fd_z['color'],
-                    'eval/z/fd_position' : fd_z['position'],
-                    'eval/z/l2' : z_maskedl2_avg_meter.avg,
-
-                    'eval/test/fd_all' : fd_test['all'],
-                    'eval/test/fd_color' : fd_test['color'],
-                    'eval/test/fd_position' : fd_test['position'],
-                    'eval/test/l2' : test_maskedl2_avg_meter.avg
-                })
-
-        return logs
+        stats = {}
+        stats.update(
+            {f'eval/test/{k}' for k, v in test_avg_meters.items()})
+        stats.update(
+            {f'eval/z/{k}' for k, v in z_avg_meters.items()}
+        )
+        return stats

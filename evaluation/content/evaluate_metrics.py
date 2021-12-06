@@ -14,10 +14,13 @@ import torch
 
 from evaluation.metrics import FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental
 from evaluation.metrics import maskedL2, compute_dtw
+from evaluation.fvd import FVD
 
 from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
+#from evaluation.paint_transformer.torch_implementation import PaintTransformer
 import pandas as pd
 import evaluation.tools as etools
+import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -39,18 +42,29 @@ def to_df(data):
 
     return out
 
+def compute_color_difference(x):
+    x = x[:, :, 5:]
+    if torch.is_tensor(x):
+        l1 = torch.abs(torch.diff(x, dim=1)).mean()
+        l2 = torch.pow(torch.diff(x, dim=1), 2).mean()
+    else:
+        l1 = np.abs(np.diff(x, axis=1)).sum(axis=1).mean()
+        l2 = np.square(np.diff(x, axis=1)).mean()
+
+    return l1, l2
 
 if __name__ == '__main__' :
     # Extra parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt_1", type=str, required=True)
-    parser.add_argument("--ckpt_2", type=str, required=True)
+    parser.add_argument("--checkpoint1", type=str, required=True)
+    parser.add_argument("--checkpoint2", type=str, required=True)
     parser.add_argument("--config", default='/home/eperuzzo/brushstrokes-generation/configs/train/sibiu_config.yaml')
 
     parser.add_argument("--output_path", type=str, default='/home/eperuzzo/eval_metrics/')
     parser.add_argument("--checkpoint_baseline", type=str,
                         default='/home/eperuzzo/PaintTransformer/inference/paint_best.pdparams')
     parser.add_argument('--lpips', action='store_true')
+    parser.add_argument('--fvd', action='store_true')
     parser.add_argument("--n_samples_lpips", type=int, default=3,
                         help="number of samples to test lpips, diverstiy in generation")
     parser.add_argument("--n_iters_dataloader", default=1, type=int)
@@ -76,15 +90,15 @@ if __name__ == '__main__' :
     render_config = load_painter_config(config["render"]["painter_config"])
     renderer = Painter(args=render_config)
 
-    net1 = model.InteractivePainter(config)
-    print(f'==> Loading model form {args.ckpt_1}')
-    net1.load_state_dict(torch.load(args.ckpt_1, map_location=device)["model"])
+    net1 = model_2_steps.InteractivePainter(config)
+    print(f'==> Loading model form {args.checkpoint1}')
+    net1.load_state_dict(torch.load(args.checkpoint1, map_location=device)["model"])
     net1.to(config["device"])
     net1.eval()
 
-    net2 = model.InteractivePainter(config)
-    print(f'==> Loading model form {args.ckpt_2}')
-    net2.load_state_dict(torch.load(args.ckpt_2, map_location=device)["model"])
+    net2 = model_2_steps.InteractivePainter(config)
+    print(f'==> Loading model form {args.checkpoint2}')
+    net2.load_state_dict(torch.load(args.checkpoint2, map_location=device)["model"])
     net2.to(config["device"])
     net2.eval()
 
@@ -99,6 +113,7 @@ if __name__ == '__main__' :
     LPIPS = LPIPSDiversityMetric()
     Wdist = WassersteinDistance()
     feature_div = FeaturesDiversity()
+    fvd = FVD()
 
     # Average Meters
     average_meters = dict()
@@ -108,19 +123,26 @@ if __name__ == '__main__' :
                            fd = FDMetricIncremental(),
                            dtw = AverageMeter(name='dtw'),
                            masked_l2=AverageMeter(name='Masked L2 / Area'),
+                           fvd = AverageMeter(name="fvd"),
                            lpips=AverageMeter(name='lpips'),
-                            feature_div=AverageMeter(name='features_div'),
-                            wd=AverageMeter(name='wd'))})
+                           feature_div=AverageMeter(name='features_div'),
+                           color_l1=AverageMeter(name='avg'),
+                           color_l2 = AverageMeter(name='avg'),
+                           wd=AverageMeter(name='wd'))})
+
     average_meters.update({'original' : dict(
-        masked_l2 = AverageMeter(name='Masked L2 / Area')
+        masked_l2 = AverageMeter(name='Masked L2 / Area'),
+        color_l1 = AverageMeter(name='avg'),
+        color_l2 = AverageMeter(name='avg'),
     )})
-    average_meters.update({'model_sc' : dict(
-        fd = FDMetricIncremental(),
-        dtw=AverageMeter(name='dtw'),
-        masked_l2=AverageMeter(name='Masked L2 / Area'),
-        lpips=AverageMeter(name='lpips'),
-        feature_div=AverageMeter(name='features_div'),
-        wd=AverageMeter(name='wd'))})
+    # average_meters.update({'model_sc' : dict(
+    #     fd = FDMetricIncremental(),
+    #     dtw=AverageMeter(name='dtw'),
+    #     masked_l2=AverageMeter(name='Masked L2 / Area'),
+    #     lpips=AverageMeter(name='lpips'),
+    #     feature_div=AverageMeter(name='features_div'),
+    #     color_difference=AverageMeter(name='avg'),
+    #     wd=AverageMeter(name='wd'))})
 
     # ======= Run ========================
     for iter in range(args.n_iters_dataloader):
@@ -141,17 +163,40 @@ if __name__ == '__main__' :
                 if torch.is_tensor(preds):
                     preds = preds.cpu().numpy()
                 predictions.update({name : preds})
-            predictions.update({'model_sc' : etools.sample_color(predictions['our'], batch['img'])})
+            #predictions.update({'model_sc' : etools.sample_color(predictions['our'], batch['img'])})
 
             for name, params in predictions.items() :
                 visuals.update({name : etools.render_frames(params, batch, renderer)})
             visuals.update({'original' : etools.render_frames(batch['strokes_seq'], batch, renderer)})
 
+            # ========================================
+            # Compute cumulative difference
+            for name, preds in predictions.items():
+                color_diff_l1, color_diff_l2 = compute_color_difference(preds)
+                average_meters[name]['color_l1'].update(color_diff_l1.item(), bs)
+                average_meters[name]['color_l2'].update(color_diff_l2.item(), bs)
+
+            color_diff_l1, color_diff_l2 = compute_color_difference(batch['strokes_seq'])  # original strokes
+            average_meters['original']['color_l1'].update(color_diff_l1.item(), bs)
+            average_meters['original']['color_l2'].update(color_diff_l2.item(), bs)
+            # =======================================
+            # FVD
+            if args.fvd:
+                try:
+                    for name, model in visuals.items():
+                        if name == 'original':
+                            continue
+                        res = fvd(reference_observations=visuals['original']['frames'], generated_observations=visuals[name]['frames'])
+                        average_meters[name]['fvd'].update(res, bs)
+                except:
+                    print('Skipping this iteration')
+            # =======================================
             # Maksed l2
             for name, model in visuals.items():
                 tmp = maskedL2(batch['img'], visuals[name]['frames'], visuals[name]['alphas'])
                 average_meters[name]['masked_l2'].update(tmp.item(), bs)
 
+            # =========================================
             # Wasserstein/Frechet/Dtw Distance
             for name in predictions.keys():
                 wd = Wdist(batch['strokes_seq'][:, :, :5], torch.tensor(predictions[name][:, :, :5]))

@@ -268,7 +268,6 @@ class TransformerVAE(nn.Module) :
                             visual_features=visual_features)
         return preds
 
-
 # ----------------------------------------------------------------------------------------------------------------------
 
 class InteractivePainter(nn.Module) :
@@ -289,16 +288,17 @@ class InteractivePainter(nn.Module) :
         return predictions, mu, log_sigma
 
     @torch.no_grad()
-    def generate(self, data, no_context=False, no_z=True) :
+    def generate(self, data, no_context=False, no_z=True, L=None) :
         self.eval()
         context, x, vs_features = self.embedder(data)
         context_features = self.context_encoder(context)
-
         if no_context :  # zero out the context to check if the model benefit from it
             context_features = torch.randn_like(context_features, device=context_features.device)
 
         if no_z :
-            predictions = self.transformer_vae.sample(context=context_features, visual_features=vs_features)
+            predictions = self.transformer_vae.sample(context=context_features,
+                                                      visual_features=vs_features,
+                                                      L=L)
         else :
             predictions = self.transformer_vae(x, context_features, vs_features)[0]
 

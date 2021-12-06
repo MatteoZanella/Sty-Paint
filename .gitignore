@@ -144,4 +144,4 @@ gallery/*
 .idea/*
 */__pycache__/*
 __pycache__/
-slurm/*
+.slurm/*

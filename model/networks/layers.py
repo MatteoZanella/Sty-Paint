@@ -4,13 +4,14 @@ import numpy as np
 import math
 from einops import rearrange, repeat
 import torch.nn.functional as F
+from timm.models.layers import trunc_normal_
 
 
 ########################################################################################################################
 class PEWrapper :
     def __init__(self, config) :
         self.input_dim = config["dataset"]["resize"]
-        self.encoder_dim = config["model"]["img_encoder"]["visual_feat_hw"]
+        self.encoder_dim = int(config["model"]["img_encoder"]["visual_feat_hw"] * self.input_dim / 256)
         self.d_model = config["model"]["d_model"]
 
     def pe_visual_tokens(self, device):
@@ -149,3 +150,34 @@ class PositionalEncoding:
         # Cat
         pe = torch.cat((pe, time_pe), dim=-1)
         return pe[:, :, :self.d_model].to(device)
+
+
+########################################################################################################################
+class SequenceDiscriminator(nn.Module) :
+    def __init__(self, config) :
+        super(SequenceDiscriminator, self).__init__()
+        self.d_model = config["model"]["d_model"]
+
+        self.net = nn.TransformerEncoder(
+            encoder_layer=nn.TransformerEncoderLayer(
+                d_model=config["model"]["d_model"],
+                nhead=config["model"]["encoder"]["n_heads"],
+                dim_feedforward=config["model"]["encoder"]["ff_dim"],
+                activation=config["model"]["encoder"]["act"],
+            ),
+            num_layers=config["model"]["vae_decoder"]["n_layers"] // 2)
+
+
+        self.cls_token = nn.Parameter(torch.randn(1, 1, self.d_model))
+        trunc_normal_(self.mu, std=0.02)
+
+        self.head = nn.Linear(self.d_model, 1)
+
+    def forward(self, inp):
+        # input is (bs, L, params)
+        inp = rearrange(inp, 'bs L dim -> L bs dim') # length first
+        x = torch.cat((self.cls_token, inp), dim=0)   # concatenate along lenght dims
+        x = self.net(x)
+        preds = self.head(x[0]) # use the class token
+
+        return preds

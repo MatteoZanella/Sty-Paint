@@ -1,31 +1,8 @@
 import torch
-import os
-import matplotlib.pyplot as plt
-import numpy as np
-import wandb
 import math
-
 
 def dict_to_device(inp, device, to_skip=[]) :
     return {k : t.to(device, non_blocking=True) for k, t in inp.items() if k not in to_skip}
-
-
-def render_save_strokes(generated_strokes, original_strokes, painter, output_path, ep) :
-    generated_strokes = generated_strokes.detach().cpu().numpy()
-
-    try:
-        original, _ = painter.inference(strokes=original_strokes.cpu().numpy())
-        generated, _ = painter.inference(strokes=generated_strokes)
-        plt.imsave(os.path.join(output_path, f'original_{ep}.jpg'), original)
-        plt.imsave(os.path.join(output_path, f'generated_{ep}.jpg'), generated)
-
-        return {"generated" : wandb.Image(generated, caption=f"generated_ep_{ep}"),
-                "original" : wandb.Image(original, caption=f"original_ep_{ep}")}
-    except:
-        print('Skipping because of wrong format strokes')
-        np.save(os.path.join(output_path, f'wrong_strokes_ep_{ep}.npy'), generated_strokes)
-        return {}
-
 
 class AverageMeter(object) :
     """Computes and stores the average and current value"""
