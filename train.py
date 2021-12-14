@@ -2,14 +2,14 @@ import argparse
 import os
 import logging
 import numpy as np
+import torch
 
 from model.utils.parse_config import ConfigParser
-from model import model, model_2_steps
 from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
-import torch
-import torch.nn as nn
+from model import build_model
+
 
 import wandb
 
@@ -44,9 +44,6 @@ if __name__ == '__main__':
     wandb.init(project='Brushstrokes-Ablation', config=config)
     wandb.run.name = args.exp_name
 
-    # Create dataset_acquisition
-    device = config["device"]
-
     # Train
     dataset = StrokesDataset(config, isTrain=True)
     train_loader = DataLoader(dataset=dataset,
@@ -66,15 +63,8 @@ if __name__ == '__main__':
     logging.info(f'Dataset stats: Train {len(dataset)} samples, Test : {len(dataset_test)} samples')
 
     # Create model
-    if config["model"]["model_type"] == 'full':
-        model = model.InteractivePainter(config)
-    elif config["model"]["model_type"] == '2_steps':
-        logging.info('Two step model')
-        model = model_2_steps.InteractivePainter(config)
-    else:
-        raise NotImplementedError(f'Wrong model type: {config["model"]["model_type"]}')
-
-    model = nn.DataParallel(model)
+    model = build_model(config=config)
+    #model = nn.DataParallel(model)
     model.cuda()
 
     params = count_parameters(model)
@@ -82,8 +72,8 @@ if __name__ == '__main__':
 
     # Create
     trainer = Trainer(config, model, train_loader, test_loader)
+    model.train_setup(n_iters_per_epoch=len(train_loader))
     max_epochs = config["train"]["n_epochs"]
-
     wandb.watch(model)
     for ep in range(1, max_epochs+1):
         # Print
@@ -91,15 +81,18 @@ if __name__ == '__main__':
         logging.info(f'Epoch: {ep} / {config["train"]["n_epochs"]}')
 
         train_stats = trainer.train_one_epoch(model, ep)
-        test_logs = trainer.evaluate(model, ep)
-
-        # Log
         wandb.log(train_stats)
-        wandb.log(test_logs)
+
+        # Eval
+        if ep % config["train"]["logging"]["eval_every"] == 0 or (ep == max_epochs):
+            logging.info('=' * 50)
+            logging.info('** EVALUATION **')
+            test_logs = trainer.evaluate(model)
+            wandb.log(test_logs)
 
         # Save ckpt
         if (ep % config["train"]["logging"]["save_freq"] == 0) :
-            trainer.save_checkpoint(model, epoch=ep)
+            model.save_checkpoint(epoch=ep)
 
     # Save final model
-    trainer.save_checkpoint(model, epoch=ep, filename='latest')
+    model.save_checkpoint(epoch=ep, filename='latest')

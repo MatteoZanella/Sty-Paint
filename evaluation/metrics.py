@@ -3,6 +3,17 @@ from scipy import linalg
 import torch
 from einops import rearrange
 
+def compute_color_difference(x):
+    x = x[:, :, 5:]
+    if torch.is_tensor(x):
+        l1 = torch.abs(torch.diff(x, dim=1)).mean()
+        l2 = torch.pow(torch.diff(x, dim=1), 2).mean()
+    else:
+        l1 = np.abs(np.diff(x, axis=1)).sum(axis=1).mean()
+        l2 = np.square(np.diff(x, axis=1)).mean()
+
+    return l1, l2
+
 class WassersteinDistance:
     def __init__(self):
         pass
@@ -327,7 +338,7 @@ class LPIPSDiversityMetric:
 class FeaturesDiversity:
     def __init__(self) :
         seq_len = 8
-        self.param_per_stroke = 11
+        self.param_per_stroke = 8
         ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
         self.id0 = ids[:, 0]
         self.id1 = ids[:, 1]

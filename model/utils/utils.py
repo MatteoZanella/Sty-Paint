@@ -1,14 +1,12 @@
-import torch
-import math
+import numpy as np
 
-def dict_to_device(inp, device, to_skip=[]) :
-    return {k : t.to(device, non_blocking=True) for k, t in inp.items() if k not in to_skip}
+def dict_to_device(inp, to_skip=[]) :
+    return {k : t.cuda(non_blocking=True) for k, t in inp.items() if k not in to_skip}
 
 class AverageMeter(object) :
     """Computes and stores the average and current value"""
 
-    def __init__(self, name, fmt=':f') :
-        self.name = name
+    def __init__(self, fmt=':f') :
         self.fmt = fmt
         self.reset()
 
@@ -24,33 +22,35 @@ class AverageMeter(object) :
         self.count += n
         self.avg = self.sum / self.count
 
-    def __str__(self) :
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
+class AverageMetersDict:
+    def __init__(self, names):
+        self.meters = dict()
+        for name in names:
+            self.meters.update({f'{name}': AverageMeter()})
 
+    def update(self, vals, n):
+        for k, v in vals.items():
+            self.meters[k].update(v, n)
 
-class LambdaScheduler :
+    def get_avg(self, header=''):
+        output = dict()
+        for k,v in self.meters.items():
+            output.update({f'{header}{k}': v.avg})
+        return output
 
-    def __init__(self, config) :
+    def get_val(self, key):
+        return self.meters[key].val
 
-        self.warmup_type = config["train"]["kl"]["warmup_type"]
-        self.warmup_epochs = config["train"]["kl"]["warm_up_epochs"]
-        self.base_value = config["train"]["kl"]["kl_lambda"]
-        self.max_epochs = config["train"]["n_epochs"]
+#################################################################
+def cosine_scheduler(base_value, final_value, epochs, warmup_epochs=0, start_warmup_value=0):
+    warmup_schedule = np.array([])
+    warmup_iters = warmup_epochs #* niter_per_ep
+    if warmup_epochs > 0:
+        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
 
-        assert self.warmup_type == 'linear' or self.warmup_type == 'cosine'
-        if self.warmup_type == 'linear' :
-            l1 = torch.linspace(0, self.base_value, self.warmup_epochs)
-            l2 = torch.full((self.max_epochs - self.warmup_epochs,), self.base_value)
-            self.schedule = torch.cat([l1, l2])
-        elif self.warmup_type == 'cosine' :
-            l1 = 0.5 * (0 - self.base_value) * (1 + torch.cos(
-                torch.tensor(torch.arange(0, self.warmup_epochs) * math.pi / self.warmup_epochs))) + self.base_value
-            l2 = torch.full((self.max_epochs - self.warmup_epochs,), self.base_value)
-            self.schedule = torch.cat(([l1, l2]))
+    iters = np.arange(epochs - warmup_iters)
+    schedule = final_value + 0.5 * (base_value - final_value) * (1 + np.cos(np.pi * iters / len(iters)))
 
-        assert len(self.schedule) == self.max_epochs
-        # self.schedule.cuda()
-
-    def __call__(self, ep) :
-        return self.schedule[ep]
+    schedule = np.concatenate((warmup_schedule, schedule))
+    assert len(schedule) == epochs
+    return schedule

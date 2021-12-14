@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from einops import repeat, rearrange
 import torchvision
 from model.networks.light_renderer import LightRenderer
+import math
+import sys
 
 class KLDivergence(nn.Module):
 
@@ -15,7 +17,7 @@ class KLDivergence(nn.Module):
         kl_loss = -0.5 * torch.sum(kl_loss, dim=-1)
         kl_loss = torch.mean(kl_loss)
 
-        return dict(kl_div=kl_loss)
+        return kl_loss
 
 ########################################################################################################################
 
@@ -80,13 +82,54 @@ class GANLoss(nn.Module):
                 loss = prediction.mean()
         return loss
 
+def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', constant=1.0, lambda_gp=10.0):
+    """Calculate the gradient penalty loss, used in WGAN-GP paper https://arxiv.org/abs/1704.00028
+    Arguments:
+        netD (network)              -- discriminator network
+        real_data (tensor array)    -- real images
+        fake_data (tensor array)    -- generated images from the generator
+        device (str)                -- GPU / CPU: from torch.device('cuda:{}'.format(self.gpu_ids[0])) if self.gpu_ids else torch.device('cpu')
+        type (str)                  -- if we mix real and fake data or not [real | fake | mixed].
+        constant (float)            -- the constant used in formula ( | |gradient||_2 - constant)^2
+        lambda_gp (float)           -- weight for this loss
+    Returns the gradient penalty loss
+    """
+    if lambda_gp > 0.0:
+        if type == 'real':   # either use real images, fake images, or a linear interpolation of two.
+            interpolatesv = real_data
+        elif type == 'fake':
+            interpolatesv = fake_data
+        elif type == 'mixed':
+            alpha = torch.rand(real_data.shape[0], 1)
+            alpha = alpha.expand(real_data.shape[0], real_data.nelement() // real_data.shape[0]).contiguous().view(*real_data.shape)
+            alpha = alpha.to(device)
+            interpolatesv = alpha * real_data + ((1 - alpha) * fake_data)
+        else:
+            raise NotImplementedError('{} not implemented'.format(type))
+        interpolatesv.requires_grad_(True)
+        disc_interpolates = netD(interpolatesv)
+        gradients = torch.autograd.grad(outputs=disc_interpolates, inputs=interpolatesv,
+                                        grad_outputs=torch.ones(disc_interpolates.size()).to(device),
+                                        create_graph=True, retain_graph=True, only_inputs=True)
+        gradients = gradients[0].view(real_data.size(0), -1)  # flat the data
+        gradient_penalty = (((gradients + 1e-16).norm(2, dim=1) - constant) ** 2).mean() * lambda_gp        # added eps
+        return gradient_penalty, gradients
+    else:
+        return 0.0, None
+
 
 ########################################################################################################################
-class MSECalculator :
+class ReconstructionLoss(nn.Module):
 
-    def __init__(self, loss_weights) :
-        self.MSE = nn.MSELoss(reduction='mean')
+    def __init__(self, mode='l2') :
+        super(ReconstructionLoss, self).__init__()
 
+        if mode == 'l2':
+            self.criterion = nn.MSELoss(reduction='mean')
+        elif mode == 'l1':
+            self.criterion = nn.L1Loss(reduction='mean')
+        else:
+            raise NotImplementedError()
     def __call__(self,
                  predictions,
                  targets,
@@ -111,38 +154,39 @@ class MSECalculator :
         target_color = targets[:, :, 5:]
 
         # Compute losses
-        mse_position = self.MSE(preds_position, target_position)
-        mse_size = self.MSE(preds_size, target_size)
-        mse_theta = self.MSE(preds_theta, target_theta)
-        mse_color = self.MSE(preds_color, target_color)
+        mse_position = self.criterion(preds_position, target_position)
+        mse_size = self.criterion(preds_size, target_size)
+        mse_theta = self.criterion(preds_theta, target_theta)
+        mse_color = self.criterion(preds_color, target_color)
 
-        #
-        losses = dict(
-            mse_position = mse_position,
-            mse_size = mse_size,
-            mse_theta = mse_theta,
-            mse_color = mse_color)
-
-        return losses
+        return mse_position, mse_size, mse_theta, mse_color
 
 ########################################################################################################################
-class ReferenceImageLoss:
+class ReferenceImageLoss(nn.Module):
+    def __init__(self, mode='l2', use_renderer=True, meta_brushes_path=None, canvas_size=None):
+        super(ReferenceImageLoss, self).__init__()
 
-    def __init__(self, render=False, meta_brushes_path=None, canvas_size=None):
-
-        self.render = render # Set to render the strokes during training
-
-        if not self.render:
+        self.use_renderer = use_renderer
+        if not self.use_renderer:
+            # use the color of the reference image underlying the stroke
             self.blur = torchvision.transforms.GaussianBlur(kernel_size=(7, 7))
             reduction = 'mean'
         else:
+            # render the strokes
             self.renderer = LightRenderer(brushes_path=meta_brushes_path, canvas_size=canvas_size)
             reduction = 'none'
 
-        self.MSE = nn.MSELoss(reduction=reduction)
-    def __call__(self, predictions, ref_imgs, isEval=False):
+        # Criterion
+        if mode == 'l2' :
+            self.criterion = nn.MSELoss(reduction=reduction)
+        elif mode == 'l1' :
+            self.criterion = nn.L1Loss(reduction=reduction)
+        else :
+            raise NotImplementedError()
 
-        if not self.render:
+    def __call__(self, predictions, ref_imgs):
+
+        if not self.use_renderer:
             preds_position = predictions[:, :, :2]
             preds_color = predictions[:, :, 5:]
 
@@ -151,12 +195,19 @@ class ReferenceImageLoss:
             grid = rearrange(preds_position, 'bs L dim -> (bs L) 1 1 dim')
             target_color_img = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False)
             target_color_img = rearrange(target_color_img, '(bs L) ch 1 1 -> bs L ch', L=predictions.size(1))
-
-            loss = self.MSE(preds_color, target_color_img) * self.weight
+            loss = self.criterion(preds_color, target_color_img)
+            return loss
         else:
-            ref_imgs = repeat(ref_imgs, 'bs ch h w -> bs L ch h w', L=predictions.size(1))
-            strokes, area = self.renderer(predictions)
-            loss = torch.sum(self.MSE(strokes, ref_imgs), dim=[2,3,4]) / torch.sum(area, dim=[2,3,4])
-            loss = torch.mean(loss) * self.weight
+            ref_imgs = torch.repeat_interleave(ref_imgs, repeats=predictions.size(1), dim=0)
+            brush, alphas = self.renderer(predictions)
 
-        return dict(mse_color_img=loss)
+            area = alphas.sum(dim=[2, 3], keepdim=True) # sum over spatial dimensions
+            area = torch.clamp(area, min=1) # TODO: fix here
+            loss = self.criterion(brush, ref_imgs) * alphas
+            loss = loss.sum(dim=[2, 3]) / area   # sum over spatial dimension and normalize by area
+
+            loss = loss.mean()   # average over channels and batch size
+            if not math.isfinite(loss):
+                sys.exit('Loss is nan, stop training')
+            else:
+                return loss

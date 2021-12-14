@@ -1,0 +1,90 @@
+dataset :
+  root : /data/eperuzzo/IBG_dataset/
+  csv_file : /data/eperuzzo/IBG_dataset/dataset_config.csv
+  partition : oxford_pet_dataset
+  heuristic : lkh_col2_area1_pos0_cl7
+  resize : 256
+  context_length : 10
+  sequence_length : 8
+  use_images : True
+  sampling:
+    active : False
+    threshold: 0
+    prob: 0
+model:
+  model_type : gan
+  d_model : 256
+  n_strokes_params : 8
+  ctx_z : cat
+  activation_last_layer : identity
+  encoder_pe: old
+  decoder_pe : sine
+  img_encoder:
+    type : patchembed
+    visual_feat_hw : 16
+    visual_feat_dim : 256
+    hres_feat_hw : 16
+    hres_feat_dim : 256
+  context_encoder:
+    canvas_strokes : add
+    act : gelu
+    n_heads : 4
+    n_layers : 8
+    ff_dim : 1024
+  encoder:
+    act : gelu
+    n_heads : 4
+    n_layers : 6
+    ff_dim : 1024
+  decoder:
+    type: 1_step
+    act : gelu
+    n_heads : 4
+    n_layers : 6
+    ff_dim : 1024
+train:
+  n_epochs : 1000
+  gpu_id : 0
+  batch_size : 32
+  num_workers : 4
+  seed : 1432
+  amp_enabled : False
+  optimizer:
+    max_lr : 1.0e-4
+    min_lr : 1.0e-4
+    warmup_lr : 1.0e-6
+    warmup_ep : 20
+    wd : 1.0e-4
+    clip_grad : 5.0
+  losses:
+    gan:
+      mode: lsgan
+      weight:
+        G : 1.0
+        D : 1.0
+    kl:
+      weight: 2.5e-3
+      warmup_epochs : 50
+    reconstruction:
+      mode: l2
+      weight:
+        position : 1.0
+        size : 1.0
+        theta : 1.0
+        color : 0.05
+    reference_img:
+      use_renderer: False
+      mode : l2
+      weight: 5.0
+  logging:
+    wandb_api_key : 5745461314f5f4abb2c957bb991d2df97144ba06
+    checkpoint_path : /data/eperuzzo/prove/
+    save_freq : 100
+    print_freq : 10
+    eval_every : 5
+renderer:
+  brushes_path:
+    large_vertical: /data/eperuzzo/brushstrokes-generation/dataset_acquisition/decomposition/brushes/brush_fromweb2_large_vertical.png
+    large_horizontal: /data/eperuzzo/brushstrokes-generation/dataset_acquisition/decomposition/brushes/brush_fromweb2_large_horizontal.png
+  painter_config : /data/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config.yaml
+  freq : 1

@@ -144,4 +144,7 @@ gallery/*
 .idea/*
 */__pycache__/*
 __pycache__/
-.slurm/*
+slurm/
+configs/train/conf*.yaml
+configs/eval/conf*.yaml
+evaluation/content/

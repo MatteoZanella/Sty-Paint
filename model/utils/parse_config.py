@@ -13,7 +13,7 @@ class ConfigParser:
 
     def parse_config(self, args):
         if self.isTrain:
-            assert self.config["model"]["encoder"]["canvas_strokes"] == 'proj' or self.config["model"]["encoder"]["canvas_strokes"] == 'add'
+            assert self.config["model"]["context_encoder"]["canvas_strokes"] == 'proj' or self.config["model"]["context_encoder"]["canvas_strokes"] == 'add'
             assert self.config["model"]["ctx_z"] == 'proj' or self.config["model"]["ctx_z"] == 'cat'
             assert self.config["dataset"]["partition"] == 'ade_dataset' or self.config["dataset"]["partition"] == 'oxford_pet_dataset'
             # assert self.config["model"]["encoder_pe"] == 'sine' or self.config["model"]["encoder_pe"] == '3dsine'

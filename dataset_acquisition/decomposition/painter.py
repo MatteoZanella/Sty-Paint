@@ -281,51 +281,6 @@ class Painter(PainterBase):
         self.net_G.eval()
         print(f'Painter created, weights form: {args.renderer_checkpoint_dir}, eval mode: True')
 
-    def load_style_image(self):
-        style_img = cv2.imread(self.img_path, cv2.IMREAD_COLOR)
-        self.style_img_ = cv2.cvtColor(style_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.
-        self.style_img = cv2.blur(cv2.resize(self.style_img_, (128, 128)), (2, 2))
-        self.style_img = torch.tensor(self.style_img).permute([2, 0, 1]).unsqueeze(0).to(device)
-
-    def _backward_x(self):
-
-        self.G_loss = 0
-        self.G_loss += self.args.beta_L1 * self._pxl_loss(
-            canvas=self.G_final_pred_canvas, gt=self.img_batch)
-        if self.args.with_ot_loss:
-            self.G_loss += self.args.beta_ot * self._sinkhorn_loss(
-                self.G_final_pred_canvas, self.img_batch)
-
-        # with torch.no_grad():
-        #     canvas = utils.patches2img(
-        #         self.G_final_pred_canvas, self.m_grid, to_numpy=False).to(device)
-        #     style_img = utils.patches2img(self.img_batch, self.m_grid, to_numpy=False).to(device)
-        #
-        #     assert canvas.shape == style_img.shape
-        #     content_loss = self._content_loss(canvas, style_img)
-        #     style_loss = self._style_loss(canvas, style_img)
-        #
-        #     """
-        #     style_loss = 0.0
-        #     content_loss = 0.0
-        #     N = self.G_final_pred_canvas.shape[0]
-        #     for i in range(N):
-        #         gi = self.G_final_pred_canvas[i].unsqueeze(0)
-        #         ii = self.img_batch[i].unsqueeze(0)
-        #         style_loss += self._style_loss(gi, ii)
-        #         content_loss += self._content_loss(gi, ii)
-        #     style_loss /= N
-        #     content_loss /= N
-        #     #style_loss = self._style_loss(canvas, self.style_img)
-        #     #content_loss = self._content_loss(canvas, self.style_img)
-        #     """
-        # self.loss_dict['pixel_loss'].append(self.G_loss.item())
-        # self.loss_dict['style_loss'].append(style_loss.item())
-        # self.loss_dict['content_loss'].append(content_loss.item())
-
-        self.G_loss.backward()
-
-
     def manual_set_number_strokes_per_block(self, id):
         self.m_strokes_per_block = self.manual_strokes_per_block[id]
 
@@ -481,14 +436,6 @@ class Painter(PainterBase):
         self.input_aspect_ratio = self.img_.shape[0] / self.img_.shape[1]
         self.img_ = cv2.resize(self.img_, (self.net_G.out_size * self.max_divide,
                                            self.net_G.out_size * self.max_divide), cv2.INTER_AREA)
-
-        # self._style_loss = loss.VGGStyleLoss(transfer_mode=1,
-        #                                      resize=False)  # 0 to transfer only color, > 0 texture and color
-        # self._content_loss = loss.VGGPerceptualLoss(resize=False)
-        self.loss_dict = {'pixel_loss': [],
-                          'style_loss': [],
-                          'content_loss': []}
-        #self.load_style_image()
         # --------------------------------------------------------------------------------------------------------------
         print('begin drawing...')
 

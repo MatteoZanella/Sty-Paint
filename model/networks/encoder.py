@@ -2,12 +2,20 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-from layers import PEWrapper, PositionalEncoding
+from .layers import PEWrapper, PositionalEncoding
 
-class VAEEncoder(nn.Module):
+
+def reparameterize(mu, log_sigma):
+    sigma = log_sigma.mul(0.5).exp_()
+    eps = torch.randn_like(sigma)
+    z = eps.mul(sigma).add_(mu)
+
+    return z
+
+class Encoder(nn.Module):
 
     def __init__(self, config):
-        super(VAEEncoder, self).__init__()
+        super(Encoder, self).__init__()
 
         self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
@@ -37,11 +45,11 @@ class VAEEncoder(nn.Module):
         self.encoder = nn.TransformerDecoder(
             decoder_layer=nn.TransformerDecoderLayer(
                 d_model=self.d_model,
-                nhead=config["model"]["vae_encoder"]["n_heads"],
-                dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
-                activation=config["model"]["vae_encoder"]["act"],
+                nhead=config["model"]["encoder"]["n_heads"],
+                dim_feedforward=config["model"]["encoder"]["ff_dim"],
+                activation=config["model"]["encoder"]["act"],
             ),
-            num_layers=config["model"]["vae_encoder"]["n_layers"])
+            num_layers=config["model"]["encoder"]["n_layers"])
 
     def forward(self, data, context):
 
@@ -66,5 +74,5 @@ class VAEEncoder(nn.Module):
         x = self.encoder(x, context)
         mu = x[0]  # first element of the seq
         log_sigma = x[1]  # second element of the seq
-
-        return mu, log_sigma
+        z = reparameterize(mu, log_sigma)
+        return z, mu, log_sigma

@@ -4,7 +4,7 @@ import pickle as pkl
 
 from model.utils.utils import dict_to_device, AverageMeter
 from model.utils.parse_config import ConfigParser
-from model import model, model_2_steps
+from model import build_model
 from model.dataset import StrokesDataset
 from torch.utils.data import DataLoader
 
@@ -56,9 +56,9 @@ def compute_color_difference(x):
 if __name__ == '__main__' :
     # Extra parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint1", type=str, required=True)
-    parser.add_argument("--checkpoint2", type=str, required=True)
-    parser.add_argument("--config", default='/home/eperuzzo/brushstrokes-generation/configs/train/sibiu_config.yaml')
+    parser.add_argument("--model_checkpoint", type=str, required=True)
+    #parser.add_argument("--checkpoint2", type=str, required=True)
+    parser.add_argument("--config", default='/home/eperuzzo/brushstrokes-generation/configs/train/conf_sibiu.yaml')
 
     parser.add_argument("--output_path", type=str, default='/home/eperuzzo/eval_metrics/')
     parser.add_argument("--checkpoint_baseline", type=str,
@@ -77,8 +77,11 @@ if __name__ == '__main__' :
     config = c_parser.get_config()
     print(config)
 
-    # Create dataset_acquisition
-    device = config["device"]
+    # Seed
+    seed = 1234
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    torch.backends.cudnn.benchmark = True
 
     # Test
     dataset_test = StrokesDataset(config, isTrain=False)
@@ -90,21 +93,15 @@ if __name__ == '__main__' :
     render_config = load_painter_config(config["render"]["painter_config"])
     renderer = Painter(args=render_config)
 
-    net1 = model_2_steps.InteractivePainter(config)
-    print(f'==> Loading model form {args.checkpoint1}')
-    net1.load_state_dict(torch.load(args.checkpoint1, map_location=device)["model"])
-    net1.to(config["device"])
-    net1.eval()
-
-    net2 = model_2_steps.InteractivePainter(config)
-    print(f'==> Loading model form {args.checkpoint2}')
-    net2.load_state_dict(torch.load(args.checkpoint2, map_location=device)["model"])
-    net2.to(config["device"])
-    net2.eval()
+    model = build_model(config)
+    print(f'==> Loading model form {args.model_checkpoint}')
+    model.load_state_dict(torch.load(args.model_checkpoint)["model"])
+    model.cuda()
+    model.eval()
 
     models = dict(
-        our = net1.eval(),
-        our_plus = net2.eval(),
+        our = model.eval(),
+        #our_plus = net2.eval(),
         paint_transformer = PaddlePT(model_path=args.checkpoint_baseline, config=render_config))
 
     n_files = len(dataset_test) * args.n_iters_dataloader
@@ -121,19 +118,19 @@ if __name__ == '__main__' :
     for key in models.keys():
         average_meters.update({key : dict(
                            fd = FDMetricIncremental(),
-                           dtw = AverageMeter(name='dtw'),
-                           masked_l2=AverageMeter(name='Masked L2 / Area'),
-                           fvd = AverageMeter(name="fvd"),
-                           lpips=AverageMeter(name='lpips'),
-                           feature_div=AverageMeter(name='features_div'),
-                           color_l1=AverageMeter(name='avg'),
-                           color_l2 = AverageMeter(name='avg'),
-                           wd=AverageMeter(name='wd'))})
+                           dtw = AverageMeter(),
+                           masked_l2=AverageMeter(),
+                           fvd = AverageMeter(),
+                           lpips=AverageMeter(),
+                           feature_div=AverageMeter(),
+                           color_l1=AverageMeter(),
+                           color_l2 = AverageMeter(),
+                           wd=AverageMeter())})
 
     average_meters.update({'original' : dict(
-        masked_l2 = AverageMeter(name='Masked L2 / Area'),
-        color_l1 = AverageMeter(name='avg'),
-        color_l2 = AverageMeter(name='avg'),
+        masked_l2 = AverageMeter(),
+        color_l1 = AverageMeter(),
+        color_l2 = AverageMeter(),
     )})
     # average_meters.update({'model_sc' : dict(
     #     fd = FDMetricIncremental(),
@@ -149,7 +146,7 @@ if __name__ == '__main__' :
         print(f'Iter : {iter} / {args.n_iters_dataloader}')
         for idx, batch in enumerate(test_loader):
             print(f'{idx} / {len(test_loader)}')
-            data = dict_to_device(batch, device, to_skip=['strokes', 'time_steps'])
+            data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])
             targets = data['strokes_seq']
             starting_point = batch['canvas'][0].permute(1,2,0).cpu().numpy()
             bs = targets.size(0)

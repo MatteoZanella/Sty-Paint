@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-from layers import PEWrapper, PositionalEncoding
+from .layers import PEWrapper, PositionalEncoding
 
 class Discriminator(nn.Module):
 
@@ -29,8 +29,8 @@ class Discriminator(nn.Module):
         trunc_normal_(self.cls_token, std=0.02)
 
         # Define Encoder and Decoder
-        self.net = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(
+        self.net = nn.TransformerDecoder(
+            decoder_layer=nn.TransformerDecoderLayer(
                 d_model=self.d_model,
                 nhead=config["model"]["vae_encoder"]["n_heads"],
                 dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
@@ -42,8 +42,7 @@ class Discriminator(nn.Module):
         self.head = nn.Linear(self.d_model, 1)
 
 
-    def forward(self, x):
-
+    def forward(self, x, context):
         # Project strokes
         x = rearrange(x, 'bs L dim -> L bs dim')
 
@@ -55,7 +54,7 @@ class Discriminator(nn.Module):
         x = torch.cat((cls_token, x), dim=0)  # (T+2) x bs x d_model
 
         # Encode the input
-        x = self.net(x)
+        x = self.net(x, context)
         x = self.norm(x[0])  # grab class token
         x = self.head(x)
 

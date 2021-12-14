@@ -204,6 +204,11 @@ class FVD:
         :param generated_observations: (bs, observations_count, height, width, channels) tensor with generated observations
         :return: The FVD between the two distributions
         '''
+        bs, L, h, w, c = reference_observations.shape
+        if L < 9:
+            pad = np.zeros((bs, 9-L, h, w, c))
+            reference_observations = np.concatenate((reference_observations, pad), axis=1)
+            generated_observations = np.concatenate((generated_observations, pad), axis=1)
 
         # Multiples of 16 must be fes to the embeddings network
         embedding_batch_size = 16

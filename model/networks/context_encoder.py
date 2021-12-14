@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-from image_encoders import resnet18, ConvEncoder
-from layers import PEWrapper, PositionalEncoding
+from .image_encoders import resnet18, ConvEncoder, PatchEmbed
+from .layers import PEWrapper, PositionalEncoding
 
 
 class ContextEncoder(nn.Module) :
@@ -27,15 +27,25 @@ class ContextEncoder(nn.Module) :
         trunc_normal_(self.stroke_token, std=0.02)
 
         if config["model"]["img_encoder"]["type"] == 'resnet18':
-            self.img_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
-                                        layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
-            self.canvas_encoder = resnet18(pretrained=config["model"]["img_encoder"]["pretrained"],
-                                           layers_to_remove=config["model"]["img_encoder"]["layers_to_remove"])
-        else:
+            self.img_encoder = resnet18(pretrained=True,
+                                        layers_to_remove=['layer4', 'fc'])
+            self.canvas_encoder = resnet18(pretrained=True,
+                                           layers_to_remove=['layer4', 'fc'])
+        elif config["model"]["img_encoder"]["type"] == 'convenc':
             self.img_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
                                            features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
             self.canvas_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
                                               features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
+
+        elif config["model"]["img_encoder"]["type"] == 'patchembed':
+            self.img_encoder = PatchEmbed(img_size=config["dataset"]["resize"], patch_size=16,
+                                          in_chans=3, embed_dim=config["model"]["img_encoder"]["visual_feat_dim"],
+                                          norm_layer=None, flatten=False)
+            self.canvas_encoder = PatchEmbed(img_size=config["dataset"]["resize"], patch_size=16,
+                                          in_chans=3, embed_dim=config["model"]["img_encoder"]["visual_feat_dim"],
+                                          norm_layer=None, flatten=False)
+        else:
+            raise NotImplementedError("Encoder not available")
 
         self.conv_proj = nn.Conv2d(in_channels=2 * config["model"]["img_encoder"]["visual_feat_dim"],
                                    out_channels=self.d_model,
@@ -47,11 +57,11 @@ class ContextEncoder(nn.Module) :
         self.transformer_encoder = nn.TransformerEncoder(
                                     encoder_layer=nn.TransformerEncoderLayer(
                                     d_model=config["model"]["d_model"],
-                                    nhead=config["model"]["encoder"]["n_heads"],
-                                    dim_feedforward=config["model"]["encoder"]["ff_dim"],
-                                    activation=config["model"]["encoder"]["act"],
+                                    nhead=config["model"]["context_encoder"]["n_heads"],
+                                    dim_feedforward=config["model"]["context_encoder"]["ff_dim"],
+                                    activation=config["model"]["context_encoder"]["act"],
                                     ),
-                                    num_layers=config["model"]["encoder"]["n_layers"])
+                                    num_layers=config["model"]["context_encoder"]["n_layers"])
 
 
     def forward(self, data) :

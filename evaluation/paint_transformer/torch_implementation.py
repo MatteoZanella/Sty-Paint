@@ -132,7 +132,7 @@ class PaintTransformer:
 
     def generate(self, data):
         bs = data['img'].shape[0]
-        out = torch.empty([bs, 8, 11])
+        out = torch.empty([bs, 8, 8])
         for b in range(bs) :
             res = self.main(data['img'][b], data['canvas'][b],  data['strokes_ctx'][b])
             out[b] = res
@@ -158,9 +158,6 @@ class PaintTransformer:
 
     def main(self, original_img, canvas_start, strokes_ctx):
 
-        patch_size = 32
-        stroke_num = 8
-
         # Crop input
         st_point, ws = self.get_ctx(strokes_ctx[None])
         x1, x2, y1, y2 = render_utils.get_bbox(st_point, ws, self.input_size)
@@ -172,7 +169,7 @@ class PaintTransformer:
         params, decision = self.predict(original, canvas_start)
         params = params.squeeze()
 
-        params = torch.cat((params, params[:, -3:]), dim=-1)  # replicate the color, add a 0 for transparency, note that it won't be used
+        #params = torch.cat((params, params[:, -3:]), dim=-1)  # replicate the color, add a 0 for transparency, note that it won't be used
         params[:, 0] = (params[:, 0] * ws + x1) / self.input_size
         params[:, 1] = (params[:, 1] * ws + y1) / self.input_size
         params[:, 2] = (params[:, 2] * ws) / self.input_size
@@ -184,10 +181,6 @@ class PaintTransformer:
 
         patch_size = self.patch_size
         with torch.no_grad():
-            #original_h, original_w = original_img.shape[-2:]
-            K = 0
-            #original_img_pad_size = patch_size * (2 ** K)
-            #original_img_pad = pad(original_img, original_img_pad_size, original_img_pad_size)
             final_result = canvas_start
             layer_size = patch_size
             layer = 0
