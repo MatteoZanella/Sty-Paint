@@ -29,7 +29,7 @@ class GANModel(nn.Module) :
 
         # Generator
         self.context_encoder = context_encoder.ContextEncoder(config)
-        self.vae_decoder = decoder.Decoder(config)
+        self.decoder = decoder.Decoder(config)
 
         # Discriminator
         self.netD = discriminator.Discriminator(config)
@@ -57,7 +57,7 @@ class GANModel(nn.Module) :
         self.n_iters_per_epoch = n_iters_per_epoch
 
         self.netG_params = list(self.context_encoder.parameters()) + \
-                           list(self.vae_decoder.parameters())
+                           list(self.decoder.parameters())
 
         self.optimizerG = AdamW(params=self.netG_params,
                                lr=self.config["train"]["optimizer"]["max_lr"],
@@ -119,7 +119,7 @@ class GANModel(nn.Module) :
 
         _, bs, dim = context.shape
         random_z = torch.randn((bs, dim), device=context.device)
-        fake_data_random = self.vae_decoder(z=random_z,
+        fake_data_random = self.decoder(z=random_z,
                                             context=context,
                                             visual_features=visual_features,
                                             seq_length=seq_length)
@@ -161,7 +161,8 @@ class GANModel(nn.Module) :
 
         # 2 - reference image loss
         random_loss_reference_img = self.criterionRefImg(predictions=prediction["fake_data_random"],
-                                                  ref_imgs=batch['img'])
+                                                         ref_imgs=batch['img'],
+                                                         canvas_start=batch['canvas'])
 
         # sum all the losses
         total_loss_G = random_loss_reference_img * self.weights["reference_img"] + \
@@ -210,7 +211,9 @@ class GANModel(nn.Module) :
         predictions = self.forward(batch)
 
         # Random z
-        random_loss_reference_img = self.criterionRefImg(predictions["fake_data_random"], batch['img'])
+        random_loss_reference_img = self.criterionRefImg(predictions=predictions["fake_data_random"],
+                                                         ref_imgs=batch['img'],
+                                                         canvas_start=batch['canvas'])
         random_color_diff_l1, random_color_diff_l2 = compute_color_difference(predictions["fake_data_random"])
 
         # Reference dataset

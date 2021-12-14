@@ -174,8 +174,8 @@ class ReferenceImageLoss(nn.Module):
         else:
             # render the strokes
             self.renderer = LightRenderer(brushes_path=meta_brushes_path, canvas_size=canvas_size)
-            reduction = 'none'
-
+            #reduction = 'none'
+            reduction = 'mean'
         # Criterion
         if mode == 'l2' :
             self.criterion = nn.MSELoss(reduction=reduction)
@@ -184,7 +184,7 @@ class ReferenceImageLoss(nn.Module):
         else :
             raise NotImplementedError()
 
-    def __call__(self, predictions, ref_imgs):
+    def __call__(self, predictions, ref_imgs, canvas_start=None):
 
         if not self.use_renderer:
             preds_position = predictions[:, :, :2]
@@ -198,15 +198,14 @@ class ReferenceImageLoss(nn.Module):
             loss = self.criterion(preds_color, target_color_img)
             return loss
         else:
-            ref_imgs = torch.repeat_interleave(ref_imgs, repeats=predictions.size(1), dim=0)
-            brush, alphas = self.renderer(predictions)
-
-            area = alphas.sum(dim=[2, 3], keepdim=True) # sum over spatial dimensions
-            area = torch.clamp(area, min=1) # TODO: fix here
-            loss = self.criterion(brush, ref_imgs) * alphas
-            loss = loss.sum(dim=[2, 3]) / area   # sum over spatial dimension and normalize by area
-
-            loss = loss.mean()   # average over channels and batch size
+            #ref_imgs = repeat(ref_imgs, 'bs ch h w -> bs L ch h w', L=predictions.size(1))
+            # area = alphas.sum(dim=[2, 3], keepdim=True) # sum over spatial dimensions
+            # area = torch.clamp(area, min=1) # TODO: fix here
+            # loss = self.criterion(brush, ref_imgs) * alphas
+            # loss = loss.sum(dim=[2, 3]) / area   # sum over spatial dimension and normalize by area
+            # loss = loss.mean()   # average over channels and batch size
+            rec = self.renderer.render_all(predictions, canvas_start)
+            loss = self.criterion(rec, ref_imgs)
             if not math.isfinite(loss):
                 sys.exit('Loss is nan, stop training')
             else:

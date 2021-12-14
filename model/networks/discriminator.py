@@ -32,11 +32,11 @@ class Discriminator(nn.Module):
         self.net = nn.TransformerDecoder(
             decoder_layer=nn.TransformerDecoderLayer(
                 d_model=self.d_model,
-                nhead=config["model"]["vae_encoder"]["n_heads"],
-                dim_feedforward=config["model"]["vae_encoder"]["ff_dim"],
-                activation=config["model"]["vae_encoder"]["act"],
+                nhead=config["model"]["decoder"]["n_heads"],
+                dim_feedforward=config["model"]["decoder"]["ff_dim"],
+                activation=config["model"]["decoder"]["act"],
             ),
-            num_layers=config["model"]["vae_encoder"]["n_layers"] // 2)
+            num_layers=config["model"]["decoder"]["n_layers"] // 2)
 
         self.norm = nn.LayerNorm(self.d_model)
         self.head = nn.Linear(self.d_model, 1)

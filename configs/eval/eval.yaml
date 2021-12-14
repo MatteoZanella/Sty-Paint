@@ -1,8 +1,8 @@
 dataset :
-  root: '/home/eperuzzo/IBG_dataset'
-  csv_file: '/home/eperuzzo/IBG_dataset/dataset_test_config.csv'
-  partition: 'oxford_pet_dataset'
-  heuristic: 'lkh_col2_area1_pos0_cl7'
+  root : '/home/eperuzzo/IBG_dataset/'
+  csv_file : '/home/eperuzzo/IBG_dataset/dataset_debug.csv'
+  partition : 'oxford_pet_dataset'
+  heuristic : 'lkh_col2_area1_pos0_cl7'
   resize : 256
   context_length : 10
   sequence_length : 8
@@ -12,42 +12,41 @@ dataset :
     threshold: 0
     prob: 0
 model:
-  model_type : 'full'
+  model_type : vae
   d_model : 256
   n_strokes_params : 8
-  ctx_z : 'cat'
-  activation_last_layer : 'identity'
-  encoder_pe: 'old'
-  decoder_pe : 'sine'
+  ctx_z : cat
+  activation_last_layer : identity
+  encoder_pe: old
+  decoder_pe : sine
   img_encoder:
-    type : 'convenc'
-    pretrained : True
-    layers_to_remove : ['fc', 'layer4']
+    type : patchembed
     visual_feat_hw : 16
     visual_feat_dim : 256
-    hres_feat_hw : 64
-    hres_feat_dim : 64
-  encoder:
-    canvas_strokes : 'add'
-    act : 'gelu'
+    hres_feat_hw : 16
+    hres_feat_dim : 256
+  context_encoder:
+    canvas_strokes : add
+    act : gelu
     n_heads : 4
     n_layers : 8
     ff_dim : 1024
-  vae_encoder:
-    act : 'gelu'
+  encoder:
+    act : gelu
     n_heads : 4
     n_layers : 6
     ff_dim : 1024
-  vae_decoder:
-    act : 'gelu'
+  decoder:
+    type: 1_step
+    act : gelu
     n_heads : 4
     n_layers : 6
     ff_dim : 1024
 train:
-  n_epochs : 500
+  n_epochs : 1000
   gpu_id : 0
   batch_size : 32
-  num_workers : 8
+  num_workers : 4
   seed : 1432
   amp_enabled : False
   optimizer:
@@ -55,20 +54,37 @@ train:
     min_lr : 1.0e-4
     warmup_lr : 1.0e-6
     warmup_ep : 20
-    wd : 1.0e-6
-    clip_grad : 10.0
-  kl:
-    warmup_type : 'cosine'
-    warm_up_epochs : 50
-    kl_lambda : 1.0e-4
-  auto_resume:
-    active : False
-    resume_path : ''
+    wd : 1.0e-4
+    clip_grad : 5.0
+  losses:
+    gan:
+      mode: None
+      weight:
+        G : 0.0
+        D : 0.0
+    kl:
+      weight: 2.5e-3
+      warmup_epochs : 50
+    reconstruction:
+      mode: l2
+      weight:
+        position : 1.0
+        size : 1.0
+        theta : 1.0
+        color : 0.05
+    reference_img:
+      use_renderer: True
+      mode : l2
+      weight: 0.1
   logging:
-    wandb_api_key: "5745461314f5f4abb2c957bb991d2df97144ba06"
-    checkpoint_path: '/data/eperuzzo/model_checkpoints/'
-    save_freq: 1000
-    print_freq: 10
-render:
-  painter_config : '/home/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config_sibiu.yaml'
+    wandb_api_key : "5745461314f5f4abb2c957bb991d2df97144ba06"
+    checkpoint_path : '/home/eperuzzo/ablation/'
+    save_freq : 100
+    print_freq : 10
+    eval_every : 1
+renderer:
+  brushes_path:
+    large_vertical: '/home/eperuzzo/brushstrokes-generation/dataset_acquisition/decomposition/brushes/brush_fromweb2_large_vertical.png'
+    large_horizontal: '/home/eperuzzo/brushstrokes-generation/dataset_acquisition/decomposition/brushes/brush_fromweb2_large_horizontal.png'
+  painter_config : '/home/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config.yaml'
   freq : 1

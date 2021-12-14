@@ -125,7 +125,8 @@ class VAEModel(nn.Module) :
                                                                         targets=batch["strokes_seq"])
         # 3 - reference image loss
         loss_reference_img = self.criterionRefImg(predictions=prediction["fake_data_encoded"],
-                                                    ref_imgs=batch['img'])
+                                                  ref_imgs=batch['img'],
+                                                  canvas_start=batch['canvas'])
 
         # sum all the losses
         total_loss_G = loss_position * self.weights['position'] + \
@@ -166,13 +167,18 @@ class VAEModel(nn.Module) :
 
         # Random z
         random_loss_position, random_loss_size, random_loss_theta, random_loss_color = self.criterionRec(predictions["fake_data_random"], batch['strokes_seq'])
-        random_loss_reference_img = self.criterionRefImg(predictions["fake_data_random"], batch['img'])
+        random_loss_reference_img = self.criterionRefImg(predictions=predictions["fake_data_random"],
+                                                         ref_imgs=batch['img'],
+                                                         canvas_start=batch['canvas'])
         random_color_diff_l1, random_color_diff_l2 = compute_color_difference(predictions["fake_data_random"])
 
         # Encoded z
         enc_loss_position, enc_loss_size, enc_loss_theta, enc_loss_color = self.criterionRec(predictions["fake_data_encoded"],
                                                                                         batch['strokes_seq'])
-        enc_loss_reference_img = self.criterionRefImg(predictions["fake_data_encoded"], batch['img'])
+        enc_loss_reference_img = self.criterionRefImg(predictions=predictions["fake_data_encoded"],
+                                                      ref_imgs=batch['img'],
+                                                      canvas_start=batch['canvas'])
+
         enc_color_diff_l1, enc_color_diff_l2 = compute_color_difference(predictions["fake_data_encoded"])
 
         # Reference dataset

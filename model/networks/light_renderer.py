@@ -83,7 +83,7 @@ class LightRenderer:
         return foregrounds, alphas
 
 
-    def render_all(self, param):
+    def render_all(self, param, canvas_start):
         bs, L, dim = param.shape
         param = param.reshape(bs * L, dim)
         foregrounds, alphas = self.param2stroke(param)
@@ -97,7 +97,7 @@ class LightRenderer:
         alphas = alphas.reshape(bs, L, 3, self.H, self.W)
 
         # Render all the strokes on the same canvas
-        rec = torch.zeros((bs, 3, self.H, self.W), device=foregrounds.device)
+        rec = canvas_start.clone()
         for j in range(foregrounds.shape[1]) :
             foreground = foregrounds[:, j, :, :, :]
             alpha = alphas[:, j, :, :, :]
@@ -106,15 +106,12 @@ class LightRenderer:
         return rec
 
     def param2stroke(self, param):
-        # clamp parameters
-        #param = torch.clamp(param, min=0, max=1)
-
         # param: b, 12
         b = param.shape[0]
         param_list = torch.split(param, 1, dim=1)
         x0, y0, w, h, theta = [item.squeeze(-1) for item in param_list[:5]]
         R0, G0, B0= param_list[5 :]
-        R2, G2, B2 = R0, G0, B0
+        #R2, G2, B2 = R0, G0, B0
         sin_theta = torch.sin(torch.acos(torch.tensor(-1., device=param.device)) * theta)
         cos_theta = torch.cos(torch.acos(torch.tensor(-1., device=param.device)) * theta)
         index = torch.full((b,), -1, device=param.device)
@@ -131,9 +128,13 @@ class LightRenderer:
         brush = self.meta_brushes[index.long()]
         alphas = torch.cat([brush, brush, brush], dim=1)
         alphas = (alphas > 0).float()
-        t = torch.arange(0, brush.shape[2], device=param.device).unsqueeze(0) / brush.shape[2]
-        color_map = torch.stack([R0 * (1 - t) + R2 * t, G0 * (1 - t) + G2 * t, B0 * (1 - t) + B2 * t], dim=1)
-        color_map = color_map.unsqueeze(-1).repeat(1, 1, 1, brush.shape[3])
+        # uncomment to interpolate between colors as in SNP
+        #t = torch.arange(0, brush.shape[2], device=param.device).unsqueeze(0) / brush.shape[2]
+        #color_map = torch.stack([R0 * (1 - t) + R2 * t, G0 * (1 - t) + G2 * t, B0 * (1 - t) + B2 * t], dim=1)
+        # color_map = color_map.unsqueeze(-1).repeat(1, 1, 1, brush.shape[3])
+        color_map = torch.stack([R0, G0, B0], dim=1)
+        color_map = color_map.unsqueeze(-1).repeat(1, 1, brush.shape[2], brush.shape[3])
+
         brush = brush * color_map
 
         warp_00 = cos_theta / w
@@ -148,7 +149,6 @@ class LightRenderer:
         grid = torch.nn.functional.affine_grid(warp, torch.Size((b, 3, self.H, self.W)), align_corners=False)
         brush = torch.nn.functional.grid_sample(brush, grid, align_corners=False)
         alphas = torch.nn.functional.grid_sample(alphas, grid, align_corners=False)
-        #alphas = (alphas > 0).float()  # binarize
 
         # decision
         # decision = torch.logical_and(h != 0, w != 0)
