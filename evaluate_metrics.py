@@ -28,13 +28,19 @@ warnings.filterwarnings("ignore")
 def eval_model(batch, net, metric_logger, fd, is_our=True):
 
     global renderer
+    model.eval()
 
-    if is_our:
-        predictions = net(data, sample_z=True)["fake_data_random"]
-    else:
-        predictions = net.generate(data)
+    print(f'Model is trianing: {model.training}')
+    with torch.no_grad():
+        if is_our:
+            predictions = net(data, sample_z=True)["fake_data_random"]
+        else:
+            predictions = net.generate(data)
 
     predictions = etools.check_strokes(predictions)   # clamp in range [0,1]
+    if torch.is_tensor(predictions):
+        predictions = predictions.cpu().numpy()
+
     visuals = etools.render_frames(predictions, batch, renderer)
 
     # color difference
@@ -63,7 +69,7 @@ if __name__ == '__main__' :
 
     parser.add_argument("--output_path", type=str, default='/home/eperuzzo/eval_metrics/')
     parser.add_argument("--checkpoint_baseline", type=str,
-                        default='/home/eperuzzo/PaintTransformer/inference/paint_best.pdparams')
+                        default='/home/eperuzzo/PaintTransformerPaddle/inference/paint_best.pdparams')
     parser.add_argument('--lpips', action='store_true')
     parser.add_argument('--fvd', action='store_true')
     parser.add_argument("--n_samples_lpips", type=int, default=3,
@@ -91,7 +97,7 @@ if __name__ == '__main__' :
 
     # ======= Create Models ========================
     # Renderer (Stylized Neural Painting)
-    render_config = load_painter_config(config["render"]["painter_config"])
+    render_config = load_painter_config(config["renderer"]["painter_config"])
     renderer = Painter(args=render_config)
 
     model = build_model(config)

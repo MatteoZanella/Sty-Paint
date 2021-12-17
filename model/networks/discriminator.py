@@ -4,10 +4,11 @@ from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
 from .layers import PEWrapper, PositionalEncoding
 
-class Discriminator(nn.Module):
 
+
+class TransformerDiscriminator(nn.Module):
     def __init__(self, config):
-        super(Discriminator, self).__init__()
+        super(TransformerDiscriminator, self).__init__()
 
         self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
@@ -35,6 +36,7 @@ class Discriminator(nn.Module):
                 nhead=config["model"]["decoder"]["n_heads"],
                 dim_feedforward=config["model"]["decoder"]["ff_dim"],
                 activation=config["model"]["decoder"]["act"],
+                dropout=config["model"]["dropout"]
             ),
             num_layers=config["model"]["decoder"]["n_layers"] // 2)
 
@@ -59,3 +61,40 @@ class Discriminator(nn.Module):
         x = self.head(x)
 
         return x
+
+# =========================================================================================
+class Conv1dDiscriminator(nn.Module):
+
+    def __init__(self, config) :
+        super(Conv1dDiscriminator, self).__init__()
+        self.s_params = config["model"]["n_strokes_params"]
+        self.seq_length = config["dataset"]["sequence_length"]
+
+        self.net = nn.Conv1d(in_channels=self.s_params, out_channels=1, kernel_size=self.seq_length)
+
+
+    def forward(self, x):
+        x = rearrange(x, 'bs L dim -> bs dim L')
+        x = self.net(x)
+        return x.squeeze(1)
+
+# =========================================================================================
+class Discriminator(nn.Module):
+
+    def __init__(self, config):
+        super(Discriminator, self).__init__()
+        self.disc_type = config["model"]["discriminator"]["type"]
+        if self.disc_type == 'transformer':
+            self.net = TransformerDiscriminator(config)
+        elif self.disc_type == 'conv1d':
+            self.net = Conv1dDiscriminator(config)
+        else:
+            raise NotImplementedError()
+
+    def forward(self, x, context):
+        if self.disc_type == "transformer":
+            return self.net(x, context)
+        elif self.disc_type == "conv1d":
+            return self.net(x)
+        else:
+            raise NotImplementedError()

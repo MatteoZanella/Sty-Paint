@@ -62,6 +62,7 @@ class LightRenderer:
         self.W = canvas_size
         meta_brushes = self.load_meta_brushes(brushes_path)
         self.meta_brushes = meta_brushes.cuda()
+        self.morph = False
 
     def load_meta_brushes(self, path):
 
@@ -89,8 +90,9 @@ class LightRenderer:
         foregrounds, alphas = self.param2stroke(param)
 
         # Morph
-        foregrounds = Dilation2d(m=1)(foregrounds)
-        alphas = Erosion2d(m=1)(alphas)
+        if self.morph:
+            foregrounds = Dilation2d(m=1)(foregrounds)
+            alphas = Erosion2d(m=1)(alphas)
 
         # Reshape
         foregrounds = foregrounds.reshape(bs, L, 3, self.H, self.W)

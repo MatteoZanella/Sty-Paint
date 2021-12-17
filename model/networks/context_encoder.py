@@ -60,6 +60,7 @@ class ContextEncoder(nn.Module) :
                                     nhead=config["model"]["context_encoder"]["n_heads"],
                                     dim_feedforward=config["model"]["context_encoder"]["ff_dim"],
                                     activation=config["model"]["context_encoder"]["act"],
+                                    dropout=config["model"]["dropout"]
                                     ),
                                     num_layers=config["model"]["context_encoder"]["n_layers"])
 

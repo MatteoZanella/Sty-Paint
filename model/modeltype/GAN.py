@@ -152,6 +152,21 @@ class GANModel(nn.Module) :
 
         prediction = self.forward(batch)
 
+        ## ========= Train Discriminator
+        set_requires_grad([self.netD], True)
+        self.optimizerD.zero_grad()  # maybe we should divide the optimizers
+        random_loss_D = self.step_D(fake=prediction["fake_data_random"],
+                                    real=batch["strokes_seq"],
+                                    context=prediction["context"])
+
+        total_loss_D = random_loss_D * self.weights['D']
+
+        total_loss_D.backward()
+        grad_normD = torch.nn.utils.clip_grad_norm_(self.netD.parameters(),
+                                                    self.config["train"]["optimizer"]["clip_grad"])
+        self.optimizerD.step()
+        self.LRSchedulerD.step_update(epoch * self.n_iters_per_epoch + idx)
+
         ## ========= Train Generator / Encoder
         self.optimizerG.zero_grad()
 
@@ -173,21 +188,6 @@ class GANModel(nn.Module) :
                                                     self.config["train"]["optimizer"]["clip_grad"])
         self.optimizerG.step()
         self.LRSchedulerG.step_update(epoch * self.n_iters_per_epoch + idx)
-
-        ## ========= Train Discriminator
-        set_requires_grad([self.netD], True)
-        self.optimizerD.zero_grad()  # maybe we should divide the optimizers
-        random_loss_D = self.step_D(fake=prediction["fake_data_random"],
-                                    real=batch["strokes_seq"],
-                                    context=prediction["context"])
-
-        total_loss_D = random_loss_D * self.weights['D']
-
-        total_loss_D.backward()
-        grad_normD = torch.nn.utils.clip_grad_norm_(self.netD.parameters(),
-                                                    self.config["train"]["optimizer"]["clip_grad"])
-        self.optimizerD.step()
-        self.LRSchedulerD.step_update(epoch * self.n_iters_per_epoch + idx)
 
         # merge losses and loss info in two dicts
         log_losses = dict(

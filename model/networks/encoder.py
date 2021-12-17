@@ -48,6 +48,7 @@ class Encoder(nn.Module):
                 nhead=config["model"]["encoder"]["n_heads"],
                 dim_feedforward=config["model"]["encoder"]["ff_dim"],
                 activation=config["model"]["encoder"]["act"],
+                dropout=config["model"]["dropout"]
             ),
             num_layers=config["model"]["encoder"]["n_layers"])
 

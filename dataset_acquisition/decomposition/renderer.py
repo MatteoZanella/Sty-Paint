@@ -294,23 +294,24 @@ class Renderer():
 
         # xc, yc, w, h, theta, R0, G0, B0, R2, G2, B2, A
         x0, y0, w, h, theta = self.stroke_params[0:5]
-        R0, G0, B0, R2, G2, B2 = self.stroke_params[5:]  # remove ALPHA
+        R0, G0, B0 = self.stroke_params[5:]  # remove ALPHA
+        R2, G2, B2 = R0, G0, B0
         x0 = _normalize(x0, self.CANVAS_WIDTH)
         y0 = _normalize(y0, self.CANVAS_WIDTH)
         w = (int)(1 + w * self.CANVAS_WIDTH)
         h = (int)(1 + h * self.CANVAS_WIDTH)
         theta = np.pi*theta
 
-        if w * h / (self.CANVAS_WIDTH**2) > 0.1:
-            if h > w:
-                brush = self.brush_large_vertical
-            else:
-                brush = self.brush_large_horizontal
+        #if w * h / (self.CANVAS_WIDTH**2) > 0.1:
+        if h > w:
+            brush = self.brush_large_vertical
         else:
-            if h > w:
-                brush = self.brush_small_vertical
-            else:
-                brush = self.brush_small_horizontal
+            brush = self.brush_large_horizontal
+        #else:
+        #    if h > w:
+        #        brush = self.brush_small_vertical
+        #    else:
+        #        brush = self.brush_small_horizontal
         self.foreground, self.stroke_alpha_map = utils.create_transformed_brush(
             brush, self.CANVAS_WIDTH, self.CANVAS_WIDTH,
             x0, y0, w, h, theta, R0, G0, B0, R2, G2, B2)

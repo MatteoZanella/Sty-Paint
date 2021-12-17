@@ -34,13 +34,13 @@ class Decoder1Step(nn.Module):
         if self.ctx_z == 'proj' :
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
 
-        # Divide the decoder in 2 modules
         self.decoder = nn.TransformerDecoder(
             decoder_layer=nn.TransformerDecoderLayer(
                 d_model=self.d_model,
                 nhead=config["model"]["decoder"]["n_heads"],
                 dim_feedforward=config["model"]["decoder"]["ff_dim"],
                 activation=config["model"]["decoder"]["act"],
+                dropout=config["model"]["dropout"]
             ),
             num_layers=config["model"]["decoder"]["n_layers"])
 
@@ -99,6 +99,7 @@ class Decoder2Step(nn.Module):
                 nhead=config["model"]["decoder"]["n_heads"],
                 dim_feedforward=config["model"]["decoder"]["ff_dim"],
                 activation=config["model"]["decoder"]["act"],
+                dropout=config["model"]["dropout"]
             ),
             num_layers=config["model"]["decoder"]["n_layers"])
 
@@ -116,6 +117,7 @@ class Decoder2Step(nn.Module):
                 nhead=config["model"]["decoder"]["n_heads"],
                 dim_feedforward=config["model"]["decoder"]["ff_dim"],
                 activation=config["model"]["decoder"]["act"],
+                dropout=config["model"]["dropout"]
             ),
             num_layers=config["model"]["decoder"]["n_layers"])
 

@@ -88,10 +88,10 @@ class Trainer :
         stats.update(log_meters.get_avg(header='test/'))
 
         # Compute FD from stored features
-        _, fd_z_random = fd_z_random.compute_fd()
+        fd_z_random = fd_z_random.compute_fd()
         stats.update({f'test/random_fd_{k}' : v for k, v in fd_z_random.items()})
         if fd_z_encoded.original_features:
-            _, fd_z_encoded = fd_z_encoded.compute_fd()
+            fd_z_encoded = fd_z_encoded.compute_fd()
             stats.update({f'test/enc_fd_{k}' : v for k, v in fd_z_encoded.items()})
 
         return stats
