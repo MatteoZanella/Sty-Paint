@@ -29,16 +29,32 @@ class TransformerDiscriminator(nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
         trunc_normal_(self.cls_token, std=0.02)
 
-        # Define Encoder and Decoder
-        self.net = nn.TransformerDecoder(
-            decoder_layer=nn.TransformerDecoderLayer(
-                d_model=self.d_model,
-                nhead=config["model"]["decoder"]["n_heads"],
-                dim_feedforward=config["model"]["decoder"]["ff_dim"],
-                activation=config["model"]["decoder"]["act"],
-                dropout=config["model"]["dropout"]
-            ),
-            num_layers=config["model"]["decoder"]["n_layers"] // 2)
+        # Number of blocks
+        self.num_layers = config["model"]["discriminator"]["num_layers"]
+
+        # If set, the discriminator takes as input only the sequence of strokes to classify
+        self.encoder_only = config["model"]["discriminator"]["encoder_only"]
+
+        if config["model"]["discriminator"]["encoder_only"]:
+            self.net = nn.TransformerEncoder(
+                encoder_layer=nn.TransformerEncoderLayer(
+                    d_model=self.d_model,
+                    nhead=config["model"]["decoder"]["n_heads"],
+                    dim_feedforward=config["model"]["decoder"]["ff_dim"],
+                    activation=config["model"]["decoder"]["act"],
+                    dropout=config["model"]["dropout"]
+                ),
+                num_layers=self.num_layers)
+        else:
+            self.net = nn.TransformerDecoder(
+                decoder_layer=nn.TransformerDecoderLayer(
+                    d_model=self.d_model,
+                    nhead=config["model"]["decoder"]["n_heads"],
+                    dim_feedforward=config["model"]["decoder"]["ff_dim"],
+                    activation=config["model"]["decoder"]["act"],
+                    dropout=config["model"]["dropout"]
+                ),
+                num_layers=self.num_layers)
 
         self.norm = nn.LayerNorm(self.d_model)
         self.head = nn.Linear(self.d_model, 1)
@@ -56,7 +72,11 @@ class TransformerDiscriminator(nn.Module):
         x = torch.cat((cls_token, x), dim=0)  # (T+2) x bs x d_model
 
         # Encode the input
-        x = self.net(x, context)
+        if self.encoder_only:
+            x = self.net(x)
+        else:
+            x = self.net(x, context)
+
         x = self.norm(x[0])  # grab class token
         x = self.head(x)
 
@@ -69,13 +89,27 @@ class Conv1dDiscriminator(nn.Module):
         super(Conv1dDiscriminator, self).__init__()
         self.s_params = config["model"]["n_strokes_params"]
         self.seq_length = config["dataset"]["sequence_length"]
+        self.num_layers = config["model"]["discriminator"]["num_layers"]
 
-        self.net = nn.Conv1d(in_channels=self.s_params, out_channels=1, kernel_size=self.seq_length)
+        self.blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv1d(in_channels=self.s_params * (2 ** i),
+                          out_channels=self.s_params * (2 ** (i + 1)),
+                          kernel_size=3,
+                          padding=1),
+                nn.BatchNorm1d(self.s_params * (2 ** (i + 1))))
+            for i in range(self.num_layers)])
+
+        self.head = nn.Conv1d(in_channels=self.s_params * (2 ** (self.num_layers)),
+                              out_channels=1,
+                              kernel_size=self.seq_length)
 
 
     def forward(self, x):
         x = rearrange(x, 'bs L dim -> bs dim L')
-        x = self.net(x)
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.head(x)
         return x.squeeze(1)
 
 # =========================================================================================

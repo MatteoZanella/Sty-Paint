@@ -198,13 +198,7 @@ class ReferenceImageLoss(nn.Module):
             loss = self.criterion(preds_color, target_color_img)
             return loss
         else:
-            #ref_imgs = repeat(ref_imgs, 'bs ch h w -> bs L ch h w', L=predictions.size(1))
-            # area = alphas.sum(dim=[2, 3], keepdim=True) # sum over spatial dimensions
-            # area = torch.clamp(area, min=1) # TODO: fix here
-            # loss = self.criterion(brush, ref_imgs) * alphas
-            # loss = loss.sum(dim=[2, 3]) / area   # sum over spatial dimension and normalize by area
-            # loss = loss.mean()   # average over channels and batch size
-            rec = self.renderer.render_all(predictions, canvas_start)
+            rec = self.renderer(predictions, canvas_start)
             loss = self.criterion(rec, ref_imgs)
             if not math.isfinite(loss):
                 sys.exit('Loss is nan, stop training')

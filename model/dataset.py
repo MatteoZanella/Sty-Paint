@@ -216,12 +216,13 @@ class EvalDataset(Dataset):
         t_C, t, t_T = self.sample_strokes(all_strokes.shape[0])
         strokes = all_strokes[t_C:t_T, :]
         data = {
-            'strokes_ctx': strokes[:self.context_length, :],
-            'strokes_seq': strokes[self.context_length :, :]}
+            'strokes_ctx': strokes[:self.context_length, :],   # context strokes
+            'strokes_seq': strokes[self.context_length :, :]}  # ground truth strokes
         # ---------
         if self.use_images:
             # Load rendered image up to s
             canvas = self.load_canvas_states(name, t-1)
+            final_canvas = self.load_canvas_states(name, t_T)
             # ---------
             # Load Image
             img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
@@ -229,6 +230,7 @@ class EvalDataset(Dataset):
 
             data.update({
                 'canvas': canvas,
+                'final_canvas': final_canvas,
                 'img': img})
 
         if not self.isTrain:

@@ -73,18 +73,8 @@ class LightRenderer:
 
         return torch.cat([brush_large_vertical, brush_large_horizontal], dim=0)
 
-    def __call__(self, param):
-        bs, L, dim = param.shape
-        param = param.reshape(bs * L, dim)
-        foregrounds, alphas = self.param2stroke(param)
-        # foregrounds = foregrounds.reshape(bs, L, 3, self.H, self.W)
-        # alphas = alphas.reshape(bs, L, 3, self.H, self.W)
-        # valid_stroke = (valid_stroke * 1.0).reshape(bs, L)
 
-        return foregrounds, alphas
-
-
-    def render_all(self, param, canvas_start):
+    def __call__(self, param, canvas_start):
         bs, L, dim = param.shape
         param = param.reshape(bs * L, dim)
         foregrounds, alphas = self.param2stroke(param)
@@ -106,6 +96,16 @@ class LightRenderer:
             rec = foreground * alpha + rec * (1 - alpha)
 
         return rec
+
+    def render_single_strokes(self, param):
+        bs, L, dim = param.shape
+        param = param.reshape(bs * L, dim)
+        foregrounds, alphas = self.param2stroke(param)
+        # foregrounds = foregrounds.reshape(bs, L, 3, self.H, self.W)
+        # alphas = alphas.reshape(bs, L, 3, self.H, self.W)
+        # valid_stroke = (valid_stroke * 1.0).reshape(bs, L)
+
+        return foregrounds, alphas
 
     def param2stroke(self, param):
         # param: b, 12

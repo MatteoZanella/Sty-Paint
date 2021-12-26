@@ -70,7 +70,9 @@ class VAEGANModel(nn.Module) :
 
         self.optimizerG = AdamW(params=self.netG_params,
                                lr=self.config["train"]["optimizer"]["max_lr"],
-                               weight_decay=self.config["train"]["optimizer"]['wd'])
+                               weight_decay=self.config["train"]["optimizer"]['wd'],
+                                betas=(self.config["train"]["optimizer"]["beta_1"],
+                                       self.config["train"]["optimizer"]["beta_2"]))
 
         self.LRSchedulerG = CosineLRScheduler(
                                             self.optimizerG,
@@ -85,7 +87,9 @@ class VAEGANModel(nn.Module) :
 
         self.optimizerD = AdamW(params=self.netD.parameters(),
                                 lr=self.config["train"]["optimizer"]["max_lr"],
-                                weight_decay=self.config["train"]["optimizer"]['wd'])
+                                weight_decay=self.config["train"]["optimizer"]['wd'],
+                                betas=(self.config["train"]["optimizer"]["beta_1"],
+                                       self.config["train"]["optimizer"]["beta_2"]))
 
         self.LRSchedulerD = CosineLRScheduler(
                                             self.optimizerD,

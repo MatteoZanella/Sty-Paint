@@ -6,6 +6,7 @@ from torch.optim import AdamW
 from timm.scheduler.cosine_lr import CosineLRScheduler
 from model.training.losses import ReferenceImageLoss
 from model.training.losses import GANLoss, cal_gradient_penalty
+from model.networks.light_renderer import LightRenderer
 from evaluation.metrics import compute_color_difference
 
 def set_requires_grad(nets, requires_grad=False) :
@@ -46,7 +47,7 @@ class GANModel(nn.Module) :
 
         # Additional info
         self.loss_names = ["random_loss_reference_img", "random_loss_G", "random_loss_D"]
-        self.logs_names = ["lrG", "grad_normG", "lrD", "grad_normD"]
+        self.logs_names = ["lrG", "grad_normG", "lrD", "grad_normD", "p_real", "p_fake"]
         self.weights = {} # set by trainer
 
         self.eval_metrics_names = ['random_loss_reference_img', 'random_color_l2', 'random_color_l1']
@@ -61,7 +62,9 @@ class GANModel(nn.Module) :
 
         self.optimizerG = AdamW(params=self.netG_params,
                                lr=self.config["train"]["optimizer"]["max_lr"],
-                               weight_decay=self.config["train"]["optimizer"]['wd'])
+                               weight_decay=self.config["train"]["optimizer"]['wd'],
+                               betas=(self.config["train"]["optimizer"]["beta_1"],
+                                      self.config["train"]["optimizer"]["beta_2"]))
 
         self.LRSchedulerG = CosineLRScheduler(
                                             self.optimizerG,
@@ -75,14 +78,16 @@ class GANModel(nn.Module) :
                                         )
 
         self.optimizerD = AdamW(params=self.netD.parameters(),
-                                lr=self.config["train"]["optimizer"]["max_lr"],
-                                weight_decay=self.config["train"]["optimizer"]['wd'])
+                                lr=self.config["train"]["optimizer"]["max_lr"] / self.config["model"]["discriminator"]["scale_lr"],
+                                weight_decay=self.config["train"]["optimizer"]['wd'],
+                                betas=(self.config["train"]["optimizer"]["beta_1"],
+                                       self.config["train"]["optimizer"]["beta_2"]))
 
         self.LRSchedulerD = CosineLRScheduler(
                                             self.optimizerD,
                                             t_initial=int(self.config["train"]["n_epochs"] * self.n_iters_per_epoch),
                                             t_mul=1.,
-                                            lr_min=self.config["train"]["optimizer"]["min_lr"],
+                                            lr_min=self.config["train"]["optimizer"]["min_lr"]  / self.config["model"]["discriminator"]["scale_lr"],
                                             warmup_lr_init=self.config["train"]["optimizer"]["warmup_lr"],
                                             warmup_t=int(self.config["train"]["optimizer"]["warmup_ep"] * self.n_iters_per_epoch),
                                             cycle_limit=1,
@@ -144,7 +149,11 @@ class GANModel(nn.Module) :
                                            fake_data=fake.detach(),
                                            real_data=real,
                                            device=real.device)[0]
-        return loss_D
+
+        p_real = torch.sigmoid(pred_real)
+        p_fake = torch.sigmoid(pred_fake)
+
+        return loss_D, p_real, p_fake
 
 
 
@@ -154,10 +163,11 @@ class GANModel(nn.Module) :
 
         ## ========= Train Discriminator
         set_requires_grad([self.netD], True)
-        self.optimizerD.zero_grad()  # maybe we should divide the optimizers
-        random_loss_D = self.step_D(fake=prediction["fake_data_random"],
-                                    real=batch["strokes_seq"],
-                                    context=prediction["context"])
+        self.optimizerD.zero_grad()
+
+        random_loss_D, p_real, p_fake  = self.step_D(fake=prediction["fake_data_random"],
+                                                    real=batch["strokes_seq"],
+                                                    context=prediction["context"])
 
         total_loss_D = random_loss_D * self.weights['D']
 
@@ -200,7 +210,9 @@ class GANModel(nn.Module) :
             lrG=self.optimizerG.param_groups[0]["lr"],
             grad_normG=grad_normG.item(),
             lrD=self.optimizerD.param_groups[0]["lr"],
-            grad_normD=grad_normD.item())
+            grad_normD=grad_normD.item(),
+            p_real = p_real.detach().mean(),
+            p_fake = p_fake.detach().mean())
 
         return log_losses, log_info
 

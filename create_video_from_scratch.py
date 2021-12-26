@@ -125,9 +125,9 @@ if __name__ == '__main__' :
 
             # Update context
             ctx = batch['strokes_ctx'] # copy
-            ctx = torch.roll(ctx, shifts=args.L, dims=1)   # shift the context by the number of predicted strokes
-            ctx[:, :L, :] = torch.flip(preds, dims=(1,))[:, :ctx_len, :]  # FIFO
-
+            diff = ctx_len - args.L
+            ctx = torch.roll(ctx, shifts=diff, dims=1)   # shift the context by the number of predicted strokes
+            ctx[:, diff:, :] = preds[:, :, :]
             batch = {
                 'img' : ref_img,
                 'canvas' : torch.tensor((this_frame), dtype=ref_img.dtype).unsqueeze(0).permute(0, 3, 1, 2),
