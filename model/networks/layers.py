@@ -1,10 +1,8 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import math
 from einops import rearrange, repeat
 import torch.nn.functional as F
-from timm.models.layers import trunc_normal_
 
 
 ########################################################################################################################
@@ -33,7 +31,7 @@ class PEWrapper :
     def bilinear_sampling_length_first(self, feat, pos) :
         n_strokes, bs, _ = pos.shape
         feat_temp = repeat(feat, 'ch h w -> n_reps ch h w', n_reps=n_strokes * bs)
-        grid = rearrange(pos, 'L bs p -> (L bs) 1 1 p')
+        grid = rearrange(pos, 'L bs p -> (L bs) 1 1 p').detach()
 
         pooled_features = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='bicubic')
         pooled_features = rearrange(pooled_features, '(L bs) ch 1 1 -> L bs ch', L=n_strokes)
@@ -150,34 +148,3 @@ class PositionalEncoding:
         # Cat
         pe = torch.cat((pe, time_pe), dim=-1)
         return pe[:, :, :self.d_model].to(device)
-
-
-########################################################################################################################
-class SequenceDiscriminator(nn.Module) :
-    def __init__(self, config) :
-        super(SequenceDiscriminator, self).__init__()
-        self.d_model = config["model"]["d_model"]
-
-        self.net = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(
-                d_model=config["model"]["d_model"],
-                nhead=config["model"]["encoder"]["n_heads"],
-                dim_feedforward=config["model"]["encoder"]["ff_dim"],
-                activation=config["model"]["encoder"]["act"],
-            ),
-            num_layers=config["model"]["vae_decoder"]["n_layers"] // 2)
-
-
-        self.cls_token = nn.Parameter(torch.randn(1, 1, self.d_model))
-        trunc_normal_(self.mu, std=0.02)
-
-        self.head = nn.Linear(self.d_model, 1)
-
-    def forward(self, inp):
-        # input is (bs, L, params)
-        inp = rearrange(inp, 'bs L dim -> L bs dim') # length first
-        x = torch.cat((self.cls_token, inp), dim=0)   # concatenate along lenght dims
-        x = self.net(x)
-        preds = self.head(x[0]) # use the class token
-
-        return preds

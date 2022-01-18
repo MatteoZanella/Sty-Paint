@@ -82,7 +82,7 @@ class GANLoss(nn.Module):
                 loss = prediction.mean()
         return loss
 
-def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', constant=1.0, lambda_gp=10.0):
+def cal_gradient_penalty(netD, real_data, fake_data, device, context = None, type='mixed', constant=1.0, lambda_gp=10.0):
     """Calculate the gradient penalty loss, used in WGAN-GP paper https://arxiv.org/abs/1704.00028
     Arguments:
         netD (network)              -- discriminator network
@@ -107,11 +107,11 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', const
         else:
             raise NotImplementedError('{} not implemented'.format(type))
         interpolatesv.requires_grad_(True)
-        disc_interpolates = netD(interpolatesv)
+        disc_interpolates = netD(interpolatesv, context=context)
         gradients = torch.autograd.grad(outputs=disc_interpolates, inputs=interpolatesv,
                                         grad_outputs=torch.ones(disc_interpolates.size()).to(device),
                                         create_graph=True, retain_graph=True, only_inputs=True)
-        gradients = gradients[0].view(real_data.size(0), -1)  # flat the data
+        gradients = gradients[0].reshape(real_data.size(0), -1)  # flat the data
         gradient_penalty = (((gradients + 1e-16).norm(2, dim=1) - constant) ** 2).mean() * lambda_gp        # added eps
         return gradient_penalty, gradients
     else:
@@ -162,20 +162,60 @@ class ReconstructionLoss(nn.Module):
         return mse_position, mse_size, mse_theta, mse_color
 
 ########################################################################################################################
-class ReferenceImageLoss(nn.Module):
-    def __init__(self, mode='l2', use_renderer=True, meta_brushes_path=None, canvas_size=None):
-        super(ReferenceImageLoss, self).__init__()
+class ColorImageLoss(nn.Module):
+    def __init__(self, mode='l2'):
+        super(ColorImageLoss, self).__init__()
+        self.blur = torchvision.transforms.GaussianBlur(kernel_size=(7, 7))
 
-        self.use_renderer = use_renderer
-        if not self.use_renderer:
-            # use the color of the reference image underlying the stroke
-            self.blur = torchvision.transforms.GaussianBlur(kernel_size=(7, 7))
-            reduction = 'mean'
-        else:
+        # Criterion
+        if mode == 'l2' :
+            self.criterion = nn.MSELoss()
+        elif mode == 'l1' :
+            self.criterion = nn.L1Loss()
+        else :
+            raise NotImplementedError()
+
+    def __call__(self, predictions, ref_imgs):
+
+        preds_position = predictions[:, :, :2]
+        preds_color = predictions[:, :, 5:]
+
+        ref_imgs = self.blur(ref_imgs)
+        ref_imgs = repeat(ref_imgs, 'bs ch h w -> (bs L) ch h w', L=predictions.size(1))
+        grid = rearrange(preds_position, 'bs L dim -> (bs L) 1 1 dim').detach()
+        target_color_img = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False, padding_mode='border')
+        target_color_img = rearrange(target_color_img, '(bs L) ch 1 1 -> bs L ch', L=predictions.size(1))
+        loss = self.criterion(preds_color, target_color_img)
+
+        return loss
+
+
+######################################
+class RenderImageLoss(nn.Module):
+    def __init__(self, config):
+        super(RenderImageLoss, self).__init__()
+
+        self.type = config["train"]["losses"]["reference_img"]["render"]["type"]
+        self.active = config["train"]["losses"]["reference_img"]["render"]["weight"] > 0
+        mode = config["train"]["losses"]["reference_img"]["render"]["mode"]
+        meta_brushes_path = config["renderer"]["brushes_path"]
+        canvas_size = config["dataset"]["resize"]
+
+        if self.type == 'full':
+            print('Full loss')
             # render the strokes
             self.renderer = LightRenderer(brushes_path=meta_brushes_path, canvas_size=canvas_size)
-            #reduction = 'none'
+            # reduction = 'none'
             reduction = 'mean'
+        elif self.type == 'masked':
+            print('masked')
+            # render the strokes
+            self.renderer = LightRenderer(brushes_path=meta_brushes_path, canvas_size=canvas_size)
+            # reduction = 'none'
+            reduction = 'none'
+        else:
+            raise NotImplementedError()
+
         # Criterion
         if mode == 'l2' :
             self.criterion = nn.MSELoss(reduction=reduction)
@@ -186,21 +226,45 @@ class ReferenceImageLoss(nn.Module):
 
     def __call__(self, predictions, ref_imgs, canvas_start=None):
 
-        if not self.use_renderer:
-            preds_position = predictions[:, :, :2]
-            preds_color = predictions[:, :, 5:]
+        if not self.active:
+            return torch.tensor([0], device=predictions.device)
 
-            ref_imgs = self.blur(ref_imgs)
-            ref_imgs = repeat(ref_imgs, 'bs ch h w -> (bs L) ch h w', L=predictions.size(1))
-            grid = rearrange(preds_position, 'bs L dim -> (bs L) 1 1 dim')
-            target_color_img = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False)
-            target_color_img = rearrange(target_color_img, '(bs L) ch 1 1 -> bs L ch', L=predictions.size(1))
-            loss = self.criterion(preds_color, target_color_img)
-            return loss
-        else:
+        if self.type == 'full':
             rec = self.renderer(predictions, canvas_start)
             loss = self.criterion(rec, ref_imgs)
             if not math.isfinite(loss):
                 sys.exit('Loss is nan, stop training')
             else:
                 return loss
+        else:
+            ref_imgs = repeat(ref_imgs, 'bs ch h w -> bs L ch h w', L=predictions.size(1))
+            foregrounds, alphas = self.renderer.render_single_strokes(predictions)
+            loss = self.criterion(foregrounds, ref_imgs) * alphas
+            loss = loss.mean()
+
+            return loss
+##################################
+class PosColorLoss(nn.Module):
+    def __init__(self, mode='l2'):
+        super(PosColorLoss, self).__init__()
+        self.blur = torchvision.transforms.GaussianBlur(kernel_size=(7, 7))
+
+        # Criterion
+        if mode == 'l2' :
+            self.criterion = nn.MSELoss()
+        elif mode == 'l1' :
+            self.criterion = nn.L1Loss()
+        else :
+            raise NotImplementedError()
+
+    def __call__(self, predictions, ref_imgs):
+
+        preds_position = predictions[:, :, :2]
+
+        ref_imgs = self.blur(ref_imgs)
+        ref_imgs = repeat(ref_imgs, 'bs ch h w -> (bs L) ch h w', L=predictions.size(1))
+        grid = rearrange(preds_position, 'bs L dim -> (bs L) 1 1 dim')
+        gt_color = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False, padding_mode='border')
+        gt_color = rearrange(gt_color, '(bs L) ch 1 1 -> bs L ch', L=predictions.size(1))
+        loss = torch.pow(torch.diff(gt_color, dim=1), 2).mean()
+        return loss

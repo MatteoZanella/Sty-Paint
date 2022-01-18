@@ -99,10 +99,10 @@ class LightRenderer:
 
     def render_single_strokes(self, param):
         bs, L, dim = param.shape
-        param = param.reshape(bs * L, dim)
+        param = param.reshape(bs * L, dim).contiguous()
         foregrounds, alphas = self.param2stroke(param)
-        # foregrounds = foregrounds.reshape(bs, L, 3, self.H, self.W)
-        # alphas = alphas.reshape(bs, L, 3, self.H, self.W)
+        foregrounds = foregrounds.reshape(bs, L, 3, self.H, self.W)
+        alphas = alphas.reshape(bs, L, 3, self.H, self.W)
         # valid_stroke = (valid_stroke * 1.0).reshape(bs, L)
 
         return foregrounds, alphas

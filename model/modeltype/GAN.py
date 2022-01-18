@@ -4,7 +4,7 @@ import torch.nn as nn
 from model.networks import context_encoder, decoder, discriminator
 from torch.optim import AdamW
 from timm.scheduler.cosine_lr import CosineLRScheduler
-from model.training.losses import ReferenceImageLoss
+from model.training.losses import RenderImageLoss, ColorImageLoss
 from model.training.losses import GANLoss, cal_gradient_penalty
 from model.networks.light_renderer import LightRenderer
 from evaluation.metrics import compute_color_difference
@@ -36,17 +36,16 @@ class GANModel(nn.Module) :
         self.netD = discriminator.Discriminator(config)
 
         # Losses
-        self.criterionRefImg = ReferenceImageLoss(mode=config["train"]["losses"]["reference_img"]["mode"],
-                                                  use_renderer=config["train"]["losses"]["reference_img"]["use_renderer"],
-                                                  meta_brushes_path=config["renderer"]["brushes_path"],
-                                                  canvas_size=config["dataset"]["resize"])
+        self.criterionColorImg = ColorImageLoss(mode=config["train"]["losses"]["reference_img"]["mode"])
+        self.criterionRefImg = RenderImageLoss(config = self.config)
 
 
         self.gan_mode = config["train"]["losses"]["gan"]["mode"]
         self.criterionGAN = GANLoss(gan_mode=self.gan_mode)
 
         # Additional info
-        self.loss_names = ["random_loss_reference_img", "random_loss_G", "random_loss_D"]
+        self.loss_names = ["random_loss_reference_img_color", "random_loss_reference_img_render", "random_loss_G",
+                           "random_loss_D"]
         self.logs_names = ["lrG", "grad_normG", "lrD", "grad_normD", "p_real", "p_fake"]
         self.weights = {} # set by trainer
 
@@ -98,7 +97,8 @@ class GANModel(nn.Module) :
         self.weights = dict(
             G = self.config["train"]["losses"]["gan"]["weight"]["G"],
             D = self.config["train"]["losses"]["gan"]["weight"]["D"],
-            reference_img = self.config["train"]["losses"]["reference_img"]["weight"])
+            reference_img_color=self.config["train"]["losses"]["reference_img"]["color"]["weight"],
+            reference_img_render=self.config["train"]["losses"]["reference_img"]["render"]["weight"],)
 
     def save_checkpoint(self, epoch, filename=None):
         if filename is None :
@@ -144,10 +144,15 @@ class GANModel(nn.Module) :
         pred_real = self.netD(real, context.detach())
         loss_D_real = self.criterionGAN(pred_real, target_is_real=True)
         loss_D = loss_D_fake + loss_D_real
-        if self.gan_mode == 'wagan-gp' :
+
+        # context
+        if not self.config["model"]["discriminator"]["type"] == "transformer":
+            context = None
+        if self.gan_mode == 'wgangp' :
             loss_D += cal_gradient_penalty(netD=self.netD,
                                            fake_data=fake.detach(),
                                            real_data=real,
+                                           context=context.detach(),
                                            device=real.device)[0]
 
         p_real = torch.sigmoid(pred_real)
@@ -185,13 +190,16 @@ class GANModel(nn.Module) :
         random_loss_G = self.criterionGAN(self.netD(prediction["fake_data_random"], prediction["context"]), True)
 
         # 2 - reference image loss
-        random_loss_reference_img = self.criterionRefImg(predictions=prediction["fake_data_random"],
+        random_loss_reference_img_color = self.criterionColorImg(predictions=prediction["fake_data_random"],
+                                                                ref_imgs=batch['img'])
+        random_loss_reference_img_render = self.criterionRefImg(predictions=prediction["fake_data_random"],
                                                          ref_imgs=batch['img'],
                                                          canvas_start=batch['canvas'])
 
         # sum all the losses
-        total_loss_G = random_loss_reference_img * self.weights["reference_img"] + \
-                        random_loss_G * self.weights['G']
+        total_loss_G = random_loss_reference_img_color * self.weights["reference_img_color"] + \
+                       random_loss_reference_img_render * self.weights["reference_img_render"] + \
+                       random_loss_G * self.weights['G']
 
         total_loss_G.backward()
         grad_normG = torch.nn.utils.clip_grad_norm_(self.netG_params,
@@ -201,7 +209,8 @@ class GANModel(nn.Module) :
 
         # merge losses and loss info in two dicts
         log_losses = dict(
-            random_loss_reference_img=random_loss_reference_img.item(),
+            random_loss_reference_img_color=random_loss_reference_img_color.item(),
+            random_loss_reference_img_render=random_loss_reference_img_render.item(),
             random_loss_G=random_loss_G.item(),
             random_loss_D=random_loss_D.item())
 

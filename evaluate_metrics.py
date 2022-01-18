@@ -1,16 +1,18 @@
 import argparse
 import os
 import pickle as pkl
+import random
 
 from model.utils.utils import dict_to_device, AverageMetersDict
 from model.utils.parse_config import ConfigParser
 from model import build_model
 from model.dataset import StrokesDataset
 from torch.utils.data import DataLoader
+import torch
+import paddle
 
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
-import torch
 
 from evaluation.metrics import FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental
 from evaluation.metrics import maskedL2, compute_dtw, compute_color_difference
@@ -88,6 +90,8 @@ if __name__ == '__main__' :
     seed = 1234
     torch.manual_seed(seed)
     np.random.seed(seed)
+    random.seed(seed)
+    paddle.seed(seed)
     torch.backends.cudnn.benchmark = True
 
     # Test
@@ -102,7 +106,7 @@ if __name__ == '__main__' :
 
     model = build_model(config)
     print(f'==> Loading model form {args.model_checkpoint}')
-    model.load_state_dict(torch.load(args.model_checkpoint)["model"])
+    model.load_state_dict(torch.load(args.model_checkpoint)["model"], strict=True)
     model.cuda()
     model.eval()
 

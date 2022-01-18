@@ -4,7 +4,7 @@ import torch.nn as nn
 from model.networks import context_encoder, encoder, decoder
 from torch.optim import AdamW
 from timm.scheduler.cosine_lr import CosineLRScheduler
-from model.training.losses import KLDivergence, ReconstructionLoss, ReferenceImageLoss
+from model.training.losses import KLDivergence, ReconstructionLoss, RenderImageLoss, ColorImageLoss, PosColorLoss
 from evaluation.metrics import compute_color_difference
 from model.utils.utils import cosine_scheduler
 
@@ -17,17 +17,17 @@ class VAEModel(nn.Module) :
         self.vae_encoder = encoder.Encoder(config)
         self.vae_decoder = decoder.Decoder(config)
 
-
         # Losses
         self.KLDivergence = KLDivergence()
         self.criterionRec = ReconstructionLoss(mode=config["train"]["losses"]["reconstruction"]["mode"])
-        self.criterionRefImg = ReferenceImageLoss(mode=config["train"]["losses"]["reference_img"]["mode"],
-                                                  use_renderer=config["train"]["losses"]["reference_img"]["use_renderer"],
-                                                  meta_brushes_path=config["renderer"]["brushes_path"],
-                                                  canvas_size=config["dataset"]["resize"])
+        self.criterionColorImg = ColorImageLoss(mode=config["train"]["losses"]["reference_img"]["color"]["mode"])
+        self.criterionRefImg = RenderImageLoss(config = self.config)
+        self.criterionPosColor = PosColorLoss(mode = config["train"]["losses"]["reference_img"]["pos_color"]["mode"])
 
         # Additional info
-        self.loss_names = ["enc_loss_position", "enc_loss_color", "enc_loss_size", "enc_loss_theta", "enc_loss_reference_img", "kl_div"]
+        self.loss_names = ["enc_loss_position", "enc_loss_color", "enc_loss_size", "enc_loss_theta",
+                           "enc_loss_reference_img_color", "enc_loss_reference_img_pos_color", "enc_loss_reference_img_render",
+                           "kl_div"]
         self.logs_names = ["mu", "sigma", "kl_weight", "lrG", "grad_normG"]
 
         self.eval_metrics_names = ['random_loss_position', 'random_loss_size', 'random_loss_theta', 'random_loss_color',
@@ -65,11 +65,14 @@ class VAEModel(nn.Module) :
             size = self.config["train"]["losses"]["reconstruction"]["weight"]["size"],
             theta = self.config["train"]["losses"]["reconstruction"]["weight"]["theta"],
             color = self.config["train"]["losses"]["reconstruction"]["weight"]["color"],
-            reference_img = self.config["train"]["losses"]["reference_img"]["weight"],
+            reference_img_color=self.config["train"]["losses"]["reference_img"]["color"]["weight"],
+            reference_img_render = self.config["train"]["losses"]["reference_img"]["render"]["weight"],
+            reference_img_pos_color = self.config["train"]["losses"]["reference_img"]["pos_color"]["weight"],
             kl_div = cosine_scheduler(base_value=self.config["train"]["losses"]["kl"]["weight"],
-                                        final_value=self.config["train"]["losses"]["kl"]["weight"],
-                                        warmup_epochs=self.config["train"]["losses"]["kl"]["warmup_epochs"],
-                                        epochs = self.config["train"]["n_epochs"]))
+                                    final_value=self.config["train"]["losses"]["kl"]["weight"],
+                                    warmup_epochs=self.config["train"]["losses"]["kl"]["warmup_epochs"],
+                                    epochs = self.config["train"]["n_epochs"],
+                                    patience_epochs=self.config["train"]["losses"]["kl"]["patience_epochs"]))
 
     def save_checkpoint(self, epoch, filename=None):
         if filename is None :
@@ -124,16 +127,22 @@ class VAEModel(nn.Module) :
         loss_position, loss_size, loss_theta, loss_color = self.criterionRec(predictions=prediction["fake_data_encoded"],
                                                                         targets=batch["strokes_seq"])
         # 3 - reference image loss
-        loss_reference_img = self.criterionRefImg(predictions=prediction["fake_data_encoded"],
-                                                  ref_imgs=batch['img'],
-                                                  canvas_start=batch['canvas'])
+        loss_reference_img_color = self.criterionColorImg(predictions=prediction["fake_data_encoded"],
+                                                          ref_imgs=batch['img'])
+        loss_reference_img_render = self.criterionRefImg(predictions=prediction["fake_data_encoded"],
+                                                          ref_imgs=batch['img'],
+                                                          canvas_start=batch['canvas'])
+        loss_reference_img_pos_color = self.criterionPosColor(predictions=prediction["fake_data_encoded"],
+                                                                ref_imgs=batch['img'])
 
         # sum all the losses
         total_loss_G = loss_position * self.weights['position'] + \
                         loss_size * self.weights["size"] + \
                         loss_theta * self.weights["theta"] + \
                         loss_color * self.weights["color"] + \
-                        loss_reference_img * self.weights["reference_img"] + \
+                       loss_reference_img_color * self.weights["reference_img_color"] + \
+                       loss_reference_img_render * self.weights["reference_img_render"] + \
+                       loss_reference_img_pos_color * self.weights["reference_img_pos_color"] + \
                         kl_div * self.weights['kl_div'][epoch]
 
         total_loss_G.backward()
@@ -147,7 +156,9 @@ class VAEModel(nn.Module) :
             enc_loss_size = loss_size.item(),
             enc_loss_theta = loss_theta.item(),
             enc_loss_color= loss_color.item(),
-            enc_loss_reference_img = loss_reference_img.item(),
+            enc_loss_reference_img_color=loss_reference_img_color.item(),
+            enc_loss_reference_img_render = loss_reference_img_render.item(),
+            enc_loss_reference_img_pos_color = loss_reference_img_pos_color.item(),
             kl_div = kl_div.item())
 
         # additional info
@@ -175,9 +186,8 @@ class VAEModel(nn.Module) :
         # Encoded z
         enc_loss_position, enc_loss_size, enc_loss_theta, enc_loss_color = self.criterionRec(predictions["fake_data_encoded"],
                                                                                         batch['strokes_seq'])
-        enc_loss_reference_img = self.criterionRefImg(predictions=predictions["fake_data_encoded"],
-                                                      ref_imgs=batch['img'],
-                                                      canvas_start=batch['canvas'])
+        enc_loss_reference_img = self.criterionColorImg(predictions=predictions["fake_data_encoded"],
+                                                      ref_imgs=batch['img'])
 
         enc_color_diff_l1, enc_color_diff_l2 = compute_color_difference(predictions["fake_data_encoded"])
 

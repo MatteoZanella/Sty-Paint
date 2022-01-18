@@ -30,9 +30,7 @@ class Encoder(nn.Module):
             self.PE = PositionalEncoding(config)
         else:
             self.PE = PEWrapper(config)
-        self.visual_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
         self.stroke_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
-        trunc_normal_(self.visual_token, std=0.02)
         trunc_normal_(self.stroke_token, std=0.02)
 
         # Learnable tokens mu / sigma
