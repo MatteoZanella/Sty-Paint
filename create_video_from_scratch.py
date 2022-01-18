@@ -74,7 +74,7 @@ if __name__ == '__main__' :
 
     model = build_model(config)
     print(f'==> Loading model form {args.checkpoint}')
-    model.load_state_dict(torch.load(args.checkpoint)["model"])
+    model.load_state_dict(torch.load(args.checkpoint)["model"], strict=False)
     model.cuda()
     model.eval()
 
@@ -88,7 +88,7 @@ if __name__ == '__main__' :
     output_path = os.path.join(args.output_path)
     os.makedirs(output_path, exist_ok=True)
 
-    cumulative_loss = []
+    #cumulative_loss = []
     for img_path in img_list:
         print(f'Processing image : {img_path}')
         ref_img = Image.open(img_path)
@@ -121,7 +121,7 @@ if __name__ == '__main__' :
             starting_point = this_frame
 
             to_save.append(this_frame)
-            cumulative_loss.append(torch.nn.MSELoss()(_to_tensor(starting_point), batch['img']).item())
+            #cumulative_loss.append(torch.nn.MSELoss()(_to_tensor(starting_point), batch['img']).item())
 
             # Update context
             ctx = batch['strokes_ctx'] # copy
@@ -155,7 +155,7 @@ if __name__ == '__main__' :
         for i in range(len(to_save)):
             plt.imsave(os.path.join(args.output_path, img_name + '_renders', f'frame_{str(i).zfill(3)}.jpg'), to_save[i])
 
-        f = plt.figure()
-        plt.plot(cumulative_loss)
-        plt.savefig(os.path.join(args.output_path, img_name + '_loss.png'))
+        #f = plt.figure()
+        #plt.plot(cumulative_loss)
+        #plt.savefig(os.path.join(args.output_path, img_name + '_loss.png'))
         #etools.create_video(frames, path=args.output_path, size=render_config.canvas_size, scale=True)
