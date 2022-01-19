@@ -35,22 +35,6 @@ class GANModel(nn.Module) :
         # Discriminator
         self.netD = discriminator.Discriminator(config)
 
-        # Losses
-        self.criterionColorImg = ColorImageLoss(mode=config["train"]["losses"]["reference_img"]["mode"])
-        self.criterionRefImg = RenderImageLoss(config = self.config)
-
-
-        self.gan_mode = config["train"]["losses"]["gan"]["mode"]
-        self.criterionGAN = GANLoss(gan_mode=self.gan_mode)
-
-        # Additional info
-        self.loss_names = ["random_loss_reference_img_color", "random_loss_reference_img_render", "random_loss_G",
-                           "random_loss_D"]
-        self.logs_names = ["lrG", "grad_normG", "lrD", "grad_normD", "p_real", "p_fake"]
-        self.weights = {} # set by trainer
-
-        self.eval_metrics_names = ['random_loss_reference_img', 'random_color_l2', 'random_color_l1']
-        self.eval_info = ['ref_color_l1', 'ref_color_l2']
 
     def train_setup(self, n_iters_per_epoch):
         self.checkpoint_path = self.config["train"]["logging"]["checkpoint_path"]
@@ -99,6 +83,23 @@ class GANModel(nn.Module) :
             D = self.config["train"]["losses"]["gan"]["weight"]["D"],
             reference_img_color=self.config["train"]["losses"]["reference_img"]["color"]["weight"],
             reference_img_render=self.config["train"]["losses"]["reference_img"]["render"]["weight"],)
+
+        # Losses
+        self.criterionColorImg = ColorImageLoss(mode=self.config["train"]["losses"]["reference_img"]["mode"])
+        self.criterionRefImg = RenderImageLoss(config = self.config)
+
+
+        self.gan_mode = self.config["train"]["losses"]["gan"]["mode"]
+        self.criterionGAN = GANLoss(gan_mode=self.gan_mode)
+
+        # Additional info
+        self.loss_names = ["random_loss_reference_img_color", "random_loss_reference_img_render", "random_loss_G",
+                           "random_loss_D"]
+        self.logs_names = ["lrG", "grad_normG", "lrD", "grad_normD", "p_real", "p_fake"]
+        self.weights = {} # set by trainer
+
+        self.eval_metrics_names = ['random_loss_reference_img', 'random_color_l2', 'random_color_l1']
+        self.eval_info = ['ref_color_l1', 'ref_color_l2']
 
     def save_checkpoint(self, epoch, filename=None):
         if filename is None :

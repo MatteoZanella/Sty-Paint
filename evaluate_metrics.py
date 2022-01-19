@@ -66,8 +66,8 @@ def eval_model(batch, net, metric_logger, fd, is_our=True):
 if __name__ == '__main__' :
     # Extra parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_checkpoint", type=str, required=True)
-    parser.add_argument("--config", default='/home/eperuzzo/brushstrokes-generation/configs/train/conf_sibiu.yaml')
+    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--config", default='/home/eperuzzo/brushstrokes-generation/configs/eval/eval.yaml')
 
     parser.add_argument("--output_path", type=str, default='/home/eperuzzo/eval_metrics/')
     parser.add_argument("--checkpoint_baseline", type=str,
@@ -76,7 +76,7 @@ if __name__ == '__main__' :
     parser.add_argument('--fvd', action='store_true')
     parser.add_argument("--n_samples_lpips", type=int, default=3,
                         help="number of samples to test lpips, diverstiy in generation")
-    parser.add_argument("--n_iters_dataloader", default=1, type=int)
+    parser.add_argument("-n", "--n_iters_dataloader", default=1, type=int)
     args = parser.parse_args()
 
 
@@ -96,7 +96,7 @@ if __name__ == '__main__' :
 
     # Test
     dataset_test = StrokesDataset(config, isTrain=False)
-    test_loader = DataLoader(dataset=dataset_test, batch_size=16, shuffle=True, pin_memory=False)
+    test_loader = DataLoader(dataset=dataset_test, batch_size=16, shuffle=False, pin_memory=False)
     print(f'Test : {len(dataset_test)} samples')
 
     # ======= Create Models ========================
@@ -104,9 +104,13 @@ if __name__ == '__main__' :
     render_config = load_painter_config(config["renderer"]["painter_config"])
     renderer = Painter(args=render_config)
 
+    # load checkpoint, update model config based on the stored config
+    ckpt = torch.load(args.checkpoint, map_location='cpu')
+    config.update(dict(model=ckpt["config"]["model"]))
+
     model = build_model(config)
-    print(f'==> Loading model form {args.model_checkpoint}')
-    model.load_state_dict(torch.load(args.model_checkpoint)["model"], strict=True)
+    msg = model.load_state_dict(ckpt["model"], strict=False)
+    print(f'==> Loading model form {args.checkpoint}, with : {msg}')
     model.cuda()
     model.eval()
 

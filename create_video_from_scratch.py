@@ -17,18 +17,24 @@ import glob
 import warnings
 warnings.filterwarnings("ignore")
 
+class ClampSchedule:
 
-def get_clamp_schedule(n, tot):
-    # Clamp schedule
-    v1 = np.ones(200)
-    v2 = np.linspace(1, 0.4, 150)  # 350
-    v3 = np.linspace(0.4, 0.1, 150) # 500
-    v4 = np.linspace(0.1, 0.08, 200)  # 700
-    v5 = np.linspace(0.08, 0.03, tot-700)
+    def __init__(self, tot, active=True):
+        # Clamp schedule
+        v1 = np.ones(200)
+        v2 = np.linspace(1, 0.4, 150)  # 350
+        v3 = np.linspace(0.4, 0.1, 150)  # 500
+        v4 = np.linspace(0.1, 0.08, 200)  # 700
+        v5 = np.linspace(0.08, 0.03, tot - 700)
 
-    vals = np.concatenate((v1, v2, v3, v4, v5))
+        self.vals = np.concatenate((v1, v2, v3, v4, v5))
+        self.active = active
 
-    return vals[n]
+    def get_clamp_value(self, n):
+        if self.active:
+            return self.vals[n]
+        else:
+            return 1.
 
 def _to_tensor(x, normalize=True):
     if normalize:
@@ -47,6 +53,7 @@ if __name__ == '__main__' :
     parser.add_argument("--config", default='/home/eperuzzo/brushstrokes-generation/configs/eval/eval.yaml')
     parser.add_argument("--n_iters", default=100, type=int, help='Number of iterations to generate strokes')
     parser.add_argument("--output_path", type=str, default='/home/eperuzzo/our_video/')
+    parser.add_argument("--cs", action='store_false')
     args = parser.parse_args()
 
     # Create config
@@ -57,7 +64,6 @@ if __name__ == '__main__' :
     print(f'Sampling z : {args.no_z}, dimension of input {config["dataset"]["resize"]}')
 
     # Create dataset_acquisition
-    device = config["device"]
 
     # params
     L = args.L
@@ -72,9 +78,13 @@ if __name__ == '__main__' :
     render_config = load_painter_config(config["renderer"]["painter_config"])
     renderer = Painter(args=render_config)
 
+    # load checkpoint, update model config based on the stored config
+    ckpt = torch.load(args.checkpoint, map_location='cpu')
+    config.update(dict(model=ckpt["config"]["model"]))
+
     model = build_model(config)
     print(f'==> Loading model form {args.checkpoint}')
-    model.load_state_dict(torch.load(args.checkpoint)["model"], strict=False)
+    model.load_state_dict(ckpt["model"], strict=False)
     model.cuda()
     model.eval()
 
@@ -88,7 +98,8 @@ if __name__ == '__main__' :
     output_path = os.path.join(args.output_path)
     os.makedirs(output_path, exist_ok=True)
 
-    #cumulative_loss = []
+
+    CS = ClampSchedule(tot=tot_strokes, active=args.cs)
     for img_path in img_list:
         print(f'Processing image : {img_path}')
         ref_img = Image.open(img_path)
@@ -111,7 +122,7 @@ if __name__ == '__main__' :
         drawn_strokes = 0
         to_save = []
         for n in range(n_iters):
-            clamp = get_clamp_schedule(drawn_strokes, tot_strokes)
+            clamp = CS.get_clamp_value(drawn_strokes)
             data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])
             with torch.no_grad():
                 preds = model(data, sample_z=True, seq_length=L)["fake_data_random"]
@@ -121,7 +132,6 @@ if __name__ == '__main__' :
             starting_point = this_frame
 
             to_save.append(this_frame)
-            #cumulative_loss.append(torch.nn.MSELoss()(_to_tensor(starting_point), batch['img']).item())
 
             # Update context
             ctx = batch['strokes_ctx'] # copy
@@ -136,14 +146,6 @@ if __name__ == '__main__' :
             }
             drawn_strokes += args.L
 
-        # for n in range(len(frames)):
-        #     plt.imsave(os.path.join(args.output_path, f'frame_{n}.jpg'), frames[n])
-        # frames = []
-        #
-        # print(strokes.shape)
-        # for j in range(strokes.shape[1]):
-        #     tmp, _ = renderer.inference(strokes[:, j, :][:, None, :])
-        #     frames.append(tmp)
 
         strokes = np.concatenate(strokes, axis=1)
         img_name = os.path.basename(img_path).split('.')[0]
@@ -155,7 +157,4 @@ if __name__ == '__main__' :
         for i in range(len(to_save)):
             plt.imsave(os.path.join(args.output_path, img_name + '_renders', f'frame_{str(i).zfill(3)}.jpg'), to_save[i])
 
-        #f = plt.figure()
-        #plt.plot(cumulative_loss)
-        #plt.savefig(os.path.join(args.output_path, img_name + '_loss.png'))
-        #etools.create_video(frames, path=args.output_path, size=render_config.canvas_size, scale=True)
+        np.savez(os.path.join(args.output_path, img_name + '_strokes.npz'))

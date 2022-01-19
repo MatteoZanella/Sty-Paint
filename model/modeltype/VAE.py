@@ -4,7 +4,7 @@ import torch.nn as nn
 from model.networks import context_encoder, encoder, decoder
 from torch.optim import AdamW
 from timm.scheduler.cosine_lr import CosineLRScheduler
-from model.training.losses import KLDivergence, ReconstructionLoss, RenderImageLoss, ColorImageLoss, PosColorLoss
+from model.training.losses import KLDivergence, ReconstructionLoss, RenderImageLoss, ColorImageLoss, DistLoss
 from evaluation.metrics import compute_color_difference
 from model.utils.utils import cosine_scheduler
 
@@ -17,24 +17,6 @@ class VAEModel(nn.Module) :
         self.vae_encoder = encoder.Encoder(config)
         self.vae_decoder = decoder.Decoder(config)
 
-        # Losses
-        self.KLDivergence = KLDivergence()
-        self.criterionRec = ReconstructionLoss(mode=config["train"]["losses"]["reconstruction"]["mode"])
-        self.criterionColorImg = ColorImageLoss(mode=config["train"]["losses"]["reference_img"]["color"]["mode"])
-        self.criterionRefImg = RenderImageLoss(config = self.config)
-        self.criterionPosColor = PosColorLoss(mode = config["train"]["losses"]["reference_img"]["pos_color"]["mode"])
-
-        # Additional info
-        self.loss_names = ["enc_loss_position", "enc_loss_color", "enc_loss_size", "enc_loss_theta",
-                           "enc_loss_reference_img_color", "enc_loss_reference_img_pos_color", "enc_loss_reference_img_render",
-                           "kl_div"]
-        self.logs_names = ["mu", "sigma", "kl_weight", "lrG", "grad_normG"]
-
-        self.eval_metrics_names = ['random_loss_position', 'random_loss_size', 'random_loss_theta', 'random_loss_color',
-                                   'random_loss_reference_img', 'random_color_l2', 'random_color_l1',
-                                   'enc_loss_position', 'enc_loss_size', 'enc_loss_theta', 'enc_loss_color',
-                                   'enc_loss_reference_img', 'enc_color_l2', 'enc_color_l1']
-        self.eval_info = ['ref_color_l1', 'ref_color_l2']
 
     def train_setup(self, n_iters_per_epoch):
         self.checkpoint_path = self.config["train"]["logging"]["checkpoint_path"]
@@ -59,7 +41,7 @@ class VAEModel(nn.Module) :
                                             t_in_epochs=False,
                                         )
 
-        ## set weights
+        # Set weights
         self.weights = dict(
             position = self.config["train"]["losses"]["reconstruction"]["weight"]["position"],
             size = self.config["train"]["losses"]["reconstruction"]["weight"]["size"],
@@ -73,6 +55,26 @@ class VAEModel(nn.Module) :
                                     warmup_epochs=self.config["train"]["losses"]["kl"]["warmup_epochs"],
                                     epochs = self.config["train"]["n_epochs"],
                                     patience_epochs=self.config["train"]["losses"]["kl"]["patience_epochs"]))
+
+        # Losses
+        self.KLDivergence = KLDivergence()
+        self.criterionRec = ReconstructionLoss(mode=self.config["train"]["losses"]["reconstruction"]["mode"])
+        self.criterionColorImg = ColorImageLoss(mode=self.config["train"]["losses"]["reference_img"]["color"]["mode"])
+        self.criterionRefImg = RenderImageLoss(config=self.config)
+        self.criterionPosColor = DistLoss(mode=self.config["train"]["losses"]["reference_img"]["pos_color"]["mode"])
+
+        # Additional info
+        self.loss_names = ["enc_loss_position", "enc_loss_color", "enc_loss_size", "enc_loss_theta",
+                           "enc_loss_reference_img_color", "enc_loss_reference_img_pos_color",
+                           "enc_loss_reference_img_render",
+                           "kl_div"]
+        self.logs_names = ["mu", "sigma", "kl_weight", "lrG", "grad_normG"]
+
+        self.eval_metrics_names = ['random_loss_position', 'random_loss_size', 'random_loss_theta', 'random_loss_color',
+                                   'random_loss_reference_img', 'random_color_l2', 'random_color_l1',
+                                   'enc_loss_position', 'enc_loss_size', 'enc_loss_theta', 'enc_loss_color',
+                                   'enc_loss_reference_img', 'enc_color_l2', 'enc_color_l1']
+        self.eval_info = ['ref_color_l1', 'ref_color_l2']
 
     def save_checkpoint(self, epoch, filename=None):
         if filename is None :

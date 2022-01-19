@@ -62,7 +62,7 @@ class GANLoss(nn.Module):
             target_tensor = self.real_label
         else:
             target_tensor = self.fake_label
-        return target_tensor.expand_as(prediction)
+        return target_tensor.expand_as(prediction).to(prediction.device)
 
     def __call__(self, prediction, target_is_real):
         """Calculate loss given Discriminator's output and grount truth labels.
@@ -267,4 +267,79 @@ class PosColorLoss(nn.Module):
         gt_color = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False, padding_mode='border')
         gt_color = rearrange(gt_color, '(bs L) ch 1 1 -> bs L ch', L=predictions.size(1))
         loss = torch.pow(torch.diff(gt_color, dim=1), 2).mean()
+        return loss
+
+
+########################################################################
+class DistLoss(nn.Module) :
+    def __init__(self, mode='l2') :
+        '''
+        Args:
+            mode:
+
+        Aim of this loss is to change the position of the strokes such that subsequent strokes have similar color.
+        To do this, we:
+        1. Find the color of the reference image for each predicted stroke
+        2. Find the topK corespondencies with that color, and the respective (tgt_x, tgt_y) locations
+        3. Compute the distance between the current predicted position and the closest postion among the ones found by
+        the step 2. for the stroke before (or after) in the sequence
+        '''
+        super(DistLoss, self).__init__()
+        # Criterion
+        if mode == 'l2' :
+            self.p = 2
+        elif mode == 'l1' :
+            self.p = 1
+        else :
+            raise NotImplementedError()
+
+        self.K = 8
+        print(f'Using {self.K} NN')
+
+    def __call__(self, predictions, ref_imgs) :
+
+        bs, L,_ = predictions.shape
+        img_size = ref_imgs.shape[-1]
+
+        preds_position = predictions[:, :, :2]
+
+        # Sample GT colors
+        feat_temp = repeat(ref_imgs, 'bs ch h w -> (L bs) ch h w', L=L)
+        grid = rearrange(preds_position, 'L bs p -> (L bs) 1 1 p').detach()
+        pooled_colors = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='nearest',
+                                      padding_mode='border')
+
+        feat_temp = rearrange(feat_temp, '(L bs) ch h w -> bs L ch h w', bs=bs, L=L)
+        pooled_colors = rearrange(pooled_colors, '(L bs) ch 1 1 -> bs L ch 1 1', bs=bs, L=L)
+
+        # Find top K similar color across the image
+        similar_colors = torch.abs(feat_temp - pooled_colors).mean(dim=2)  # average over ch
+        _, idx = torch.topk(-similar_colors.reshape(bs, L, img_size * img_size), k=self.K, dim=-1)
+
+        # Convert idx to (x,y)
+        tgt_y = torch.div(idx, img_size, rounding_mode='floor') / img_size
+        tgt_x = torch.remainder(idx, img_size) / img_size
+
+        tgt = torch.stack([tgt_x.reshape(bs, L * self.K), tgt_y.reshape(bs, L * self.K)], dim=-1)
+        tgt = tgt.reshape(bs, L, self.K, 2)
+
+
+        # Shift the target up and down by 1 position, i.e. compare each element of the sequence with the precedent
+        # and the following one
+        tgt_down = torch.roll(tgt, shifts=1, dims=1)
+        #tgt_up = torch.roll(tgt, shifts=-1, dims=1)
+
+        # Computes distances
+        preds_position = repeat(preds_position, 'bs L p -> bs L K p', K=self.K)
+        dist_down = torch.cdist(preds_position, tgt_down, p=self.p)
+        #dist_up = torch.cdist(preds_position, tgt_up, p=self.p)
+
+        # Find the closest point, and use it to compute the loss
+        val_down, _ = torch.min(dist_down, dim=-1)
+        #val_up, _ = torch.min(dist_up, dim=-1)
+
+        # Take care of first and last element of the sequence, should not be compared
+        #loss = torch.mean(0.5 * torch.add(val_up[:, 1:], val_down[:, :-1]))
+        loss = torch.mean(val_down[:, 1:])
+
         return loss

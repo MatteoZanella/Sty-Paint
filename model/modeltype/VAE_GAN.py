@@ -31,32 +31,8 @@ class VAEGANModel(nn.Module) :
         self.vae_encoder = encoder.Encoder(config)
         self.vae_decoder = decoder.Decoder(config)
 
-
         # Disc
         self.netD = discriminator.Discriminator(config)
-
-        # Losses
-        self.KLDivergence = KLDivergence()
-        self.criterionRec = ReconstructionLoss(mode=config["train"]["losses"]["reconstruction"]["mode"])
-        self.criterionColorImg = ColorImageLoss(mode=config["train"]["losses"]["reference_img"]["color"]["mode"])
-        self.criterionRefImg = RenderImageLoss(config=self.config)
-
-        self.gan_mode = config["train"]["losses"]["gan"]["mode"]
-        self.criterionGAN = GANLoss(gan_mode=self.gan_mode)
-
-        # Additional info
-        self.loss_names = ["enc_loss_position", "enc_loss_color", "enc_loss_size", "enc_loss_theta", "kl_div",
-                           "enc_loss_reference_img_color" , "enc_loss_reference_img_render",
-                           "random_loss_reference_img_color", "random_loss_reference_img_render",  "random_loss_G",
-                           "random_loss_D", "enc_loss_G", "enc_loss_D"]
-
-        self.logs_names = ["mu", "sigma", "kl_weight", "lrG", "grad_normG", "lrD", "grad_normD"]
-
-        self.eval_metrics_names = ['random_loss_position', 'random_loss_size', 'random_loss_theta', 'random_loss_color',
-                                   'random_loss_reference_img', 'random_color_l2', 'random_color_l1',
-                                   'enc_loss_position', 'enc_loss_size', 'enc_loss_theta', 'enc_loss_color',
-                                   'enc_loss_reference_img', 'enc_color_l2', 'enc_color_l1']
-        self.eval_info = ['ref_color_l1', 'ref_color_l2']
 
     def train_setup(self, n_iters_per_epoch):
         self.checkpoint_path = self.config["train"]["logging"]["checkpoint_path"]
@@ -84,7 +60,7 @@ class VAEGANModel(nn.Module) :
                                         )
 
         self.optimizerD = AdamW(params=self.netD.parameters(),
-                                lr=self.config["train"]["optimizer"]["max_lr"],
+                                lr=self.config["train"]["optimizer"]["max_lr"] / self.config["model"]["discriminator"]["scale_lr"],
                                 weight_decay=self.config["train"]["optimizer"]['wd'],
                                 betas=(self.config["train"]["optimizer"]["beta_1"],
                                        self.config["train"]["optimizer"]["beta_2"]))
@@ -93,7 +69,7 @@ class VAEGANModel(nn.Module) :
                                             self.optimizerD,
                                             t_initial=int(self.config["train"]["n_epochs"] * self.n_iters_per_epoch),
                                             t_mul=1.,
-                                            lr_min=self.config["train"]["optimizer"]["min_lr"],
+                                            lr_min=self.config["train"]["optimizer"]["min_lr"] / self.config["model"]["discriminator"]["scale_lr"],
                                             warmup_lr_init=self.config["train"]["optimizer"]["warmup_lr"],
                                             warmup_t=int(self.config["train"]["optimizer"]["warmup_ep"] * self.n_iters_per_epoch),
                                             cycle_limit=1,
@@ -114,6 +90,29 @@ class VAEGANModel(nn.Module) :
                                     epochs=self.config["train"]["n_epochs"]),
             G=self.config["train"]["losses"]["gan"]["weight"]["G"],
             D=self.config["train"]["losses"]["gan"]["weight"]["D"])
+
+        # Losses
+        self.KLDivergence = KLDivergence()
+        self.criterionRec = ReconstructionLoss(mode=self.config["train"]["losses"]["reconstruction"]["mode"])
+        self.criterionColorImg = ColorImageLoss(mode=self.config["train"]["losses"]["reference_img"]["color"]["mode"])
+        self.criterionRefImg = RenderImageLoss(config=self.config)
+
+        self.gan_mode = self.config["train"]["losses"]["gan"]["mode"]
+        self.criterionGAN = GANLoss(gan_mode=self.gan_mode)
+
+        # Additional info
+        self.loss_names = ["enc_loss_position", "enc_loss_color", "enc_loss_size", "enc_loss_theta", "kl_div",
+                           "enc_loss_reference_img_color", "enc_loss_reference_img_render",
+                           "random_loss_reference_img_color", "random_loss_reference_img_render", "random_loss_G",
+                           "random_loss_D", "enc_loss_G", "enc_loss_D"]
+
+        self.logs_names = ["mu", "sigma", "kl_weight", "lrG", "grad_normG", "lrD", "grad_normD"]
+
+        self.eval_metrics_names = ['random_loss_position', 'random_loss_size', 'random_loss_theta', 'random_loss_color',
+                                   'random_loss_reference_img', 'random_color_l2', 'random_color_l1',
+                                   'enc_loss_position', 'enc_loss_size', 'enc_loss_theta', 'enc_loss_color',
+                                   'enc_loss_reference_img', 'enc_color_l2', 'enc_color_l1']
+        self.eval_info = ['ref_color_l1', 'ref_color_l2']
 
     def save_checkpoint(self, epoch, filename=None):
         if filename is None :

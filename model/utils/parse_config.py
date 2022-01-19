@@ -27,11 +27,15 @@ class ConfigParser:
                 self.config["train"]["auto_resume"]["resume_path"] = f
 
             self.config["train"]["logging"]["log_render_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'renders')
+            id_device = self.config["train"]["gpu_id"]
+        else:
+            id_device = self.config["gpu_id"]
 
-        if self.config["train"]["gpu_id"] >= 0:
-            self.config["device"] = torch.device(f'cuda:{self.config["train"]["gpu_id"]}')
+        if id_device >= 0:
+            self.config["device"] = torch.device(f'cuda:{id_device}')
         else:
             self.config["device"] = torch.device('cpu')
+
 
     def crate_directory_output(self):
         Path(self.config["train"]["logging"]["checkpoint_path"]).mkdir(parents=True, exist_ok=True)

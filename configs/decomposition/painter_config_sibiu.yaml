@@ -11,7 +11,7 @@ net_G: 'zou-fusion-net'
 renderer_checkpoint_dir: '/home/eperuzzo/checkpoints_G_oilpaintbrush'
 lr: 0.005
 disable_preview: True
-gpu_id: 1
+gpu_id: 0
 clamp_schedule:
   1 : 0.9
   2 : 0.9
