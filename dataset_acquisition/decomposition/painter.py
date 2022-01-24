@@ -3,6 +3,7 @@ import cv2
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+import imageio
 
 from . import morphology, loss, utils, renderer
 from .networks import *
@@ -312,7 +313,7 @@ class Painter(PainterBase):
             cv2.waitKey(1)
 
 
-    def _render(self, v, path=None, canvas_start=None, save_jpgs=False, save_video=False):
+    def _render(self, v, path=None, canvas_start=None, save_jpgs=False, save_video=False, save_gif=False):
 
         v = v[0,:,:self.rderr.d]   # if we add additional information, make sure to use only needed parms
         if self.args.keep_aspect_ratio:
@@ -349,11 +350,21 @@ class Painter(PainterBase):
                 plt.imsave(os.path.join(path, str(i) + '.jpg'), this_frame)
             if save_video:
                 video_writer.write((this_frame[:,:,::-1] * 255.).astype(np.uint8))
+            if save_gif :
+                if i == 0 :
+                    gif_imgs = []
+                    gif_imgs.append(np.uint8(this_frame * 255.0))
+                else :
+                    gif_imgs.append(np.uint8(this_frame * 255.0))
 
         final_rendered_image = np.copy(this_frame)
         # if save_jpgs:
         #     print('saving final rendered result...')
         #     plt.imsave(path + '_final.png', final_rendered_image)
+
+        if save_gif:
+            print('saving gif ...')
+            imageio.mimsave(path + '.gif', gif_imgs, duration = 0.1)
 
         return final_rendered_image, np.concatenate(alphas)
 
@@ -499,7 +510,7 @@ class Painter(PainterBase):
         #final_rendered_image, alphas = self._render(PARAMS, save_jpgs=False, save_video=False)
         return PARAMS
 
-    def inference(self, strokes, output_path=None, order=None, canvas_start=None, save_jpgs=False, save_video=False):
+    def inference(self, strokes, output_path=None, order=None, canvas_start=None, save_jpgs=False, save_video=False, save_gif=False):
 
         if order is not None:
             strokes = strokes[:, order, :]
@@ -508,4 +519,8 @@ class Painter(PainterBase):
             img, alphas = self._render(strokes, canvas_start=canvas_start)
             return img, alphas
         else:
-            _ = self._render(strokes, path=output_path, canvas_start=canvas_start, save_jpgs=save_jpgs, save_video=save_video)
+            _ = self._render(strokes, path=output_path,
+                             canvas_start=canvas_start,
+                             save_jpgs=save_jpgs,
+                             save_video=save_video,
+                             save_gif=save_gif)

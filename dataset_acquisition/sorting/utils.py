@@ -17,7 +17,8 @@ class StrokesLoader:
         path = os.path.join(self.path, 'strokes_params.npz')
         data = np.load(path)
         print(f'Loading strokes from: {path}')
-        self.strokes = np.concatenate([data['x_ctt'], data['x_color'], data['x_alpha']], axis=-1)
+        color = 0.5 * (data['x_color'][:, :, :3] + data['x_color'][:, :, 3 :])
+        self.strokes = np.concatenate([data['x_ctt'], color], axis=-1)
         self.layer = data['x_layer']
         self.num_strokes = self.strokes.shape[1]
 
