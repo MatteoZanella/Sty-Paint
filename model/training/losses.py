@@ -163,10 +163,11 @@ class ReconstructionLoss(nn.Module):
 
 ########################################################################################################################
 class ColorImageLoss(nn.Module):
-    def __init__(self, mode='l2'):
+    def __init__(self, config):
         super(ColorImageLoss, self).__init__()
         self.blur = torchvision.transforms.GaussianBlur(kernel_size=(7, 7))
-
+        mode = config["train"]["losses"]["reference_img"]["color"]["mode"]
+        self.detach_grid = config["train"]["losses"]["reference_img"]["color"]["detach"]
         # Criterion
         if mode == 'l2' :
             self.criterion = nn.MSELoss()
@@ -182,7 +183,9 @@ class ColorImageLoss(nn.Module):
 
         ref_imgs = self.blur(ref_imgs)
         ref_imgs = repeat(ref_imgs, 'bs ch h w -> (bs L) ch h w', L=predictions.size(1))
-        grid = rearrange(preds_position, 'bs L dim -> (bs L) 1 1 dim').detach()
+        grid = rearrange(preds_position, 'bs L dim -> (bs L) 1 1 dim')
+        if self.detach_grid:
+            grid = grid.detach()
         target_color_img = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False, padding_mode='border')
         target_color_img = rearrange(target_color_img, '(bs L) ch 1 1 -> bs L ch', L=predictions.size(1))
         loss = self.criterion(preds_color, target_color_img)
@@ -202,13 +205,11 @@ class RenderImageLoss(nn.Module):
         canvas_size = config["dataset"]["resize"]
 
         if self.type == 'full':
-            print('Full loss')
             # render the strokes
             self.renderer = LightRenderer(brushes_path=meta_brushes_path, canvas_size=canvas_size)
             # reduction = 'none'
             reduction = 'mean'
         elif self.type == 'masked':
-            print('masked')
             # render the strokes
             self.renderer = LightRenderer(brushes_path=meta_brushes_path, canvas_size=canvas_size)
             # reduction = 'none'
@@ -272,7 +273,7 @@ class PosColorLoss(nn.Module):
 
 ########################################################################
 class DistLoss(nn.Module) :
-    def __init__(self, mode='l2') :
+    def __init__(self, config) :
         '''
         Args:
             mode:
@@ -285,6 +286,11 @@ class DistLoss(nn.Module) :
         the step 2. for the stroke before (or after) in the sequence
         '''
         super(DistLoss, self).__init__()
+
+        mode = config["train"]["losses"]["reference_img"]["pos_color"]["mode"]
+        self.active = config["train"]["losses"]["reference_img"]["pos_color"]["weight"] > 0
+        self.K = config["train"]["losses"]["reference_img"]["pos_color"]["K"]
+
         # Criterion
         if mode == 'l2' :
             self.p = 2
@@ -293,53 +299,156 @@ class DistLoss(nn.Module) :
         else :
             raise NotImplementedError()
 
-        self.K = 8
-        print(f'Using {self.K} NN')
-
     def __call__(self, predictions, ref_imgs) :
 
-        bs, L,_ = predictions.shape
+        if not self.active :
+            return torch.tensor([0], device=predictions.device)
+
+        bs, L, _ = predictions.shape
         img_size = ref_imgs.shape[-1]
 
         preds_position = predictions[:, :, :2]
 
         # Sample GT colors
         feat_temp = repeat(ref_imgs, 'bs ch h w -> (L bs) ch h w', L=L)
-        grid = rearrange(preds_position, 'L bs p -> (L bs) 1 1 p').detach()
-        pooled_colors = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='nearest',
-                                      padding_mode='border')
+        grid = rearrange(preds_position, 'L bs p -> (L bs) 1 1 p')
+        pooled_colors = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='nearest')
 
         feat_temp = rearrange(feat_temp, '(L bs) ch h w -> bs L ch h w', bs=bs, L=L)
         pooled_colors = rearrange(pooled_colors, '(L bs) ch 1 1 -> bs L ch 1 1', bs=bs, L=L)
+        pooled_colors = repeat(pooled_colors, 'bs L ch 1 1 -> bs L ch H W', H=img_size, W=img_size)
 
         # Find top K similar color across the image
-        similar_colors = torch.abs(feat_temp - pooled_colors).mean(dim=2)  # average over ch
-        _, idx = torch.topk(-similar_colors.reshape(bs, L, img_size * img_size), k=self.K, dim=-1)
+        similar_colors = F.mse_loss(feat_temp, pooled_colors, reduction='none').sum(dim=2)
+        _, idx = similar_colors.reshape(bs, L, -1).topk(k=self.K, largest=False)
 
         # Convert idx to (x,y)
-        tgt_y = torch.div(idx, img_size, rounding_mode='floor') / img_size
         tgt_x = torch.remainder(idx, img_size) / img_size
+        tgt_y = torch.div(idx, img_size, rounding_mode='floor') / img_size
 
         tgt = torch.stack([tgt_x.reshape(bs, L * self.K), tgt_y.reshape(bs, L * self.K)], dim=-1)
         tgt = tgt.reshape(bs, L, self.K, 2)
 
+        # Shift the target up and down by 1 position, i.e. compare each element of the sequence with the precedent
+        # and the following one
+        tgt_down = torch.roll(tgt, shifts=1, dims=1)
+        pos_detached = repeat(preds_position, 'bs L p -> bs L K p', K=self.K).detach()
+
+        # Computes distances
+        dist_down = F.mse_loss(pos_detached, tgt_down, reduction='none').sum(dim=-1)
+        _, closest_tgt_down = torch.min(dist_down, dim=-1)
+
+        #
+        final_tgt = tgt_down.reshape(bs * L, self.K, 2)[torch.arange(bs * L), closest_tgt_down.view(bs * L)]
+        final_tgt = final_tgt.reshape(bs, L, 2)
+
+        # compute L2
+        loss = F.mse_loss(preds_position[:, 1:], final_tgt[:, 1:], reduction='none').sum(dim=-1)
+
+        return torch.mean(loss)
+
+############################################################################################################
+
+class CCLoss(nn.Module) :
+    def __init__(self, config) :
+        '''
+        Use all the kNN
+        '''
+        super(CCLoss, self).__init__()
+
+        mode = config["train"]["losses"]["reference_img"]["pos_color"]["mode"]
+        self.active = config["train"]["losses"]["reference_img"]["pos_color"]["weight"] > 0
+        self.find_target = config["train"]["losses"]["reference_img"]["pos_color"]["find_target"] # wa = weighted average, knn
+        self.tau = config["train"]["losses"]["reference_img"]["pos_color"]["tau"]
+        self.p = config["train"]["losses"]["reference_img"]["pos_color"]["p"]
+        self.K = config["train"]["losses"]["reference_img"]["pos_color"]["K"]
+
+        # Criterion
+        if mode == 'l2' :
+            self.p = 2
+        elif mode == 'l1' :
+            self.p = 1
+        else :
+            raise NotImplementedError()
+
+
+    def find_target_knn(self, color_similarity, preds_position):
+        bs, L, img_size, _ = color_similarity.shape
+        _, idx = color_similarity.reshape(bs, L, -1).topk(k=self.K, largest=False)
+
+        # Convert idx to (x,y)
+        tgt_x = torch.remainder(idx, img_size) / img_size
+        tgt_y = torch.div(idx, img_size, rounding_mode='floor') / img_size
+
+        tgt = torch.stack([tgt_x.reshape(bs, L * self.K), tgt_y.reshape(bs, L * self.K)], dim=-1)
+        tgt = tgt.reshape(bs, L, self.K, 2)
 
         # Shift the target up and down by 1 position, i.e. compare each element of the sequence with the precedent
         # and the following one
         tgt_down = torch.roll(tgt, shifts=1, dims=1)
-        #tgt_up = torch.roll(tgt, shifts=-1, dims=1)
+        pos_detached = repeat(preds_position, 'bs L p -> bs L K p', K=self.K).detach()
 
         # Computes distances
-        preds_position = repeat(preds_position, 'bs L p -> bs L K p', K=self.K)
-        dist_down = torch.cdist(preds_position, tgt_down, p=self.p)
-        #dist_up = torch.cdist(preds_position, tgt_up, p=self.p)
+        dist_down = F.mse_loss(pos_detached, tgt_down, reduction='none').sum(dim=-1)
+        _, closest_tgt_down = torch.min(dist_down, dim=-1)
 
-        # Find the closest point, and use it to compute the loss
-        val_down, _ = torch.min(dist_down, dim=-1)
-        #val_up, _ = torch.min(dist_up, dim=-1)
+        #
+        final_tgt = tgt_down.reshape(bs * L, self.K, 2)[torch.arange(bs * L), closest_tgt_down.view(bs * L)]
+        final_tgt = final_tgt.reshape(bs, L, 2)
 
-        # Take care of first and last element of the sequence, should not be compared
-        #loss = torch.mean(0.5 * torch.add(val_up[:, 1:], val_down[:, :-1]))
-        loss = torch.mean(val_down[:, 1:])
+        return final_tgt
 
-        return loss
+    def find_target_wa(self, color_similarity, preds_position):
+        bs, L, img_size, _ = color_similarity.shape
+
+        b_id, seq_id, y_id, x_id = torch.where(color_similarity < self.tau)
+        tgt = torch.stack((x_id, y_id), dim=-1) / img_size
+
+        # Compute final Targets
+        final_tgt = torch.zeros(bs, L, 2, device=preds_position.device)
+        for b in range(bs) :
+            for t_minus_one in range(L - 1) :
+                iids = torch.logical_and(b_id == b, seq_id == t_minus_one)
+                nn_t_minus_one = tgt[iids]
+                # Distance between NN at time T-1, and predictions at time T
+                dist = torch.cdist(preds_position[b, t_minus_one + 1][None], nn_t_minus_one, p=2) + torch.tensor(1e-9, device=preds_position.device)
+                w = torch.pow(1 / dist, self.p)  # inverse of the distance
+                w_norm = w / w.sum()
+
+                # Target at time T is the weighted average of NN at time T-1
+                final_tgt[b, t_minus_one + 1, :] = torch.sum(w_norm.unsqueeze(-1) * nn_t_minus_one, dim=1)
+
+        return final_tgt
+
+    def __call__(self, predictions, ref_imgs) :
+        if not self.active :
+            return torch.tensor([0], device=predictions.device)
+
+        bs, L, _ = predictions.shape
+        img_size = ref_imgs.shape[-1]
+
+        preds_position = predictions[:, :, :2]
+
+        # Sample GT colors
+        feat_temp = repeat(ref_imgs, 'bs ch h w -> (L bs) ch h w', L=L)
+        grid = rearrange(preds_position, 'L bs p -> (L bs) 1 1 p')
+        pooled_colors = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='nearest')
+
+        feat_temp = rearrange(feat_temp, '(L bs) ch h w -> bs L ch h w', bs=bs, L=L)
+        pooled_colors = rearrange(pooled_colors, '(L bs) ch 1 1 -> bs L ch 1 1', bs=bs, L=L)
+        pooled_colors = repeat(pooled_colors, 'bs L ch 1 1 -> bs L ch H W', H=img_size, W=img_size)
+
+        # Find similar color across the image
+        similar_colors = F.mse_loss(feat_temp, pooled_colors, reduction='none').sum(dim=2)
+
+        # Compute the target position
+        if self.find_target == "wa":
+            target = self.find_target_wa(color_similarity=similar_colors, preds_position=preds_position.detach())
+        elif self.find_target == "knn":
+            target = self.find_target_knn(color_similarity=similar_colors, preds_position=preds_position.detach())
+        else:
+            raise NotImplementedError()
+
+        # compute L2
+        loss = F.mse_loss(preds_position[:, 1 :], target[:, 1 :], reduction='none').sum(dim=-1)
+        return torch.mean(loss)

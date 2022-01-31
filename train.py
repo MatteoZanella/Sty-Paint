@@ -20,7 +20,6 @@ def count_parameters(net):
 if __name__ == '__main__':
     # Extra parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp_name", type= str, required=True)
     parser.add_argument("--config", type=str, required=True)
     args = parser.parse_args()
 
@@ -28,7 +27,7 @@ if __name__ == '__main__':
 
     # Create config
     c_parser = ConfigParser(config_path=args.config)
-    c_parser.parse_config(args)
+    c_parser.parse_config()
     config = c_parser.get_config()
     c_parser.crate_directory_output()
     print(config)
@@ -41,8 +40,8 @@ if __name__ == '__main__':
 
     # Initialize wandb
     os.environ["WANDB_API_KEY"] = config["train"]["logging"]["wandb_api_key"]
-    wandb.init(project='IBG', config=config)
-    wandb.run.name = args.exp_name
+    wandb.init(project=config["train"]["logging"]["project_name"], config=config)
+    wandb.run.name = config["train"]["logging"]["exp_name"]
 
     # Train
     dataset = StrokesDataset(config, isTrain=True)

@@ -4,7 +4,7 @@ import torch.nn as nn
 from model.networks import context_encoder, encoder, decoder
 from torch.optim import AdamW
 from timm.scheduler.cosine_lr import CosineLRScheduler
-from model.training.losses import KLDivergence, ReconstructionLoss, RenderImageLoss, ColorImageLoss, DistLoss
+from model.training.losses import KLDivergence, ReconstructionLoss, RenderImageLoss, ColorImageLoss, CCLoss
 from evaluation.metrics import compute_color_difference
 from model.utils.utils import cosine_scheduler
 
@@ -59,9 +59,9 @@ class VAEModel(nn.Module) :
         # Losses
         self.KLDivergence = KLDivergence()
         self.criterionRec = ReconstructionLoss(mode=self.config["train"]["losses"]["reconstruction"]["mode"])
-        self.criterionColorImg = ColorImageLoss(mode=self.config["train"]["losses"]["reference_img"]["color"]["mode"])
+        self.criterionColorImg = ColorImageLoss(config=self.config)
         self.criterionRefImg = RenderImageLoss(config=self.config)
-        self.criterionPosColor = DistLoss(mode=self.config["train"]["losses"]["reference_img"]["pos_color"]["mode"])
+        self.criterionPosColor = CCLoss(config=self.config)
 
         # Additional info
         self.loss_names = ["enc_loss_position", "enc_loss_color", "enc_loss_size", "enc_loss_theta",
@@ -180,16 +180,15 @@ class VAEModel(nn.Module) :
 
         # Random z
         random_loss_position, random_loss_size, random_loss_theta, random_loss_color = self.criterionRec(predictions["fake_data_random"], batch['strokes_seq'])
-        random_loss_reference_img = self.criterionRefImg(predictions=predictions["fake_data_random"],
-                                                         ref_imgs=batch['img'],
-                                                         canvas_start=batch['canvas'])
+        random_loss_reference_img = self.criterionColorImg(predictions=predictions["fake_data_random"],
+                                                           ref_imgs=batch['img'])
         random_color_diff_l1, random_color_diff_l2 = compute_color_difference(predictions["fake_data_random"])
 
         # Encoded z
         enc_loss_position, enc_loss_size, enc_loss_theta, enc_loss_color = self.criterionRec(predictions["fake_data_encoded"],
                                                                                         batch['strokes_seq'])
         enc_loss_reference_img = self.criterionColorImg(predictions=predictions["fake_data_encoded"],
-                                                      ref_imgs=batch['img'])
+                                                        ref_imgs=batch['img'])
 
         enc_color_diff_l1, enc_color_diff_l2 = compute_color_difference(predictions["fake_data_encoded"])
 

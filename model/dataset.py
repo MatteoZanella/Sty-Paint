@@ -239,13 +239,17 @@ class EvalDataset(Dataset):
 
         return data
 
-    def sample(self, filename, timestep):
+    def sample(self, filename, timestep, tot=8):
         # ---------
         # Load strokes, reorder and sample
         all_strokes = self.load_strokes(filename)
         idx = self.load_heuristic_idx(filename)
         all_strokes = all_strokes[idx]
         t_C, t, t_T = self.sample_strokes(all_strokes.shape[0], timestep)
+
+        initial_context = all_strokes[:t_C]
+        original_sequence = all_strokes[t:t+tot]
+
         strokes = all_strokes[t_C :t_T, :]
         data = {
             'strokes_ctx' : strokes[:self.context_length, :][None],
@@ -263,8 +267,4 @@ class EvalDataset(Dataset):
                 'canvas' : canvas[None],
                 'img' : img[None]})
 
-        if not self.isTrain :
-            data.update({'time_steps' : [t_C, t, t_T]})
-            # data.update({'strokes' : all_strokes})  #TODO: fix here
-
-        return data
+        return data, initial_context, original_sequence[None]

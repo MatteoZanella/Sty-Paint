@@ -81,6 +81,10 @@ class Decoder2Step(nn.Module):
         self.device = config["device"]
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
+        if "residual_pos" in config["model"]["decoder"]:
+            self.residual_position = config["model"]["decoder"]["residual_pos"]
+        else:
+            self.residual_position = False
 
         if config["model"]["encoder_pe"] == "new" :
             print('Using new encodings')
@@ -123,9 +127,17 @@ class Decoder2Step(nn.Module):
 
         act = get_act(config["model"]["activation_last_layer"])
         self.norm2 = nn.LayerNorm(self.d_model)
-        self.color_head = nn.Sequential(
-            nn.Linear(self.d_model, self.s_params - 2))
-        self.color_head.add_module('act', act)
+        if not self.residual_position:
+            self.color_head = nn.Sequential(
+                nn.Linear(self.d_model, self.s_params - 2))
+            self.color_head.add_module('act', act)
+        else:
+            self.color_head = nn.Sequential(
+                nn.Linear(self.d_model, self.s_params - 2))
+            self.color_head.add_module('act', act)
+            self.residual_pos_head = nn.Sequential(
+                nn.Linear(self.d_model, 2))
+            self.residual_pos_head.add_module('act', act)
 
     def bilinear_sampling_length_first(self, feat, pos) :
         n_strokes = pos.size(0)
@@ -163,10 +175,16 @@ class Decoder2Step(nn.Module):
         color_tokens += self.PE.pe_strokes_tokens(pos=pos_pred, device=color_tokens.device)
 
         color_tokens = self.color_decoder(color_tokens, context)
-        color_pred = self.color_head(self.norm2(color_tokens))
 
-        # cat and return
-        output = torch.cat((pos_pred, color_pred), dim=-1)
+        if not self.residual_position:
+            color_pred = self.color_head(self.norm2(color_tokens))
+            output = torch.cat((pos_pred, color_pred), dim=-1)
+        else:
+            color_pred = self.color_head(self.norm2(color_tokens))
+            residual_pos = self.residual_pos_head(self.norm2(color_tokens))
+            pos_pred = pos_pred + residual_pos
+            output = torch.cat((pos_pred, color_pred), dim=-1)
+
         output = rearrange(output, 'L bs dim -> bs L dim')
 
         return output
