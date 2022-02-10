@@ -5,6 +5,7 @@ import logging
 import torch
 from model.utils.utils import AverageMetersDict, dict_to_device, cosine_scheduler
 from evaluation.metrics import FDMetricIncremental
+import wandb
 
 class Trainer :
 
@@ -66,16 +67,24 @@ class Trainer :
         avg_meters = AverageMetersDict(names=model.eval_metrics_names)
         log_meters = AverageMetersDict(names=model.eval_info)
 
+        stats = {}
         for idx, batch in enumerate(self.test_dataloader) :
             data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])
             targets = data['strokes_seq']
             bs = targets.size(0)
-            metrics, info = model.test_one_step(data,
+            metrics, info, visual = model.test_one_step(data,
                                                 fd_z_random=fd_z_random,
-                                                fd_z_encoded=fd_z_encoded)
+                                                fd_z_encoded=fd_z_encoded,
+                                                get_visual = idx == 0)
 
             avg_meters.update(metrics, bs)
             log_meters.update(info, bs)
+
+            if visual is not None:
+                stats.update({
+                    'generation_w_z' : wandb.Image(visual['plot_w_z']),
+                    'generation_wo_z' : wandb.Image(visual['plot_wo_z'])
+                })
 
         # logging
         msg = ''
@@ -83,7 +92,7 @@ class Trainer :
             msg += f'{name} : {val:.3f} \t||\t'
         logging.info(msg)
 
-        stats = {}
+
         stats.update(avg_meters.get_avg(header='test/'))
         stats.update(log_meters.get_avg(header='test/'))
 

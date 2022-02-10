@@ -452,3 +452,134 @@ class CCLoss(nn.Module) :
         # compute L2
         loss = F.mse_loss(preds_position[:, 1 :], target[:, 1 :], reduction='none').sum(dim=-1)
         return torch.mean(loss)
+
+
+#########################################################################################################
+from torch.autograd import Function
+import scipy
+import numpy as np
+
+
+class MatrixSquareRoot(Function) :
+    """Square root of a positive definite matrix.
+    NOTE: matrix square root is not differentiable for matrices with
+          zero eigenvalues.
+    """
+
+    @staticmethod
+    def forward(ctx, input) :
+        m = input.detach().cpu().numpy().astype(np.float_)
+        sqrtm = torch.from_numpy(scipy.linalg.sqrtm(m).real).to(input)
+        ctx.save_for_backward(sqrtm)
+        return sqrtm
+
+    @staticmethod
+    def backward(ctx, grad_output) :
+        grad_input = None
+        if ctx.needs_input_grad[0] :
+            sqrtm, = ctx.saved_tensors
+            sqrtm = sqrtm.data.cpu().numpy().astype(np.float_)
+            gm = grad_output.data.cpu().numpy().astype(np.float_)
+
+            # Given a positive semi-definite matrix X,
+            # since X = X^{1/2}X^{1/2}, we can compute the gradient of the
+            # matrix square root dX^{1/2} by solving the Sylvester equation:
+            # dX = (d(X^{1/2})X^{1/2} + X^{1/2}(dX^{1/2}).
+            grad_sqrtm = scipy.linalg.solve_sylvester(sqrtm, sqrtm, gm)
+
+            grad_input = torch.from_numpy(grad_sqrtm).to(grad_output)
+        return grad_input
+
+
+sqrtm = MatrixSquareRoot.apply
+
+class FIDLoss(nn.Module) :
+    def __init__(self, config) :
+        super(FIDLoss, self).__init__()
+
+        self.active = config["train"]["losses"]["fid"]["weight"] > 0
+        self.K = config["train"]["losses"]["fid"]["K"] # Number of neighbors to compute similarity
+        self.param_per_stroke = config["model"]["n_strokes_params"]
+
+        #L = config["dataset"]["context_length"] + config["dataset"]["sequence_length"]
+        L = config["dataset"]["sequence_length"]
+        ids = []
+        for i in range(L) :
+            for j in range(L) :
+                if (j > i + self.K) or (j < i - self.K) or i == j :
+                    continue
+                else :
+                    ids.append([i, j])
+
+        ids = torch.tensor(ids)
+        self.id0 = ids[:, 0]
+        self.id1 = ids[:, 1]
+        self.n = ids.shape[0]
+
+        self.dim_features = self.n * self.param_per_stroke
+
+    def compute_features(self, x) :
+        bs = x.shape[0]
+        feat = torch.empty((bs, self.dim_features))
+        for j in range(self.param_per_stroke) :
+            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, j] - x[:, self.id1, j]
+        return feat.t().contiguous()
+
+    def fid_score_torch(self,
+                        mu1: torch.Tensor,
+                        mu2: torch.Tensor,
+                        sigma1: torch.Tensor,
+                        sigma2: torch.Tensor,
+                        eps: float = 1e-6) -> float :
+        try :
+            import numpy as np
+        except ImportError :
+            raise RuntimeError("fid_score requires numpy to be installed.")
+
+        try :
+            import scipy.linalg
+        except ImportError :
+            raise RuntimeError("fid_score requires scipy to be installed.")
+
+        # mu1, mu2 = mu1.cpu(), mu2.cpu()
+        # sigma1, sigma2 = sigma1.cpu(), sigma2.cpu()
+
+        diff = mu1 - mu2
+
+        # Product might be almost singular
+        offset = torch.eye(sigma1.shape[0]) * eps
+        covmean = sqrtm((sigma1+offset).mm(sigma2+offset))
+        # Numerical error might give slight imaginary component
+
+        if torch.is_complex(covmean) :
+            if not torch.allclose(torch.diagonal(covmean), torch.tensor([0.0], dtype=torch.double), atol=1e-3) :
+                m = torch.max(torch.abs(covmean.imag))
+                raise ValueError("Imaginary component {}".format(m))
+            covmean = covmean.real
+
+        tr_covmean = torch.trace(covmean)
+
+        if not torch.isfinite(covmean).all() :
+            tr_covmean = torch.sum(torch.sqrt(((torch.diag(sigma1) * eps) * (torch.diag(sigma2) * eps)) / (eps * eps)))
+
+        return diff.dot(diff) + torch.trace(sigma1) + torch.trace(sigma2) - 2 * tr_covmean
+
+
+    def __call__(self, ctx, seq, preds):
+
+        if not self.active:
+            return torch.tensor([0], device=preds.device)
+        # Real sequence
+        # real_seq = torch.cat((ctx, seq), dim=1)
+        real_seq = self.compute_features(seq)
+
+        real_cov = torch.cov(real_seq)
+        real_mean = torch.mean(real_seq, dim=-1)
+
+        # Generated seq
+        #gen_seq = torch.cat((ctx, preds), dim=1)
+        gen_seq = self.compute_features(preds)
+        gen_cov = torch.cov(gen_seq)
+        gen_mean = torch.mean(gen_seq, dim=-1)
+
+        return self.fid_score_torch(mu1=real_mean, mu2=gen_mean, sigma1=real_cov, sigma2=gen_cov)

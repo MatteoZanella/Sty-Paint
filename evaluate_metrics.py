@@ -14,7 +14,7 @@ import paddle
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 
-from evaluation.metrics import FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental
+from evaluation.metrics import FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental, FDWithContextMetricIncremental
 from evaluation.metrics import maskedL2, compute_dtw, compute_color_difference
 from evaluation.fvd import FVD
 
@@ -27,9 +27,10 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def eval_model(data, net, metric_logger, fd, is_our, renderer):
+def eval_model(data, net, metric_logger, fd, fd_ctx, is_our, renderer):
 
     Wdist = WassersteinDistance()
+    ctx = data['strokes_ctx'].cpu()
     targets = data['strokes_seq'].cpu()
     bs = targets.size(0)
 
@@ -56,7 +57,10 @@ def eval_model(data, net, metric_logger, fd, is_our, renderer):
     maskedl2 = maskedL2(data['img'], visuals['frames'], visuals['alphas'])
     wd = Wdist(targets[:, :, :5], torch.tensor(predictions[:, :, :5]))
     dtw = compute_dtw(targets, predictions)
-    fd.update_queue(targets, predictions)
+    fd.update_queue(original=targets,
+                    generated=predictions)
+    fd_ctx.update_queue(original=np.concatenate((ctx, targets), axis=1),
+                        generated=np.concatenate((ctx, predictions), axis=1))
 
     # record metrics
     metric_logger.update(
@@ -120,12 +124,16 @@ def main(args, exp_name):
     # feature_div = FeaturesDiversity()
     # fvd = FVD()
     fd_our = FDMetricIncremental()
+    fd_our_w_context = FDWithContextMetricIncremental(seq_len=18, K=10)
+
     fd_baseline = FDMetricIncremental()
+    fd_baseline_w_context = FDWithContextMetricIncremental(seq_len=18, K=10)
 
     # Average Meters
     eval_names = ['wd', 'maskedL2', 'color_diff_l1', 'color_diff_l2', 'dtw']
     our_metrics = AverageMetersDict(names=eval_names)
     baseline_metrics = AverageMetersDict(names=eval_names)
+    dataset_metrics = AverageMetersDict(names=['color_diff_l1', 'color_diff_l2'])
 
     # ======= Run ========================
     for iter in range(args.n_iters_dataloader) :
@@ -133,17 +141,26 @@ def main(args, exp_name):
         for idx, batch in enumerate(test_loader) :
             print(f'{idx} / {len(test_loader)}')
             data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])
+            # ======= Baseline Metrics ====
+            ref_l1, ref_l2 = compute_color_difference(data['strokes_seq'])
+            dataset_metrics.update(dict(color_diff_l1=ref_l1.item(), color_diff_l2 = ref_l2.item()), data['strokes_seq'].shape[0])
             # ======= Predict   ===========
-            eval_model(data=data, net=model, metric_logger=our_metrics, fd=fd_our, is_our=True, renderer=renderer)
-            eval_model(data=data, net=baseline, metric_logger=baseline_metrics, fd=fd_baseline, is_our=False, renderer=renderer)
+            eval_model(data=data, net=model, metric_logger=our_metrics, fd=fd_our, fd_ctx=fd_our_w_context,
+                       is_our=True, renderer=renderer)
+            eval_model(data=data, net=baseline, metric_logger=baseline_metrics, fd=fd_baseline, fd_ctx=fd_baseline_w_context,
+                       is_our=False, renderer=renderer)
 
     #  TODO:
     results = {}
     results.update(our_metrics.get_avg(header='our_'))
     results.update({f'our_fd_{k}' : v for k, v in fd_our.compute_fd().items()})
+    results.update({f'our_fd_wctx_{k}' : v for k, v in fd_our_w_context.compute_fd().items()})
 
     results.update(baseline_metrics.get_avg(header='baseline_'))
     results.update({f'baseline_fd_{k}' : v for k, v in fd_baseline.compute_fd().items()})
+    results.update({f'baseline_fd_wctx_{k}' : v for k, v in fd_baseline_w_context.compute_fd().items()})
+
+    results.update(dataset_metrics.get_avg(header='dataset_'))
 
     # save
     os.makedirs(output_path, exist_ok=True)
