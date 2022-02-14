@@ -10,7 +10,39 @@ from .networks import *
 
 import torch
 import torch.optim as optim
+from model.training.losses import FIDLoss
 
+def _normalize(x, width):
+    return (int)(x * (width - 1) + 0.5)
+
+def get_bbox(st_point,  window_size, max_h_w):
+    """
+    Args:
+        st_point:
+        window_size:
+
+    Returns:
+        coordinates to crop the input image
+    """
+
+    xc, yc = st_point
+
+    x1 = max(0, xc - int(window_size / 2))
+    if x1 == 0:
+        x2 = window_size
+    else:
+        x2 = min(max_h_w, xc + int(window_size/2))
+    if x2 == max_h_w:
+        x1 = x2 - window_size
+
+    y1 = max(0, yc - int(window_size / 2))
+    if y1 == 0:
+        y2 = window_size
+    else:
+        y2 = min(max_h_w,  yc + int(window_size/2))
+    if y2 == max_h_w:
+        y1 = y2 - window_size
+    return x1, x2, y1, y2
 
 class PainterBase():
     def __init__(self, args):
@@ -183,7 +215,7 @@ class PainterBase():
                     y_bias + v[y_id * self.m_grid + x_id, :, ys] / self.m_grid
                 v[y_id * self.m_grid + x_id, :, xs] = \
                     x_bias + v[y_id * self.m_grid + x_id, :, xs] / self.m_grid
-                v[y_id * self.m_grid + x_id, :, rs] /= self.m_grid
+                v[y_id * self.m_grid + x_id, :, rs] /= self.m_grid   # TODO: here
 
         return v
 
@@ -524,3 +556,124 @@ class Painter(PainterBase):
                              save_jpgs=save_jpgs,
                              save_video=save_video,
                              save_gif=save_gif)
+
+    def predict(self, img, CANVAS_tmp=None) :
+
+        self.max_divide = 1
+        self.m_grid = 1
+        self.m_strokes_per_block = 8
+        self.max_strokes = 8
+        iters_per_stroke = 10  # number of optimizations steps for a single stroke
+        clamp_value = 0.9 # TODO: change this to be adaptive wrt the windows size
+        img = cv2.resize(img.permute(1,2,0).cpu().numpy(), (self.net_G.out_size * self.max_divide, self.net_G.out_size * self.max_divide), cv2.INTER_AREA)
+        if CANVAS_tmp is not None:
+            CANVAS_tmp = torch.nn.functional.interpolate(CANVAS_tmp.unsqueeze(0), size=(self.net_G.out_size * self.max_divide, self.net_G.out_size * self.max_divide))
+
+        # --------------------------------------------------------------------------------------------------------------
+        #print('begin drawing...')
+
+
+        PARAMS = np.zeros([1, 0, self.rderr.d], np.float32)
+
+        if CANVAS_tmp is not None:
+            if self.rderr.canvas_color == 'white':
+                CANVAS_tmp = torch.ones([1, 3, 128, 128]).to(self.device)
+            else :
+                CANVAS_tmp = torch.zeros([1, 3, 128, 128]).to(self.device)
+
+        self.img_batch = utils.img2patches(img, self.m_grid, self.net_G.out_size).to(self.device)
+        self.G_final_pred_canvas = CANVAS_tmp
+
+        self.initialize_params()
+        self.x_ctt.requires_grad = True
+        self.x_color.requires_grad = True
+        self.x_alpha.requires_grad = True
+        utils.set_requires_grad(self.net_G, False)
+
+        self.optimizer_x = optim.RMSprop([self.x_ctt, self.x_color, self.x_alpha], lr=self.lr, centered=True)
+
+        self.step_id = 0
+        for self.anchor_id in range(0, self.max_strokes) :
+            self.stroke_sampler(self.anchor_id)
+            for i in range(iters_per_stroke) :
+                #print(f'Anchor: {self.anchor_id}, iter: {i} / {iters_per_stroke}')
+                self.G_pred_canvas = CANVAS_tmp
+
+                # update x
+                self.optimizer_x.zero_grad()
+                self.clamp(clamp_value)
+
+                self._forward_pass()
+                self._drawing_step_states()
+                self._backward_x()
+
+                self.clamp(clamp_value)
+
+                self.optimizer_x.step()
+                self.step_id += 1
+
+        PARAMS = self._normalize_strokes(self.x)
+        #PARAMS, idx_grid = self._shuffle_strokes_and_reshape(PARAMS)
+        #PARAMS = self.get_checked_strokes(PARAMS)
+
+        PARAMS = PARAMS[:, :, :11]  # remove alpha
+
+        final_color = 0.5* (PARAMS[:, :, 5:8] + PARAMS[:, :, 8:])
+        final_params = np.concatenate((PARAMS[:, :, :5], final_color), axis=-1)
+
+        #final_rendered_image, alphas = self._render(final_params, save_jpgs=False, save_video=False)
+        return final_params.squeeze()  #, final_rendered_image
+
+    def get_ctx(self, ctx):
+        # Location of the last stroke
+        x_start, y_start = ctx[-1, :2]
+        x_start = _normalize(x_start, self.args.canvas_size)
+        y_start = _normalize(y_start, self.args.canvas_size)
+
+        # Select window size based on average stroke area
+        area = ctx[:, 2] * ctx[:, 3]   # h*w
+        area = area.mean()
+        if area < 0.004:
+            windows_size = 32
+        elif area < 0.01:
+            windows_size = 64
+        else:
+            windows_size = 128
+        print(f'Area: {area}, ws: {windows_size}')
+
+        return (x_start, y_start), windows_size
+
+    def generate(self, data):
+        original = data['img']
+        canvas_start = data['canvas']
+        strokes_ctx = data['strokes_ctx']
+
+        bs = original.shape[0]
+        out = np.empty([bs, 8, 8])
+
+        for b in range(bs):
+            print(f'Elem: [{b} / {bs}]')
+            st_point, ws = self.get_ctx(strokes_ctx[b])
+
+            x1, x2, y1, y2 = get_bbox(st_point, ws, self.args.canvas_size)
+
+            # crop
+            curr_img = original[b, :, y1 :y2, x1 :x2]
+            curr_canvas = canvas_start[b, :, y1 :y2, x1 :x2]
+
+            # Predict strokes
+            sparms = self.predict(curr_img, curr_canvas)
+
+            # Refactor sparams to match stylized neural painter renderer
+            n = sparms.shape[0]
+            # sparms = np.concatenate((sparms, sparms[:, -3:]), axis=-1)   # replicate the color
+            sparms[:, 0] = (sparms[:, 0] * ws + x1) / self.args.canvas_size
+            sparms[:, 1] = (sparms[:, 1] * ws + y1) / self.args.canvas_size
+            sparms[:, 2] = (sparms[:, 2] * ws) / self.args.canvas_size
+            sparms[:, 3] = (sparms[:, 3] * ws) / self.args.canvas_size
+
+
+            out[b] = sparms
+
+
+        return out.astype('float32')

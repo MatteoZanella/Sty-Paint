@@ -1,5 +1,8 @@
 import numpy as np
 import cv2
+import torchvision
+from einops import rearrange, repeat
+import torch.nn.functional as F
 
 def dict_to_device(inp, to_skip=[]) :
     return {k : t.cuda(non_blocking=True) for k, t in inp.items() if k not in to_skip}
@@ -84,3 +87,13 @@ def visualize(foreground, alpha, alpha_ctx) :
     res = cv2.drawContours(x, contours_ctx, -1, (255, 0, 0), 1)
     res = cv2.drawContours(res, contours, -1, (0, 255, 0), 1)
     return res
+
+######################################
+def sample_color(pos, ref_imgs, blur=False):
+    if blur:
+        ref_imgs = torchvision.transforms.GaussianBlur((7,7))(ref_imgs)
+    ref_imgs = repeat(ref_imgs, 'bs ch h w -> (bs L) ch h w', L=pos.size(1))
+    grid = rearrange(pos, 'bs L dim -> (bs L) 1 1 dim')
+    target_color_img = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False, padding_mode='border')
+    target_color_img = rearrange(target_color_img, '(bs L) ch 1 1 -> bs L ch', L=pos.size(1))
+    return target_color_img

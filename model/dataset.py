@@ -42,7 +42,7 @@ class StrokesDataset(Dataset):
 
 
         self.df = pd.read_csv(self.config["dataset"]["csv_file"])
-        self.root_dir = os.path.join(self.config["dataset"]["root"], partition, 'brushstrokes_generation_dataset')
+        self.root_dir = os.path.join(self.config["dataset"]["root"], partition + f'_{self.config["dataset"]["version"]}', 'brushstrokes_generation_dataset')
 
         self.filenames = list(self.df[(self.df["partition"] == partition) & (self.df["isTrain"] == self.isTrain)]['filename'])
 
@@ -148,7 +148,7 @@ class EvalDataset(Dataset):
 
 
         self.df = pd.read_csv(self.config["dataset"]["csv_file"])
-        self.root_dir = os.path.join(self.config["dataset"]["root"], partition, 'brushstrokes_generation_dataset')
+        self.root_dir = os.path.join(self.config["dataset"]["root"], partition + f'_{self.config["dataset"]["version"]}', 'brushstrokes_generation_dataset')
 
         self.filenames = list(self.df[(self.df["partition"] == partition) & (self.df["isTrain"] == self.isTrain)]['filename'])
 

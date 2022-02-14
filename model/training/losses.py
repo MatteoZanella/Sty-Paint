@@ -6,6 +6,7 @@ import torchvision
 from model.networks.light_renderer import LightRenderer
 import math
 import sys
+import os
 
 class KLDivergence(nn.Module):
 
@@ -458,6 +459,7 @@ class CCLoss(nn.Module) :
 from torch.autograd import Function
 import scipy
 import numpy as np
+from model.utils.utils import sample_color
 
 
 class MatrixSquareRoot(Function) :
@@ -496,27 +498,55 @@ sqrtm = MatrixSquareRoot.apply
 class FIDLoss(nn.Module) :
     def __init__(self, config) :
         super(FIDLoss, self).__init__()
+        tmp_config = config["train"]["losses"]["fid"]
 
-        self.active = config["train"]["losses"]["fid"]["weight"] > 0
-        self.K = config["train"]["losses"]["fid"]["K"] # Number of neighbors to compute similarity
+        self.active = tmp_config["weight"] > 0
+        self.K = tmp_config["K"] # Number of neighbors to compute similarity
         self.param_per_stroke = config["model"]["n_strokes_params"]
 
-        #L = config["dataset"]["context_length"] + config["dataset"]["sequence_length"]
-        L = config["dataset"]["sequence_length"]
+        self.mode = tmp_config["mode"]
+
+        if tmp_config["use_context"]:
+            self.L = config["dataset"]["context_length"] + config["dataset"]["sequence_length"]
+        else:
+            self.L = config["dataset"]["sequence_length"]
+
+        self.get_index(L = self.L, K = self.K)
+
+        if tmp_config["use_color"]:
+            self.use_color_img = True
+            self.param_per_stroke += 3
+        else:
+            self.use_color_img = False
+
+        self.dim_features = self.n * self.param_per_stroke
+
+        # Load precomputed features, if exists
+        self.precomputed_dataset_statistics = False
+        if os.path.exists(tmp_config['mu_dataset']) and os.path.exists(tmp_config['sigma_dataset']):
+            self.mu_dataset = torch.load(config["train"]["losses"]["fid"]['mu_dataset'])
+            self.sigma_dataset = torch.load(config["train"]["losses"]["fid"]['sigma_dataset'])
+
+            print(self.mu_dataset.shape)
+            print(self.sigma_dataset.shape)
+
+            #assert self.mu_dataset.shape[0] == self.dim_features
+            #assert self.sigma_dataset.shape == [self.dim_features, self.dim_features]
+
+            self.precomputed_dataset_statistics = True
+
+    def get_index(self, L, K=10) :
         ids = []
         for i in range(L) :
             for j in range(L) :
-                if (j > i + self.K) or (j < i - self.K) or i == j :
+                if (j > i + K) or (j < i - K) or i == j :
                     continue
                 else :
                     ids.append([i, j])
-
-        ids = torch.tensor(ids)
+        ids = np.array(ids)
         self.id0 = ids[:, 0]
         self.id1 = ids[:, 1]
         self.n = ids.shape[0]
-
-        self.dim_features = self.n * self.param_per_stroke
 
     def compute_features(self, x) :
         bs = x.shape[0]
@@ -565,21 +595,109 @@ class FIDLoss(nn.Module) :
         return diff.dot(diff) + torch.trace(sigma1) + torch.trace(sigma2) - 2 * tr_covmean
 
 
-    def __call__(self, ctx, seq, preds):
+    def fast_fid(self, x, y, eps: float = 1e-6) -> float :
+        # https://arxiv.org/pdf/2009.14075.pdf
+
+        _, m = x.shape
+        mu_x = torch.mean(x, dim=1, keepdim=False)
+        C_x = (x - mu_x[:, None]) / np.sqrt(m-1)
+        sigma_x = C_x.mm(C_x.t())
+
+
+        # Load the pre-computed mu and sigma if exists
+        if self.precomputed_dataset_statistics:
+            mu_y = self.mu_dataset.to(x.device)
+            sigma_y = self.sigma_dataset.to(x.device)
+        else:
+            mu_y = torch.mean(y, dim=1, keepdim=False)
+            C_y = (y - mu_y[:, None]) / np.sqrt(m-1)
+            sigma_y = C_y.mm(C_y.t())
+
+
+        # Compute the FID
+        diff = mu_x - mu_y
+
+        # Compute S
+        S = C_x.t().mm(sigma_y).mm(C_x)
+        e, _ = torch.linalg.eig(S)
+        tr_covmean = torch.sum(torch.abs(torch.sqrt(e)))
+
+        return diff.dot(diff) + torch.trace(sigma_x) + torch.trace(sigma_y) - 2 * tr_covmean
+
+    def kl(self, params, reference_params, eps=1e-8):
+
+        variance, mean = torch.var_mean(params, dim=-1)
+        log_variance = torch.log(variance)
+
+        if self.precomputed_dataset_statistics:
+            reference_variance = self.sigma_dataset.to(params.device)
+            reference_mean = self.mu_dataset.to(params.device)
+        else:
+            reference_variance, reference_mean = torch.var_mean(reference_params, dim=-1)
+        reference_log_variance = torch.log(reference_variance)
+
+        variance = torch.clamp(variance, min=eps)
+        reference_variance = torch.clamp(reference_variance, min=eps)
+
+        variance_ratio = variance / reference_variance
+        mus_term = (reference_mean - mean).pow(2) / reference_variance
+        kl = reference_log_variance - log_variance - 1 + variance_ratio + mus_term
+
+        kl = kl.sum(dim=-1)
+        kl = 0.5 * kl.mean()
+        return kl
+
+
+    def __call__(self, preds, batch):
 
         if not self.active:
             return torch.tensor([0], device=preds.device)
+        if preds.shape[0] < 8:
+            return torch.tensor([0], device=preds.device)
+
+        # REAL
+        if self.precomputed_dataset_statistics:
+            f_real = None   # Use the one stored
+        else:
+            x_real = torch.cat((batch['strokes_ctx'], batch['strokes_seq']), dim=1) # cat on length dim
+            if self.use_color_img:
+                c_real = sample_color(pos=x_real[:, :, :2],
+                                      ref_imgs=batch['img'])
+
+                x_real = torch.cat((x_real, c_real), dim=-1) # cat on the channel dim
+
+            # Compute the features
+            f_real = self.compute_features(x_real)
+
+
+        # PREDS
+        x_pred = torch.cat((batch['strokes_ctx'], preds), dim=1)
+        if self.use_color_img:
+            c_pred = sample_color(pos=x_pred[:, :, :2],
+                                  ref_imgs=batch['img'])
+            x_pred = torch.cat((x_pred, c_pred), dim=-1)
+        # Compute features
+        f_pred = self.compute_features(x_pred)
+
+        # Compute divergence between distributions
+        if self.mode == 'fid':
+            loss = self.fast_fid(f_pred, f_real)
+        elif self.mode == 'kl':
+            loss = self.kl(params=f_pred, reference_params=f_real)
+
+        return loss
+
         # Real sequence
         # real_seq = torch.cat((ctx, seq), dim=1)
-        real_seq = self.compute_features(seq)
+        # real_seq = self.compute_features(seq)
 
-        real_cov = torch.cov(real_seq)
-        real_mean = torch.mean(real_seq, dim=-1)
+        # real_cov = torch.cov(real_seq)
+        # real_mean = torch.mean(real_seq, dim=-1)
 
         # Generated seq
-        #gen_seq = torch.cat((ctx, preds), dim=1)
-        gen_seq = self.compute_features(preds)
-        gen_cov = torch.cov(gen_seq)
-        gen_mean = torch.mean(gen_seq, dim=-1)
+        # gen_seq = torch.cat((ctx, preds), dim=1)
+        # gen_seq = self.compute_features(preds)
+        # gen_cov = torch.cov(gen_seq)
+        # gen_mean = torch.mean(gen_seq, dim=-1)
 
-        return self.fid_score_torch(mu1=real_mean, mu2=gen_mean, sigma1=real_cov, sigma2=gen_cov)
+        # return self.fid_score_torch(mu1=real_mean, mu2=gen_mean, sigma1=real_cov, sigma2=gen_cov)

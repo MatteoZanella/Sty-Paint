@@ -54,7 +54,7 @@ class VAEModel(nn.Module) :
             reference_img_render = self.config["train"]["losses"]["reference_img"]["render"]["weight"],
             reference_img_pos_color = self.config["train"]["losses"]["reference_img"]["pos_color"]["weight"],
             random_reference_img_color = self.config["train"]["losses"]["reference_img"]["color_wo_z"]["weight"],
-            random_fid =  cosine_scheduler(base_value=self.config["train"]["losses"]["fid"]["weight"],
+            random_fid = cosine_scheduler(base_value=self.config["train"]["losses"]["fid"]["weight"],
                                     final_value=self.config["train"]["losses"]["fid"]["weight"],
                                     warmup_epochs=100,
                                     epochs = self.config["train"]["n_epochs"],
@@ -81,7 +81,7 @@ class VAEModel(nn.Module) :
                            "enc_loss_reference_img_render",
                            "random_loss_reference_img_color", "random_loss_fid",
                            "kl_div", "tot"]
-        self.logs_names = ["mu", "sigma", "kl_weight", "lrG", "grad_normG"]
+        self.logs_names = ["mu", "sigma", "kl_weight", "lrG", "grad_normG", "fid_weight"]
 
         self.eval_metrics_names = ['random_loss_position', 'random_loss_size', 'random_loss_theta', 'random_loss_color',
                                    'random_loss_reference_img', 'random_color_l2', 'random_color_l1',
@@ -132,32 +132,33 @@ class VAEModel(nn.Module) :
 
 
     def train_one_step(self, batch, epoch, idx):
-        prediction = self.forward(batch, sample_z=self.sample_z)
-
+        # prediction = self.forward(batch, sample_z=self.sample_z)
         self.optimizerG.zero_grad()
+
+        ## Forward Pass with z
+        _, seq_length, _ = batch['strokes_seq'].shape
+        # Encode z
+        context, visual_features = self.context_encoder(batch)
+        z, mu, log_sigma = self.vae_encoder(batch, context)
+        fake_data_encoded = self.vae_decoder(z=z,
+                                             context=context,
+                                             visual_features=visual_features,
+                                             seq_length=seq_length)
+
         # 1 - kl divergence
-        kl_div = self.KLDivergence(prediction["mu"], prediction["log_sigma"])
+        kl_div = self.KLDivergence(mu, log_sigma)
 
         # 2 - reconstruction loss
-        loss_position, loss_size, loss_theta, loss_color = self.criterionRec(predictions=prediction["fake_data_encoded"],
+        loss_position, loss_size, loss_theta, loss_color = self.criterionRec(predictions=fake_data_encoded,
                                                         targets=batch["strokes_seq"])
         # 3 - reference image loss
-        loss_reference_img_color = self.criterionColorImg(predictions=prediction["fake_data_encoded"],
+        loss_reference_img_color = self.criterionColorImg(predictions=fake_data_encoded,
                                                         ref_imgs=batch['img'])
-        loss_reference_img_render = self.criterionRefImg(predictions=prediction["fake_data_encoded"],
+        loss_reference_img_render = self.criterionRefImg(predictions=fake_data_encoded,
                                                         ref_imgs=batch['img'],
                                                         canvas_start=batch['canvas'])
-        loss_reference_img_pos_color = self.criterionPosColor(predictions=prediction["fake_data_encoded"],
+        loss_reference_img_pos_color = self.criterionPosColor(predictions=fake_data_encoded,
                                                         ref_imgs=batch['img'])
-
-        # Computed only if z is sampled
-        random_loss_reference_img_color = self.criterionColorImgNoZ(predictions=prediction["fake_data_random"],
-                                                        ref_imgs=batch['img'])
-
-
-        random_loss_fid = self.criterionFID(ctx=batch['strokes_ctx'],
-                                            seq=batch['strokes_seq'],
-                                            preds=prediction['fake_data_random'])
 
 
         # sum all the losses
@@ -168,11 +169,28 @@ class VAEModel(nn.Module) :
                     loss_reference_img_color * self.weights["reference_img_color"] + \
                     loss_reference_img_render * self.weights["reference_img_render"] + \
                     loss_reference_img_pos_color * self.weights["reference_img_pos_color"] + \
-                    random_loss_reference_img_color * self.weights['random_reference_img_color'] + \
-                    random_loss_fid * self.weights['random_fid'][epoch] + \
                     kl_div * self.weights['kl_div'][epoch]
 
-        total_loss_G.backward()
+        total_loss_G.backward(retain_graph=self.sample_z)
+        ## Forward without z
+        if self.sample_z:
+            random_z = torch.randn_like(z)
+            fake_data_random = self.vae_decoder(z=random_z,
+                                                context=context,
+                                                visual_features=visual_features,
+                                                seq_length=seq_length)
+
+            random_loss_reference_img_color = self.criterionColorImgNoZ(predictions=fake_data_random,
+                                                                        ref_imgs=batch['img'])
+            random_loss_fid = self.criterionFID(preds=fake_data_random,
+                                                batch=batch)
+
+            total_loss_G_random_z = random_loss_reference_img_color * self.weights['random_reference_img_color'] + \
+                                    random_loss_fid * self.weights['random_fid'][epoch]
+
+            total_loss_G_random_z.backward()
+
+
         grad_normG = torch.nn.utils.clip_grad_norm_(self.learnable_params, self.config["train"]["optimizer"]["clip_grad"])
         self.optimizerG.step()
         self.LRSchedulerG.step_update(epoch * self.n_iters_per_epoch + idx)
@@ -186,18 +204,25 @@ class VAEModel(nn.Module) :
             enc_loss_reference_img_color=loss_reference_img_color.item(),
             enc_loss_reference_img_render = loss_reference_img_render.item(),
             enc_loss_reference_img_pos_color = loss_reference_img_pos_color.item(),
-            random_loss_reference_img_color = random_loss_reference_img_color.item(),
-            random_loss_fid = random_loss_fid.item(),
             kl_div = kl_div.item(),
             tot = total_loss_G.item())
+        if self.sample_z:
+            log_losses.update(
+                random_loss_reference_img_color=random_loss_reference_img_color.item(),
+                random_loss_fid=random_loss_fid.item(),
+            )
 
         # additional info
         log_info = dict(
-            mu = torch.abs(prediction["mu"]).mean().data.item(),
-            sigma = prediction["log_sigma"].exp().mean().data.item(),
+            mu = torch.abs(mu).mean().data.item(),
+            sigma = log_sigma.exp().mean().data.item(),
             kl_weight=self.weights['kl_div'][epoch],
             lrG = self.optimizerG.param_groups[0]["lr"],
             grad_normG = grad_normG.item(),)
+        if self.sample_z:
+            log_info.update(
+                fid_weight=self.weights['random_fid'][epoch]
+            )
 
         return log_losses, log_info
 
