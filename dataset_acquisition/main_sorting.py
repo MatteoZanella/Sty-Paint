@@ -17,14 +17,14 @@ import pandas as pd
 def get_args():
     # settings
     parser = argparse.ArgumentParser(description='STYLIZED NEURAL PAINTING')
-    parser.add_argument('--csv_file', default='/data/eperuzzo/brushstrokes-generation/code/dataset_acquisition/chunks/chunk_00.csv')
-    parser.add_argument('--data_path', default='/data/eperuzzo/oxford_pet_dataset/oxford_pet_brushstrokes_params/')
-    parser.add_argument('--output_path', default='/data/eperuzzo/oxford_pet_dataset/oxford_pet_sorting/')
-    parser.add_argument('--imgs_path', default='/data/eperuzzo/oxford_pet_dataset/original_dataset/images/')
-    parser.add_argument('--annotations_path', default='/data/eperuzzo/oxford_pet_dataset/original_dataset/annotations/')
+    parser.add_argument('--csv_file', default='/data/eperuzzo/oxford_pet_params/oxford_pet_config_files/chunk_00.csv')
+    parser.add_argument('--data_path', default='/data/eperuzzo/oxford_pet_params/oxford_pet_brushstrokes_params/')
+    parser.add_argument('--output_path', default='/data/eperuzzo/oxford_dataset_v2/oxford_pet_sorting/')
+    parser.add_argument('--imgs_path', default='/data/eperuzzo/images/')
+    parser.add_argument('--annotations_path', default='/data/eperuzzo/annotations/')
     parser.add_argument('--n_threads', default=20, type=int)
     parser.add_argument('--gpu_id', default=0, type=int)
-    parser.add_argument('--lkh_solver', default='/data/eperuzzo/brushstrokes-generation/LKH-3.0.6/LKH', type=str)
+    parser.add_argument('--lkh_solver', default='/data/eperuzzo/LKH-3.0.7/LKH', type=str)
     parser.add_argument('--canvas_size', default=512, type=int)
     return parser.parse_args()
 
@@ -40,8 +40,8 @@ def process_image(args, source_image, w):
 
     annotation_path = os.path.join(args.annotations_path, source_image + '.png')
     sm = utils.load_segmentation(annotation_path, args.canvas_size)
-    saliency = utils.extract_salient(args.img_path, args.canvas_size)
-    graph_features = strokes_loader.add_segmentation_saliency(sm, saliency, args.canvas_size)
+    #saliency = utils.extract_salient(args.img_path, args.canvas_size)
+    graph_features = strokes_loader.add_segmentation_saliency(sm, args.canvas_size)
     # --------------------------------------------------------------------------------------------------------------
     # Create the adj list and add precedence based on layers
     alphas = np.load(os.path.join(src_path, 'alpha.npz'))['alpha']
@@ -126,7 +126,7 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, filename=os.path.join(args.output_path, log_name + '.log'))
 
     # Weights for LKH
-    weights = {'color' : 2, 'area' : 1, 'pos' : 0, 'class' : 7.5, 'sal' : 0}
+    weights = {'color' : 1, 'area' : 1, 'pos' : 0.5, 'class' : 0, 'sal' : 0}
 
 
     # Load image list

@@ -19,11 +19,11 @@ def get_args():
     parser.add_argument('--dataset_path', required=True, help='where the dataset will be stored')
     parser.add_argument('--csv_file',
                         default='/data/eperuzzo/brushstrokes-generation/code/dataset_acquisition/chunks/chunk_00.csv', type=str)
-    parser.add_argument('--index_path', default='/data/eperuzzo/oxford_pet_dataset/oxford_pet_sorting/', help='base folder with sorting results')
-    parser.add_argument('--strokes_path', default='/data/eperuzzo/oxford_pet_dataset/oxford_pet_brushstrokes_params/', help='base folder with decomposition results')
+    parser.add_argument('--index_path', default='/data/eperuzzo/oxford_pet_params/oxford_pet_sorting_v2/', help='base folder with sorting results')
+    parser.add_argument('--strokes_path', default='/data/eperuzzo/oxford_pet_params/oxford_pet_brushstrokes_params/', help='base folder with decomposition results')
     parser.add_argument('--log_path', default='')
-    parser.add_argument('--images_path', default='/data/eperuzzo/oxford_pet_dataset/original_dataset/images/')
-    parser.add_argument('--painter_config', default='../configs/decomposition/painter_config.yaml')
+    parser.add_argument('--images_path', default='/data/eperuzzo/images/')
+    parser.add_argument('--painter_config', default='/data/eperuzzo/brushstrokes-generation/configs/decomposition/painter_config.yaml')
     parser.add_argument('--gpu_id', default=0, type=int, help='GPU index')
 
     return parser.parse_args()
@@ -76,7 +76,7 @@ if __name__ == '__main__':
             idx_paths = glob.glob(os.path.join(args.index_path, img_name.split('.')[0], 'lkh', 'index', '*.pkl'))
 
             for idx_path in idx_paths:
-                name = os.path.basename(idx_path).split('.')[0]
+                name = os.path.basename(idx_path)[:-4]#.split('.')[0]
                 os.mkdir(os.path.join(tmp_path, f'render_{name}'))
 
                 with open(idx_path, 'rb') as f:

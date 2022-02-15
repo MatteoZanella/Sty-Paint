@@ -10,7 +10,6 @@ from .networks import *
 
 import torch
 import torch.optim as optim
-from model.training.losses import FIDLoss
 
 def _normalize(x, width):
     return (int)(x * (width - 1) + 0.5)
@@ -89,6 +88,39 @@ class PainterBase():
         self.final_rendered_images = None
         self.m_grid = None
         self.m_strokes_per_block = None
+
+        if os.path.exists(self.args.dataset_feat_mean) and os.path.exists(self.args.dataset_feat_var):
+            self.mu_dataset = torch.load('/home/eperuzzo/kl_mean_var/features_seq_mean.pth')
+            self.sigma_dataset = torch.load('/home/eperuzzo/kl_mean_var/features_seq_var.pth')
+
+    def _compute_kl(self, params, eps=1e-8) :
+
+        params = params[:, :, :11]
+
+        color = 0.5 * (params[:, :, 5:8] + params[:, :, 8:])
+        x = torch.cat((params[:, :, :5], color), dim=-1)
+
+        x = utils.compute_features(x)
+        variance, mean = torch.var_mean(x, dim=-1)
+        log_variance = torch.log(variance)
+
+
+        reference_variance = self.sigma_dataset.to(params.device)
+        reference_mean = self.mu_dataset.to(params.device)
+        reference_log_variance = torch.log(reference_variance)
+
+        variance = torch.clamp(variance, min=eps)
+        reference_variance = torch.clamp(reference_variance, min=eps)
+
+        variance_ratio = variance / reference_variance
+        mus_term = (reference_mean - mean).pow(2) / reference_variance
+        kl = reference_log_variance - log_variance - 1 + variance_ratio + mus_term
+
+        kl = kl.sum(dim=-1)
+        kl = 0.5 * kl.mean()
+
+        print(f'KL loss: {kl}')
+        return kl
 
     def _load_checkpoint(self):
 
@@ -272,6 +304,8 @@ class PainterBase():
         if self.args.with_ot_loss:
             self.G_loss += self.args.beta_ot * self._sinkhorn_loss(
                 self.G_final_pred_canvas, self.img_batch)
+        if self.args.with_kl_loss:
+            self.G_loss += self.args.beta_kl * self._compute_kl(self.x)
         self.G_loss.backward()
 
 
@@ -563,8 +597,14 @@ class Painter(PainterBase):
         self.m_grid = 1
         self.m_strokes_per_block = 8
         self.max_strokes = 8
-        iters_per_stroke = 10  # number of optimizations steps for a single stroke
-        clamp_value = 0.9 # TODO: change this to be adaptive wrt the windows size
+        iters_per_stroke = self.args.n_iters_per_strokes  # number of optimizations steps for a single stroke
+        if CANVAS_tmp.shape[-1] == 128:
+            clamp_value = 0.4
+        elif CANVAS_tmp.shape[-1] == 64:
+            clamp_value = 0.3
+        else:
+            clamp_value = 0.25
+        clamp_value = 0.4 # TODO: change this to be adaptive wrt the windows size
         img = cv2.resize(img.permute(1,2,0).cpu().numpy(), (self.net_G.out_size * self.max_divide, self.net_G.out_size * self.max_divide), cv2.INTER_AREA)
         if CANVAS_tmp is not None:
             CANVAS_tmp = torch.nn.functional.interpolate(CANVAS_tmp.unsqueeze(0), size=(self.net_G.out_size * self.max_divide, self.net_G.out_size * self.max_divide))
