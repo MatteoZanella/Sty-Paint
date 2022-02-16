@@ -15,6 +15,7 @@ from collections import OrderedDict
 import matplotlib.pyplot as plt
 
 from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
+from evaluation.paint_transformer.torch_implementation import PaintTransformer
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -112,7 +113,7 @@ if __name__ == '__main__' :
     parser.add_argument("--checkpoint_baseline", type=str,
                         default='/home/eperuzzo/PaintTransformerPaddle/inference/paint_best.pdparams')
 
-    parser.add_argument("--config", default='configs/eval/eval.yaml')
+    parser.add_argument("--config", default='configs/eval/eval_v2.yaml')
     parser.add_argument("--output_path", type=str, default='./results/')
     args = parser.parse_args()
 
@@ -154,14 +155,14 @@ if __name__ == '__main__' :
     )
 
     files = {
-        'Bengal_192' : 400,
+        'Bengal_192' : 40,
         'american_bulldog_115' : 191,
         'Bombay_153' : 34,
-        'german_shorthaired_106' : 560,
+        'german_shorthaired_106' : 120,
         'Abyssinian_55' : 480,
         'Abyssinian_117':590,
-        'Abyssinian_206' : 550,
-        'Abyssinian_120' : 490,
+        'Abyssinian_206' : 130,
+        'Abyssinian_120' : 10,
         'beagle_62' : 260,}
         # 'beagle_27' : 273,
         # 'Maine_Coon_264' : 60,
@@ -203,7 +204,8 @@ if __name__ == '__main__' :
         original='Original',
         our_w_z ='Our w/ z',
         our_wo_z = 'Our w/o z',
-        #baseline='Baseline',
+        snp = 'SNP',
+        pt='PT',
         )
 
     for filename, ts in files.items():
@@ -218,34 +220,36 @@ if __name__ == '__main__' :
         n_iters = 5
         visuals = dict()
 
-        our_predicitons = dict()
-        for name, model in models.items() :
-            ## Our model
-            if name == 'our':
-                our_predicitons['our_w_z'] = dict()
-                our_predicitons['our_wo_z'] = dict()
-                for n in range(n_iters):
-                    with torch.no_grad():
-                        preds = model(data, sample_z=True, seq_length=8)
-                        our_predicitons['our_w_z'].update({n : preds["fake_data_encoded"].cpu().numpy()})
-                        our_predicitons['our_wo_z'].update({n : preds["fake_data_random"].cpu().numpy()})
-            ## Baseline model
-            else:
-                baseline_predictions = model.generate(data)
-                if torch.is_tensor(baseline_predictions) :
-                    baseline_predictions = baseline_predictions.cpu().numpy()
+        our_predicitons = dict(
+            our_w_z=dict(),
+            our_wo_z=dict()
+        )
+        ## Our model
+        for n in range(n_iters):
+            with torch.no_grad():
+                preds = model(data, sample_z=True, seq_length=8)
+                our_predicitons['our_w_z'].update({n : preds["fake_data_encoded"].cpu().numpy()})
+                our_predicitons['our_wo_z'].update({n : preds["fake_data_random"].cpu().numpy()})
 
-        #visuals.update({'baseline' : produce_visuals(baseline_predictions, batch['strokes_ctx'], renderer, starting_point)})
+        ## Baseline model
+        baseline_predictions = baseline.generate(data)
+        snp_predicitons = renderer.generate(data)
+        if torch.is_tensor(baseline_predictions) :
+            baseline_predictions = baseline_predictions.cpu().numpy()
+            snp_predicitons = snp_predicitons.cpu().numpy()
+
+        visuals.update({'pt' : produce_visuals(baseline_predictions, batch['strokes_ctx'], renderer, starting_point)})
+        visuals.update({'snp' : produce_visuals(snp_predicitons, batch['strokes_ctx'], renderer, starting_point)})
         visuals.update({'original' : produce_visuals(batch['strokes_seq'], batch['strokes_ctx'], renderer, starting_point)})
         visuals.update({'reference' : img})
 
         for name, tmp in our_predicitons.items():
             visuals.update({name : dict()})
             for n, preds in tmp.items():
-                visuals[name].update({n : produce_visuals(preds, batch['strokes_ctx'], renderer, starting_point, seq=batch['strokes_seq'])})
+                visuals[name].update({n : produce_visuals(preds, batch['strokes_ctx'], renderer, starting_point, seq=None)})
 
          # Shaw and save
-        fig, axs = plt.subplots(n_iters, 4, figsize=(30,30), gridspec_kw = {'wspace':0, 'hspace':0})
+        fig, axs = plt.subplots(n_iters, 6, figsize=(30,30), gridspec_kw = {'wspace':0, 'hspace':0})
 
         for n in range(n_iters):
             ii = 0

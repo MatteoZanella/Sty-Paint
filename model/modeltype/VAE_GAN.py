@@ -7,7 +7,9 @@ from timm.scheduler.cosine_lr import CosineLRScheduler
 from model.training.losses import KLDivergence, ReconstructionLoss, ColorImageLoss, RenderImageLoss
 from model.training.losses import GANLoss, cal_gradient_penalty
 from evaluation.metrics import compute_color_difference
-from model.utils.utils import cosine_scheduler
+from model.utils.utils import cosine_scheduler, produce_visuals
+from dataset_acquisition.decomposition.painter import Painter
+from dataset_acquisition.decomposition.utils import load_painter_config
 
 def set_requires_grad(nets, requires_grad=False) :
     """Set requires_grad=False for all the networks to avoid unnecessary computations
@@ -30,6 +32,7 @@ class VAEGANModel(nn.Module) :
         self.context_encoder = context_encoder.ContextEncoder(config)
         self.vae_encoder = encoder.Encoder(config)
         self.vae_decoder = decoder.Decoder(config)
+        self.renderer = Painter(args=load_painter_config(config["renderer"]["painter_config"]))
 
         # Disc
         self.netD = discriminator.Discriminator(config)
@@ -83,18 +86,20 @@ class VAEGANModel(nn.Module) :
             theta=self.config["train"]["losses"]["reconstruction"]["weight"]["theta"],
             color=self.config["train"]["losses"]["reconstruction"]["weight"]["color"],
             reference_img_color=self.config["train"]["losses"]["reference_img"]["color"]["weight"],
+            random_reference_img_color=self.config["train"]["losses"]["reference_img"]["color_wo_z"]["weight"],
             reference_img_render=self.config["train"]["losses"]["reference_img"]["render"]["weight"],
             kl_div=cosine_scheduler(base_value=self.config["train"]["losses"]["kl"]["weight"],
                                     final_value=self.config["train"]["losses"]["kl"]["weight"],
                                     warmup_epochs=self.config["train"]["losses"]["kl"]["warmup_epochs"],
-                                    epochs=self.config["train"]["n_epochs"]),
+                                    epochs=self.config["train"]["n_epochs"],
+                                    patience_epochs=self.config["train"]["losses"]["kl"]["patience_epochs"]),
             G=self.config["train"]["losses"]["gan"]["weight"]["G"],
             D=self.config["train"]["losses"]["gan"]["weight"]["D"])
 
         # Losses
         self.KLDivergence = KLDivergence()
         self.criterionRec = ReconstructionLoss(mode=self.config["train"]["losses"]["reconstruction"]["mode"])
-        self.criterionColorImg = ColorImageLoss(mode=self.config["train"]["losses"]["reference_img"]["color"]["mode"])
+        self.criterionColorImg = ColorImageLoss(config=self.config)
         self.criterionRefImg = RenderImageLoss(config=self.config)
 
         self.gan_mode = self.config["train"]["losses"]["gan"]["mode"]
@@ -176,67 +181,71 @@ class VAEGANModel(nn.Module) :
 
 
     def train_one_step(self, batch, epoch, idx):
-
-        prediction = self.forward(batch)
-        ## ========= Train Generator / Encoder
+        # prediction = self.forward(batch, sample_z=self.sample_z)
         self.optimizerG.zero_grad()
+        self.optimizerD.zero_grad()
+        #  ==== Forward ====
+        _, seq_length, _ = batch['strokes_seq'].shape
+        # Encode z
+        context, visual_features = self.context_encoder(batch)
+        z, mu, log_sigma = self.vae_encoder(batch, context)
+        fake_data_encoded = self.vae_decoder(z=z,
+                                             context=context,
+                                             visual_features=visual_features,
+                                             seq_length=seq_length)
+        #  ==== Compute Losses ====
+        # 1 - kl divergence
+        kl_div = self.KLDivergence(mu, log_sigma)
 
-        # 1 - fool discriminator
-        set_requires_grad([self.netD], False)
-        enc_loss_G = self.criterionGAN(self.netD(prediction["fake_data_encoded"], prediction["context"]), True)
-        random_loss_G = self.criterionGAN(self.netD(prediction["fake_data_random"], prediction["context"]), True)
-
-        # 2 - kl divergence
-        kl_div = self.KLDivergence(prediction["mu"], prediction["log_sigma"])
-
-        # 3 - reconstruction loss
-        loss_position, loss_size, loss_theta, loss_color = self.criterionRec(predictions=prediction["fake_data_encoded"],
-                                                                             targets=batch["strokes_seq"])
-        # 4 - reference image loss
-        # Encoded
-        enc_loss_reference_img_color = self.criterionColorImg(predictions=prediction["fake_data_encoded"],
-                                                          ref_imgs=batch['img'])
-        enc_loss_reference_img_render = self.criterionRefImg(predictions=prediction["fake_data_encoded"],
-                                                          ref_imgs=batch['img'],
-                                                          canvas_start=batch['canvas'])
-        # Random
-        random_loss_reference_img_color = self.criterionColorImg(predictions=prediction["fake_data_random"],
-                                                          ref_imgs=batch['img'])
-        random_loss_reference_img_render = self.criterionRefImg(predictions=prediction["fake_data_random"],
-                                                          ref_imgs=batch['img'],
-                                                          canvas_start=batch['canvas'])
+        # 2 - reconstruction loss
+        loss_position, loss_size, loss_theta, loss_color = self.criterionRec(predictions=fake_data_encoded,
+                                                        targets=batch["strokes_seq"])
+        # 3 - reference image loss
+        loss_reference_img_color = self.criterionColorImg(predictions=fake_data_encoded,
+                                                        ref_imgs=batch['img'])
+        loss_reference_img_render = self.criterionRefImg(predictions=fake_data_encoded,
+                                                        ref_imgs=batch['img'],
+                                                        canvas_start=batch['canvas'])
 
         # sum all the losses
         total_loss_G = loss_position * self.weights['position'] + \
-                        loss_size * self.weights["size"] + \
-                        loss_theta * self.weights["theta"] + \
-                        loss_color * self.weights["color"] + \
-                        kl_div * self.weights['kl_div'][epoch] + \
-                        enc_loss_reference_img_color * self.weights['reference_img_color'] + \
-                        enc_loss_reference_img_render * self.weights['reference_img_render'] + \
-                        random_loss_reference_img_color * self.weights['reference_img_color'] + \
-                        random_loss_reference_img_render * self.weights['reference_img_render'] + \
-                        enc_loss_G * self.weights['G'] + \
-                        random_loss_G * self.weights['G']
+                    loss_size * self.weights["size"] + \
+                    loss_theta * self.weights["theta"] + \
+                    loss_color * self.weights["color"] + \
+                    loss_reference_img_color * self.weights["reference_img_color"] + \
+                    loss_reference_img_render * self.weights["reference_img_render"] + \
+                    kl_div * self.weights['kl_div'][epoch]
 
-        total_loss_G.backward()
+        total_loss_G.backward(retain_graph=True)
+        #  ==== Sample z ====
+        set_requires_grad([self.netD], False)
+
+        random_z = torch.randn_like(z)
+        fake_data_random = self.vae_decoder(z=random_z,
+                                            context=context,
+                                            visual_features=visual_features,
+                                            seq_length=seq_length)
+
+        random_loss_reference_img_color = self.criterionColorImg(predictions=fake_data_random,
+                                                                 ref_imgs=batch['img'])
+        gan_loss_G = self.criterionGAN(self.netD(fake_data_random, batch['strokes_ctx']), True)
+        random_loss_G =  gan_loss_G * self.weights['G'] + \
+                         random_loss_reference_img_color * self.weights['random_reference_img_color']
+        random_loss_G.backward()
+
+        # SGD step
         grad_normG = torch.nn.utils.clip_grad_norm_(self.netG_params,
                                                     self.config["train"]["optimizer"]["clip_grad"])
         self.optimizerG.step()
         self.LRSchedulerG.step_update(epoch * self.n_iters_per_epoch + idx)
-
         ## ========= Train Discriminator
         set_requires_grad([self.netD], True)
-        self.optimizerD.zero_grad()  # maybe we should divide the optimizers
-        enc_loss_D = self.step_D(fake=prediction["fake_data_encoded"],
-                                     real=batch["strokes_seq"],
-                                     context=prediction["context"])
-        random_loss_D = self.step_D(fake=prediction["fake_data_random"],
-                                    real=batch["strokes_seq"],
-                                    context=prediction["context"])
 
-        total_loss_D = enc_loss_D * self.weights['D'] + \
-                       random_loss_D * self.weights['D']
+        random_loss_D = self.step_D(fake=fake_data_random,
+                                    real=batch["strokes_seq"],
+                                    context=batch['strokes_ctx'])
+
+        total_loss_D = random_loss_D * self.weights['D']
 
         total_loss_D.backward()
         grad_normD = torch.nn.utils.clip_grad_norm_(self.netD.parameters(),
@@ -244,27 +253,27 @@ class VAEGANModel(nn.Module) :
         self.optimizerD.step()
         self.LRSchedulerD.step_update(epoch * self.n_iters_per_epoch + idx)
 
-        # merge losses and loss info in two dicts
+
+        # ===== LOG =====
         log_losses = dict(
             enc_loss_position = loss_position.item(),
             enc_loss_size = loss_size.item(),
             enc_loss_theta = loss_theta.item(),
             enc_loss_color= loss_color.item(),
-            enc_loss_reference_img_color = enc_loss_reference_img_color.item(),
-            enc_loss_reference_img_render=enc_loss_reference_img_render.item(),
+            enc_loss_reference_img_color = loss_reference_img_color.item(),
+            enc_loss_reference_img_render=loss_reference_img_render.item(),
             kl_div = kl_div.item(),
             random_loss_reference_img_color = random_loss_reference_img_color.item(),
-            random_loss_reference_img_render=random_loss_reference_img_render.item(),
-            enc_loss_G = enc_loss_G.item(),
+            #enc_loss_G = enc_loss_G.item(),
             random_loss_G = random_loss_G.item(),
-            enc_loss_D = enc_loss_D.item(),
+            #enc_loss_D = enc_loss_D.item(),
             random_loss_D = random_loss_D.item()
             )
 
         # additional info
         log_info = dict(
-            mu=torch.abs(prediction["mu"]).mean().data.item(),
-            sigma=prediction["log_sigma"].exp().mean().data.item(),
+            mu=torch.abs(mu).mean().data.item(),
+            sigma=log_sigma.exp().mean().data.item(),
             lrG=self.optimizerG.param_groups[0]["lr"],
             grad_normG=grad_normG.item(),
             kl_weight=self.weights['kl_div'][epoch],
@@ -274,7 +283,7 @@ class VAEGANModel(nn.Module) :
         return log_losses, log_info
 
     @torch.no_grad()
-    def test_one_step(self, batch, fd_z_random, fd_z_encoded):
+    def test_one_step(self, batch, fd_z_random, fd_z_encoded, get_visual=False):
         # Forward
         predictions = self.forward(batch, sample_z=True)
 
@@ -297,6 +306,22 @@ class VAEGANModel(nn.Module) :
         # Fd
         fd_z_random.update_queue(original=batch["strokes_seq"], generated=predictions["fake_data_random"])
         fd_z_encoded.update_queue(original=batch["strokes_seq"], generated=predictions["fake_data_encoded"])
+
+        visuals = None
+        if get_visual :
+            batch_id = 0
+            plot_w_z = produce_visuals(predictions["fake_data_encoded"][batch_id].unsqueeze(0),
+                                       ctx=batch["strokes_ctx"][batch_id].unsqueeze(0),
+                                       renderer=self.renderer,
+                                       st=batch['canvas'][0].permute(1, 2, 0).cpu().numpy(),
+                                       seq=batch["strokes_seq"][batch_id].unsqueeze(0))
+            plot_wo_z = produce_visuals(predictions["fake_data_random"][batch_id].unsqueeze(0),
+                                        ctx=batch["strokes_ctx"][batch_id].unsqueeze(0),
+                                        renderer=self.renderer,
+                                        st=batch['canvas'][0].permute(1, 2, 0).cpu().numpy(),
+                                        seq=batch["strokes_seq"][batch_id].unsqueeze(0))
+
+            visuals = {'plot_w_z' : plot_w_z, 'plot_wo_z' : plot_wo_z}
 
         # logs
         eval_metrics = dict(
@@ -321,4 +346,4 @@ class VAEGANModel(nn.Module) :
             ref_color_l2 = ref_color_l2.item()
         )
 
-        return eval_metrics, logs_info
+        return eval_metrics, logs_info, visuals

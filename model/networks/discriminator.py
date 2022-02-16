@@ -90,28 +90,52 @@ class Conv1dDiscriminator(nn.Module):
         super(Conv1dDiscriminator, self).__init__()
         self.s_params = config["model"]["n_strokes_params"]
         self.seq_length = config["dataset"]["sequence_length"]
+        self.contex_length = config["dataset"]["context_length"]
         self.num_layers = config["model"]["discriminator"]["num_layers"]
 
-        self.blocks = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv1d(in_channels=self.s_params * (2 ** i),
-                          out_channels=self.s_params * (2 ** (i + 1)),
-                          kernel_size=3,
-                          padding=1),
-                nn.BatchNorm1d(self.s_params * (2 ** (i + 1))))
-            for i in range(self.num_layers)])
 
-        self.head = nn.Conv1d(in_channels=self.s_params * (2 ** (self.num_layers)),
-                              out_channels=1,
-                              kernel_size=self.seq_length)
+        self.net = nn.Sequential(
+
+            nn.Conv1d(in_channels=8,
+                      out_channels=32,
+                      kernel_size=5,
+                      padding=1),
+            nn.BatchNorm1d(32),
+            nn.ReLU(inplace=True),
+
+            nn.Conv1d(in_channels=32,
+                      out_channels=64,
+                      kernel_size=5,
+                      padding=1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True),
+
+            nn.Conv1d(in_channels=64,
+                      out_channels=128,
+                      kernel_size=3,
+                      padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+
+            nn.Conv1d(in_channels=128,
+                      out_channels=256,
+                      kernel_size=3,
+                      padding=1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True)
+
+        )
+        self.m = nn.AdaptiveAvgPool1d(1)
+        self.head = nn.Linear(256, 1)
 
 
-    def forward(self, x):
+    def forward(self, x, context):
+        x = torch.cat((context, x), dim=1)
         x = rearrange(x, 'bs L dim -> bs dim L')
-        for blk in self.blocks:
-            x = blk(x)
+        x = self.net(x)
+        x = self.m(x).squeeze()
         x = self.head(x)
-        return x.squeeze(1)
+        return x
 #######################################################################
 # Patch GAN Discriminator, from: https://github.com/junyanz/BicycleGAN/blob/master/models/networks.py
 
@@ -179,7 +203,7 @@ class Discriminator(nn.Module):
         if self.disc_type == "transformer":
             return self.net(x, context)
         elif self.disc_type == "conv1d":
-            return self.net(x)
+            return self.net(x, context)
         elif self.disc_type == 'patch_gan':
             return self.net(x)
         else:

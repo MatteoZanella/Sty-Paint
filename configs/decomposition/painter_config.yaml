@@ -7,6 +7,11 @@ keep_aspect_ratio: False
 beta_L1: 1.0
 with_ot_loss: False
 beta_ot: 0.1
+with_kl_loss : False
+dataset_feat_mean : ''
+dataset_feat_var : ''
+beta_kl : 0.0
+n_iters_per_strokes : 15
 net_G: 'zou-fusion-net'
 renderer_checkpoint_dir: '/data/eperuzzo/checkpoints_G_oilpaintbrush'
 lr: 0.005

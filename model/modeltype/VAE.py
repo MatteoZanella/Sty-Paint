@@ -9,6 +9,7 @@ from evaluation.metrics import compute_color_difference
 from model.utils.utils import cosine_scheduler, produce_visuals
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
+from einops import rearrange, repeat
 
 class VAEModel(nn.Module) :
 
@@ -121,6 +122,43 @@ class VAEModel(nn.Module) :
                                                 context=context,
                                                 visual_features=visual_features,
                                                 seq_length=seq_length)
+
+        out = dict(
+            fake_data_encoded=fake_data_encoded,
+            fake_data_random=fake_data_random,
+            mu=mu,
+            log_sigma=log_sigma,
+        )
+        return out
+
+    def generate(self, batch, n_samples=5, seq_length=None):
+
+        if seq_length is None :
+            bs, seq_length, _ = batch['strokes_seq'].shape
+
+        # Encode z
+        context, visual_features = self.context_encoder(batch)
+        z, mu, log_sigma = self.vae_encoder(batch, context)
+
+
+        fake_data_encoded = self.vae_decoder(z=z,
+                                             context=context,
+                                             visual_features=visual_features,
+                                             seq_length=seq_length)
+
+
+        # Fake data
+        Z = torch.randn((bs * n_samples, z.shape[-1]), device=z.device)
+        context = repeat(context, 'L bs dim -> L (bs n_samples) dim', n_samples=n_samples)
+        visual_features = repeat(visual_features, 'bs dim h w -> (bs n_samples) dim h w', n_samples=n_samples)
+
+        # random_z = Z[torch.argmin(difference)][None]
+        fake_data_random = self.vae_decoder(z=Z,
+                                            context=context,
+                                            visual_features=visual_features,
+                                            seq_length=seq_length)
+
+        #fake_data_random = rearrange(fake_data_random, '(bs n_samples) seq_len n_params -> bs n_samples seq_len n_params', n_samples=n_samples)
 
         out = dict(
             fake_data_encoded=fake_data_encoded,
