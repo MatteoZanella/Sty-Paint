@@ -89,38 +89,11 @@ class PainterBase():
         self.m_grid = None
         self.m_strokes_per_block = None
 
+        '''
         if os.path.exists(self.args.dataset_feat_mean) and os.path.exists(self.args.dataset_feat_var):
             self.mu_dataset = torch.load('/home/eperuzzo/kl_mean_var/features_seq_mean.pth')
             self.sigma_dataset = torch.load('/home/eperuzzo/kl_mean_var/features_seq_var.pth')
-
-    def _compute_kl(self, params, eps=1e-8) :
-
-        params = params[:, :, :11]
-
-        color = 0.5 * (params[:, :, 5:8] + params[:, :, 8:])
-        x = torch.cat((params[:, :, :5], color), dim=-1)
-
-        x = utils.compute_features(x)
-        variance, mean = torch.var_mean(x, dim=-1)
-        log_variance = torch.log(variance)
-
-
-        reference_variance = self.sigma_dataset.to(params.device)
-        reference_mean = self.mu_dataset.to(params.device)
-        reference_log_variance = torch.log(reference_variance)
-
-        variance = torch.clamp(variance, min=eps)
-        reference_variance = torch.clamp(reference_variance, min=eps)
-
-        variance_ratio = variance / reference_variance
-        mus_term = (reference_mean - mean).pow(2) / reference_variance
-        kl = reference_log_variance - log_variance - 1 + variance_ratio + mus_term
-
-        kl = kl.sum(dim=-1)
-        kl = 0.5 * kl.mean()
-
-        print(f'KL loss: {kl}')
-        return kl
+        '''
 
     def _load_checkpoint(self):
 
@@ -304,8 +277,6 @@ class PainterBase():
         if self.args.with_ot_loss:
             self.G_loss += self.args.beta_ot * self._sinkhorn_loss(
                 self.G_final_pred_canvas, self.img_batch)
-        if self.args.with_kl_loss:
-            self.G_loss += self.args.beta_kl * self._compute_kl(self.x)
         self.G_loss.backward()
 
 
@@ -591,12 +562,76 @@ class Painter(PainterBase):
                              save_video=save_video,
                              save_gif=save_gif)
 
+    def _optimize_kl(self, params, eps=1e-7):
+
+        params.requires_grad = True
+        opt = optim.RMSprop([params], lr=float(self.args.kl_lr), centered=True)
+
+        # Reference
+        reference_variance = self.variance.to(params.device)
+        reference_mean = self.mean.to(params.device)
+        reference_variance = torch.clamp(reference_variance, min=eps)
+        reference_log_variance = torch.log(reference_variance)
+
+        for i in range(50):
+            opt.zero_grad()
+
+            x = torch.cat((self.ctx, params), dim=1)
+            x = utils.compute_features(x)
+            variance, mean = torch.var_mean(x, dim=0)
+            variance = torch.clamp(variance, min=eps)
+            log_variance = torch.log(variance)
+
+            variance_ratio = variance / reference_variance
+            mus_term = (reference_mean - mean).pow(2) / reference_variance
+            kl = reference_log_variance - log_variance - 1 + variance_ratio + mus_term
+
+            kl = kl.sum(dim=-1)
+            kl = 0.5 * kl.mean()
+            print(f'Iter: [{i} / 20], : kl : {kl.item()}')
+            kl = kl * self.args.beta_kl
+            kl.backward()
+            opt.step()
+
+        return params
+
+    def _normalize_strokes_predict(self, v):
+        v = v.detach()
+
+        # xc, yc, w, h, theta ...
+        xs = np.array([0])
+        ys = np.array([1])
+        rs = np.array([2, 3])
+
+        for y_id in range(self.m_grid):
+            for x_id in range(self.m_grid):
+                y_bias = y_id / self.m_grid
+                x_bias = x_id / self.m_grid
+                v[y_id * self.m_grid + x_id, :, ys] = \
+                    y_bias + v[y_id * self.m_grid + x_id, :, ys] / self.m_grid
+                v[y_id * self.m_grid + x_id, :, xs] = \
+                    x_bias + v[y_id * self.m_grid + x_id, :, xs] / self.m_grid
+                v[y_id * self.m_grid + x_id, :, rs] /= self.m_grid
+
+        v[:, :, 0] = (v[:, :, 0] * self.ws + self.x1) / self.args.canvas_size
+        v[:, :, 1] = (v[:, :, 1] * self.ws + self.y1) / self.args.canvas_size
+        v[:, :, 2] = (v[:, :, 2] * self.ws) / self.args.canvas_size
+        v[:, :, 3] = (v[:, :, 3] * self.ws) / self.args.canvas_size
+
+        v = v[:, :, :11]  # remove alpha
+        final_color = 0.5 * (v[:, :, 5 :8] + v[:, :, 8 :])
+        final_params = torch.cat((v[:, :, :5], final_color), dim=-1)
+        return final_params
+
     def predict(self, img, CANVAS_tmp=None) :
 
         self.max_divide = 1
-        self.m_grid = 1
+        self.m_grid = 10
         self.m_strokes_per_block = 8
         self.max_strokes = 8
+
+        import pdb
+        pdb.set_trace()
         iters_per_stroke = self.args.n_iters_per_strokes  # number of optimizations steps for a single stroke
         if CANVAS_tmp.shape[-1] == 128:
             clamp_value = 0.4
@@ -604,7 +639,6 @@ class Painter(PainterBase):
             clamp_value = 0.3
         else:
             clamp_value = 0.25
-        clamp_value = 0.4 # TODO: change this to be adaptive wrt the windows size
         img = cv2.resize(img.permute(1,2,0).cpu().numpy(), (self.net_G.out_size * self.max_divide, self.net_G.out_size * self.max_divide), cv2.INTER_AREA)
         if CANVAS_tmp is not None:
             CANVAS_tmp = torch.nn.functional.interpolate(CANVAS_tmp.unsqueeze(0), size=(self.net_G.out_size * self.max_divide, self.net_G.out_size * self.max_divide))
@@ -652,17 +686,11 @@ class Painter(PainterBase):
                 self.optimizer_x.step()
                 self.step_id += 1
 
-        PARAMS = self._normalize_strokes(self.x)
+        PARAMS = self._normalize_strokes_predict(self.x)
         #PARAMS, idx_grid = self._shuffle_strokes_and_reshape(PARAMS)
         #PARAMS = self.get_checked_strokes(PARAMS)
-
-        PARAMS = PARAMS[:, :, :11]  # remove alpha
-
-        final_color = 0.5* (PARAMS[:, :, 5:8] + PARAMS[:, :, 8:])
-        final_params = np.concatenate((PARAMS[:, :, :5], final_color), axis=-1)
-
         #final_rendered_image, alphas = self._render(final_params, save_jpgs=False, save_video=False)
-        return final_params.squeeze()  #, final_rendered_image
+        return PARAMS
 
     def get_ctx(self, ctx):
         # Location of the last stroke
@@ -689,31 +717,31 @@ class Painter(PainterBase):
         strokes_ctx = data['strokes_ctx']
 
         bs = original.shape[0]
-        out = np.empty([bs, 8, 8])
+        out = []
+
+        if self.args.with_kl_loss :
+            tmp = torch.cat((data['strokes_ctx'], data['strokes_seq']), dim=1)
+            tmp_feat = utils.compute_features(tmp)
+            self.variance, self.mean = torch.var_mean(tmp_feat, dim=0)
+            self.ctx = data['strokes_ctx']
 
         for b in range(bs):
             print(f'Elem: [{b} / {bs}]')
-            st_point, ws = self.get_ctx(strokes_ctx[b])
+            st_point, self.ws = self.get_ctx(strokes_ctx[b])
 
-            x1, x2, y1, y2 = get_bbox(st_point, ws, self.args.canvas_size)
+            self.x1, self.x2, self.y1, self.y2 = get_bbox(st_point, self.ws, self.args.canvas_size)
 
             # crop
-            curr_img = original[b, :, y1 :y2, x1 :x2]
-            curr_canvas = canvas_start[b, :, y1 :y2, x1 :x2]
+            curr_img = original[b, :, self.y1 : self.y2, self.x1 : self.x2]
+            curr_canvas = canvas_start[b, :, self.y1 : self.y2, self.x1 : self.x2]
 
             # Predict strokes
             sparms = self.predict(curr_img, curr_canvas)
+            out.append(sparms)
 
-            # Refactor sparams to match stylized neural painter renderer
-            n = sparms.shape[0]
-            # sparms = np.concatenate((sparms, sparms[:, -3:]), axis=-1)   # replicate the color
-            sparms[:, 0] = (sparms[:, 0] * ws + x1) / self.args.canvas_size
-            sparms[:, 1] = (sparms[:, 1] * ws + y1) / self.args.canvas_size
-            sparms[:, 2] = (sparms[:, 2] * ws) / self.args.canvas_size
-            sparms[:, 3] = (sparms[:, 3] * ws) / self.args.canvas_size
+        snp_preds = torch.cat(out, dim=0)
+        snp_plus = self._optimize_kl(snp_preds.clone())
 
-
-            out[b] = sparms
-
-
-        return out.astype('float32')
+        snp_preds = snp_preds.detach().cpu().numpy().astype('float32')
+        snp_plus = snp_plus.detach().cpu().numpy().astype('float32')
+        return snp_preds, snp_plus
