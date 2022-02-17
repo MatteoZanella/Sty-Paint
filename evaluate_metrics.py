@@ -156,6 +156,12 @@ def main(args, exp_name):
     # Renderer (Stylized Neural Painting)
     render_config = load_painter_config(config["renderer"]["painter_config"])
     renderer = Painter(args=render_config)
+    if args.use_snp:
+        snp_plus_config = copy.deepcopy(render_config)
+        snp_plus_config.beta_kl = 0.00000001
+        snp_plus_config.with_kl_loss = True
+        snp_plus = Painter(args=snp_plus_config)
+
 
     print(f'Processing: {exp_name}')
     checkpoint_path = os.path.join(args.checkpoint_base, exp_name, 'latest.pth.tar')
@@ -181,16 +187,16 @@ def main(args, exp_name):
     # ======= Metrics ========================
     # fvd = FVD()
     fd_our = FDMetricIncremental()
-    fd_our_w_context = FDWithContextMetricIncremental(seq_len=18, K=10)
+    fd_our_w_context = FDWithContextMetricIncremental(name='our', seq_len=18, K=10)
 
     fd_baseline = FDMetricIncremental()
-    fd_baseline_w_context = FDWithContextMetricIncremental(seq_len=18, K=10)
+    fd_baseline_w_context = FDWithContextMetricIncremental(name='pt', seq_len=18, K=10)
 
     fd_snp = FDMetricIncremental()
-    fd_snp_w_context = FDWithContextMetricIncremental(seq_len=18, K=10)
+    fd_snp_w_context = FDWithContextMetricIncremental(name='snp', seq_len=18, K=10)
 
     fd_snp_plus = FDMetricIncremental()
-    fd_snp_plus_w_context = FDWithContextMetricIncremental(seq_len=18, K=10)
+    fd_snp_plus_w_context = FDWithContextMetricIncremental(name='snp_plus', seq_len=18, K=10)
 
     # Average Meters
     eval_names = ['wd', 'maskedL2', 'color_diff_l1', 'color_diff_l2', 'dtw']
@@ -216,6 +222,19 @@ def main(args, exp_name):
                 eval_model(data=data, net=baseline, metric_logger=baseline_metrics, fd=fd_baseline, fd_ctx=fd_baseline_w_context,
                            is_our=False, renderer=renderer)
             if args.use_snp:
+                eval_model(data=data, net=renderer, metric_logger=snp_metrics, fd=fd_snp,
+                           fd_ctx=fd_snp_w_context,
+                           is_our=False,
+                           renderer=renderer)
+
+                eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics,
+                           fd=fd_snp_plus,
+                           fd_ctx=fd_snp_plus_w_context,
+                           is_our=False,
+                           renderer=renderer)
+
+
+                '''
                 eval_snp(data=data, net=renderer,
                          metric_snp=snp_metrics,
                          fd=fd_snp,
@@ -224,6 +243,7 @@ def main(args, exp_name):
                          fd_plus=fd_snp_plus,
                          fd_ctx_plus=fd_snp_plus_w_context,
                          renderer=renderer)
+                '''
 
     #  TODO:
     results = {}
