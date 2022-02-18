@@ -519,6 +519,10 @@ class FIDLoss(nn.Module) :
         else:
             self.use_color_img = False
 
+        self.reweight_kl = tmp_config["reweight_kl"]
+        if self.reweight_kl:
+            self.param_per_stroke -= 3
+
         self.dim_features = self.n * self.param_per_stroke
 
         # Load precomputed features, if exists
@@ -551,8 +555,13 @@ class FIDLoss(nn.Module) :
     def compute_features(self, x) :
         bs = x.shape[0]
         feat = torch.empty((bs, self.dim_features))
-        for j in range(self.param_per_stroke) :
-            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, j] - x[:, self.id1, j]
+        if self.reweight_kl:
+            param_list = [0, 1, 5, 6, 7]
+        else:
+            param_list = [0, 1, 2, 3, 4, 5, 6, 7]
+
+        for j in range(len(param_list)) :
+            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, param_list[j]] - x[:, self.id1, param_list[j]]
         return feat.t().contiguous()
 
     def fid_score_torch(self,

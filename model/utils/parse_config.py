@@ -19,10 +19,10 @@ class ConfigParser:
         w_color = self.config["train"]["losses"]["reconstruction"]["weight"]["color"]
         w_ref_color =self.config["train"]["losses"]["reference_img"]["color"]["weight"]
         w_ref_render =  self.config["train"]["losses"]["reference_img"]["render"]["weight"]
-        w_pos_color = self.config["train"]["losses"]["reference_img"]["pos_color"]["weight"]
+        #w_pos_color = self.config["train"]["losses"]["reference_img"]["pos_color"]["weight"]
         w_kl = self.config["train"]["losses"]["kl"]["weight"]
 
-        name = f'{m_type}-pos{str(w_pos)}-gt_col{str(w_color)}-ref_col{str(w_ref_color)}-pos_col{str(w_pos_color)}-kl{str(w_kl)}'
+        name = f'{m_type}-pos{str(w_pos)}-gt_col{str(w_color)}-ref_col{str(w_ref_color)}-kl{str(w_kl)}'
 
         self.config["train"]["logging"]["exp_name"] += name
 

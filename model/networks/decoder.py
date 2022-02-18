@@ -144,7 +144,7 @@ class Decoder2Step(nn.Module):
         feat_temp = repeat(feat, 'bs ch h w -> (L bs) ch h w', L=n_strokes)
         grid = rearrange(pos, 'L bs p -> (L bs) 1 1 p')
 
-        pooled_features = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='bicubic', padding_mode='border')
+        pooled_features = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='bilinear', padding_mode='border')
         pooled_features = rearrange(pooled_features, '(L bs) ch 1 1 -> L bs ch', L=n_strokes)
 
         return pooled_features
@@ -173,7 +173,6 @@ class Decoder2Step(nn.Module):
         color_tokens = self.bilinear_sampling_length_first(visual_features, pos_pred)
         color_tokens = self.color_tokens_proj(color_tokens)
         color_tokens += self.PE.pe_strokes_tokens(pos=pos_pred, device=color_tokens.device)
-
         color_tokens = self.color_decoder(color_tokens, context)
 
         if not self.residual_position:

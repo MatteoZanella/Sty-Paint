@@ -131,7 +131,7 @@ class VAEModel(nn.Module) :
         )
         return out
 
-    def generate(self, batch, n_samples=5, seq_length=None):
+    def generate(self, batch, n_samples=1, seq_length=None, select_best=False):
 
         if seq_length is None :
             bs, seq_length, _ = batch['strokes_seq'].shape
@@ -158,7 +158,16 @@ class VAEModel(nn.Module) :
                                             visual_features=visual_features,
                                             seq_length=seq_length)
 
-        #fake_data_random = rearrange(fake_data_random, '(bs n_samples) seq_len n_params -> bs n_samples seq_len n_params', n_samples=n_samples)
+        if select_best:
+            fake_data_random = rearrange(fake_data_random,
+                                         '(bs n_samples) L n_params -> bs n_samples L n_params',
+                                         n_samples=n_samples)
+            target = repeat(batch['strokes_seq'], 'bs L n_params -> bs n_samples L n_params', n_samples=n_samples)
+            score = torch.nn.functional.mse_loss(target[:, :, :, :4], fake_data_random[:, :, :, :4], reduction='none').mean(dim=[2,3])
+            idx = torch.argmin(score, dim=1)
+            fake_data_random = fake_data_random[:, idx].squeeze(dim=1)
+
+        #
 
         out = dict(
             fake_data_encoded=fake_data_encoded,

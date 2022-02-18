@@ -86,7 +86,7 @@ class ContextEncoder(nn.Module) :
         # Add PE
         visual_feat += self.PE.pe_visual_tokens(device=visual_feat.device)
         visual_feat += self.visual_token
-        ctx_sequence += self.PE.pe_strokes_tokens(pos = strokes_ctx, device=ctx_sequence.device)
+        ctx_sequence += self.PE.pe_strokes_tokens(pos=strokes_ctx, device=ctx_sequence.device)
         ctx_sequence += self.stroke_token
 
         # Merge Context
