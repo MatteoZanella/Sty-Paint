@@ -87,6 +87,39 @@ def sample_color(params, imgs) :
     out_params = torch.cat((params.clone()[:, :, :5], color), dim=-1)
     return out_params.cpu().numpy()
 
+def get_index(L, K=10):
+    ids = []
+    for i in range(L) :
+        for j in range(L) :
+            if (j > i + K) or (j < i - K) or i == j :
+                continue
+            else :
+                ids.append([i, j])
+    ids = np.array(ids)
+    id0 = ids[:, 0]
+    id1 = ids[:, 1]
+    n = ids.shape[0]
+    return id0, id1, n
+
+
+
+def compute_features(x):
+    _, L, n_params = x.shape
+    id0, id1, n = get_index(L)
+    dim_features = n * n_params
+
+    bs = x.shape[0]
+    if torch.is_tensor(x):
+        feat = torch.empty((bs, dim_features), device=x.device)
+    else:
+        feat = np.empty((bs, dim_features))
+    for j in range(n_params) :
+        feat[:, j * n : (j + 1) * n] = x[:, id0, j] - x[:, id1, j]
+
+    feat_pos = feat[:, :2 * n]  # first two params are (x, y)
+    feat_color = feat[:, 5 * n:] # last 3 params are (r, g, b)
+    return {"feat": feat, "feat_pos" : feat_pos, "feat_color" : feat_color}
+
 
 def create_video(frames, path, size, scale=False):
     mul = 1 if not scale else 255

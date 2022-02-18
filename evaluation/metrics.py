@@ -9,7 +9,7 @@ def compute_color_difference(x):
         l1 = torch.abs(torch.diff(x, dim=1)).mean()
         l2 = torch.pow(torch.diff(x, dim=1), 2).mean()
     else:
-        l1 = np.abs(np.diff(x, axis=1)).sum(axis=1).mean()  #TODO check
+        l1 = np.abs(np.diff(x, axis=1)).mean()  #TODO check
         l2 = np.square(np.diff(x, axis=1)).mean()
 
     return l1, l2
@@ -152,8 +152,8 @@ class FDMetric :
     def compute_mean_cov(self, feat):
         out = dict(mu_all=np.mean(feat, axis=0),
                    cov_all=np.cov(feat, rowvar=False),
-                   mu_position=np.mean(feat[:, :5 * self.n]),
-                   cov_position=np.cov(feat[:, :5 * self.n], rowvar=False),
+                   mu_position=np.mean(feat[:, :2 * self.n]),
+                   cov_position=np.cov(feat[:, :2 * self.n], rowvar=False),
                    mu_color=np.mean(feat[:, 5 * self.n:]),
                    cov_color=np.cov(feat[:, 5 * self.n:], rowvar=False))
         return out
@@ -260,8 +260,8 @@ class FDMetricIncremental :
         self.generated_features = np.concatenate(self.generated_features)
         generated = dict(mu_all=np.mean(self.generated_features, axis=0),
                    cov_all=np.cov(self.generated_features, rowvar=False),
-                   mu_position=np.mean(self.generated_features[:, :5 * self.n]),
-                   cov_position=np.cov(self.generated_features[:, :5 * self.n], rowvar=False),
+                   mu_position=np.mean(self.generated_features[:, :2 * self.n]),
+                   cov_position=np.cov(self.generated_features[:, :2 * self.n], rowvar=False),
                    mu_color=np.mean(self.generated_features[:, 5 * self.n:]),
                    cov_color=np.cov(self.generated_features[:, 5 * self.n:], rowvar=False))
 
@@ -270,8 +270,8 @@ class FDMetricIncremental :
         self.original_features = np.concatenate(self.original_features)
         original =  dict(mu_all=np.mean(self.original_features, axis=0),
                    cov_all=np.cov(self.original_features, rowvar=False),
-                   mu_position=np.mean(self.original_features[:, :5 * self.n]),
-                   cov_position=np.cov(self.original_features[:, :5 * self.n], rowvar=False),
+                   mu_position=np.mean(self.original_features[:, :2 * self.n]),
+                   cov_position=np.cov(self.original_features[:, :2 * self.n], rowvar=False),
                    mu_color=np.mean(self.original_features[:, 5 * self.n:]),
                    cov_color=np.cov(self.original_features[:, 5 * self.n:], rowvar=False))
 
@@ -297,10 +297,11 @@ class FDMetricIncremental :
 
 ########################################################################################################################
 class FDWithContextMetricIncremental :
-    def __init__(self, seq_len=18, K =10) :
+    def __init__(self, name= '', seq_len=18, K =10) :
         """
         Compute batched FD metric
         """
+        self.name = name
         self.param_per_stroke = 8
 
         L = seq_len
@@ -387,6 +388,7 @@ class FDWithContextMetricIncremental :
 
     def compute_mean_cov(self) :
         self.generated_features = np.concatenate(self.generated_features)
+        np.save(f'/home/eperuzzo/FEAT/{self.name}_generated', self.generated_features)
         generated = dict(mu_all=np.mean(self.generated_features, axis=0),
                          cov_all=np.cov(self.generated_features, rowvar=False),
                          mu_position=np.mean(self.generated_features[:, :5 * self.n]),
@@ -396,6 +398,7 @@ class FDWithContextMetricIncremental :
 
         # Original
         self.original_features = np.concatenate(self.original_features)
+        np.save(f'/home/eperuzzo/FEAT/{self.name}_original', self.original_features)
         original = dict(mu_all=np.mean(self.original_features, axis=0),
                         cov_all=np.cov(self.original_features, rowvar=False),
                         mu_position=np.mean(self.original_features[:, :5 * self.n]),
@@ -424,6 +427,60 @@ class FDWithContextMetricIncremental :
                                                    sigma2=orig['cov_color']))
 
         return output
+
+
+def calculate_frechet_distance(x, y, compute_mean_cov=True, eps=1e-6):
+
+    if torch.is_tensor(x):
+        x = x.detach().cpu().numpy()
+    if torch.is_tensor(y):
+        y = y.detach().cpu().numpy()
+
+    if compute_mean_cov:
+        mu1 = np.mean(x, axis=0)
+        sigma1 = np.cov(x, rowvar=False)
+        mu2 = np.mean(y, axis=0)
+        sigma2 = np.cov(y, rowvar=False)
+
+    mu1 = np.atleast_1d(mu1)
+    mu2 = np.atleast_1d(mu2)
+
+    sigma1 = np.atleast_2d(sigma1)
+    sigma2 = np.atleast_2d(sigma2)
+
+    assert mu1.shape == mu2.shape, \
+        'Training and test mean vectors have different lengths'
+    assert sigma1.shape == sigma2.shape, \
+        'Training and test covariances have different dimensions'
+
+    diff = mu1 - mu2
+
+    # Product might be almost singular
+    covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+    if not np.isfinite(covmean).all() :
+        msg = ('fid calculation produces singular product; '
+               'adding %s to diagonal of cov estimates') % eps
+        print(msg)
+        offset = np.eye(sigma1.shape[0]) * eps
+        covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
+
+    # Numerical error might give slight imaginary component
+    if np.iscomplexobj(covmean) :
+        if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3) :
+            m = np.max(np.abs(covmean.imag))
+            raise ValueError('Imaginary component {}'.format(m))
+        covmean = covmean.real
+
+    tr_covmean = np.trace(covmean)
+    return (diff.dot(diff) + np.trace(sigma1)
+            + np.trace(sigma2) - 2 * tr_covmean)
+
+def compute_fid(x, y, compute_mean_cov=True):
+    fid = calculate_frechet_distance(x["feat"], y["feat"])
+    fid_pos = calculate_frechet_distance(x["feat_pos"], y["feat_pos"])
+    fid_color = calculate_frechet_distance(x["feat_color"], y["feat_color"])
+
+    return {"fid" : fid, "fid_pos" : fid_pos, "fid_color" : fid_color}
 
 # ======================================================================================================================
 import lpips
