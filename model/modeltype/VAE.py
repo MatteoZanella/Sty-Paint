@@ -308,7 +308,7 @@ class VAEModel(nn.Module) :
         if get_visual:
             batch_id = 0
             pred_wz = check_strokes(predictions["fake_data_encoded"][batch_id].unsqueeze(0))
-            pred_wo_z = check_strokes(predictions["fake_data_random"][batch_id]).unsqueeze(0)
+            pred_wo_z = check_strokes(predictions["fake_data_random"][batch_id].unsqueeze(0))
             plot_w_z = produce_visuals(pred_wz,
                                        ctx=batch["strokes_ctx"][batch_id].unsqueeze(0),
                                        renderer=self.renderer,
