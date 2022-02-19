@@ -10,6 +10,7 @@ from model.utils.utils import cosine_scheduler, produce_visuals
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 from einops import rearrange, repeat
+from evaluation.tools import check_strokes
 
 class VAEModel(nn.Module) :
 
@@ -306,12 +307,14 @@ class VAEModel(nn.Module) :
         visuals = None
         if get_visual:
             batch_id = 0
-            plot_w_z = produce_visuals(predictions["fake_data_encoded"][batch_id].unsqueeze(0),
+            pred_wz = check_strokes(predictions["fake_data_encoded"][batch_id].unsqueeze(0))
+            pred_wo_z = check_strokes(predictions["fake_data_random"][batch_id]).unsqueeze(0)
+            plot_w_z = produce_visuals(pred_wz,
                                        ctx=batch["strokes_ctx"][batch_id].unsqueeze(0),
                                        renderer=self.renderer,
                                        st=batch['canvas'][0].permute(1, 2, 0).cpu().numpy(),
                                        seq = batch["strokes_seq"][batch_id].unsqueeze(0))
-            plot_wo_z =  produce_visuals(predictions["fake_data_random"][batch_id].unsqueeze(0),
+            plot_wo_z =  produce_visuals(pred_wo_z,
                                        ctx=batch["strokes_ctx"][batch_id].unsqueeze(0),
                                        renderer=self.renderer,
                                        st=batch['canvas'][0].permute(1, 2, 0).cpu().numpy(),
