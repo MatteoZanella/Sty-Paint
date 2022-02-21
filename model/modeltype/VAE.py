@@ -103,6 +103,14 @@ class VAEModel(nn.Module) :
                     "config" : self.config}, path)
         print(f'Model saved at {path}')
 
+    def load_checkpoint(self, path):
+        print(f"Loading model from {path}")
+        ckpt = torch.load(path)
+        self.load_state_dict(ckpt["model"])
+        self.optimizerG.load_state_dict(ckpt["optimizerG"])
+        self.LRSchedulerG.load_state_dict(ckpt["schedulerG"])
+        return ckpt["epoch"]
+
 
     def forward(self, batch, sample_z=False, seq_length=None):
         if seq_length is None:

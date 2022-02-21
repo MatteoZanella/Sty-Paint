@@ -2,6 +2,7 @@ import yaml
 import os
 from pathlib import Path
 import torch
+import glob
 
 class ConfigParser:
     def __init__(self, config_path, isTrain=True):
@@ -37,11 +38,13 @@ class ConfigParser:
 
             self.create_exp_name()
             self.config["train"]["logging"]["checkpoint_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], self.config["train"]["logging"]["exp_name"])
-            f = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'latest.pth.tar')
+            f = os.path.join(self.config["train"]["logging"]["checkpoint_path"])
             if os.path.exists(f):
                 print(f'Auto Resume from : {f}')
-                self.config["train"]["auto_resume"]["active"] = True
-                self.config["train"]["auto_resume"]["resume_path"] = f
+                files = sorted(glob.glob(os.path.join(f, '*.pth.tar')))
+                if len(files) > 0:
+                    self.config["train"]["auto_resume"]["active"] = True
+                    self.config["train"]["auto_resume"]["resume_path"] = os.path.join(f, files[-1])
 
             #self.config["train"]["logging"]["log_render_path"] = os.path.join(self.config["train"]["logging"]["checkpoint_path"], 'renders')
             id_device = self.config["train"]["gpu_id"]
