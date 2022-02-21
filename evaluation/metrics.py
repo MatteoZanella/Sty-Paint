@@ -495,8 +495,21 @@ class LPIPSDiversityMetric:
     def get_combinations(self, n) :
         return np.array([i for i in itertools.combinations(range(n), 2)])
 
+    def rearrange_visuals(self, frames, alpha):
+
+        bs, n_samples, L, H, W, c = frames.shape
+        output = torch.empty((bs, n_samples, H, W, c))
+        for b in range(bs) :
+            for n in range(n_samples) :
+                rec = frames[b, n, 0]
+                for ii in range(1, L) :
+                    rec = frames[b, n, ii] * alpha[b, n, ii] + rec * (1 - alpha[b, n, ii])
+                output[b, n] = 2 * torch.tensor(rec) - 1   # shift to [-1, 1]
+
+        return output
+
     @torch.no_grad()
-    def __call__(self, x) :
+    def __call__(self, x, a) :
         """
         Args:
             x: numpy array of size [bs x n_samples x H x W x 3], contains n_samples continuations suggested by the model
@@ -506,11 +519,7 @@ class LPIPSDiversityMetric:
         n_samples = x.shape[1]
         idxs = self.get_combinations(n_samples)
 
-        x_tensor = torch.empty(x.shape)
-        for b in range(bs):
-            for l in range(n_samples):
-                x_tensor[b,l] = torch.tensor( 0.5 * x[b, l] + 1)   # shift images in the range [-1,1]
-
+        x_tensor = self.rearrange_visuals(x, a)
         x_tensor = x_tensor.permute(0, 1, 4, 2, 3)
         loss = []
         for b in range(bs):

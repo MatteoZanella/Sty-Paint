@@ -374,3 +374,30 @@ def plot_loss_curves(data, path):
         plt.close(f)
 
 
+def get_index(L, K=10):
+    ids = []
+    for i in range(L) :
+        for j in range(L) :
+            if (j > i + K) or (j < i - K) or i == j :
+                continue
+            else :
+                ids.append([i, j])
+    ids = np.array(ids)
+    id0 = ids[:, 0]
+    id1 = ids[:, 1]
+    n = ids.shape[0]
+    return id0, id1, n
+
+
+
+def compute_features(x):
+    _, L, n_params = x.shape
+    id0, id1, n = get_index(L)
+    dim_features = n * n_params
+
+    bs = x.shape[0]
+    feat = torch.empty((bs, dim_features), device=x.device)
+    for j in range(n_params) :
+        feat[:, j * n : (j + 1) * n] = x[:, id0, j] - x[:, id1, j]
+
+    return feat

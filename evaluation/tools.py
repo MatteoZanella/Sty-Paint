@@ -6,12 +6,17 @@ import torch.nn.functional as F
 
 def render_frames(params, batch, renderer) :
     params = check_strokes(params)
-    bs = params.shape[0]
+    p_bs = params.shape[0]
     L = params.shape[1]
-    frames = np.empty([bs, L, 256, 256, 3])
-    alphas = np.empty([bs, L, 256, 256, 1])
-    for i in range(bs) :
-        x = batch['canvas'][i].permute(1, 2, 0).cpu().numpy()
+
+    c_bs = batch['canvas'].shape[0]
+    n_samples = int(p_bs / c_bs)
+    canvas_start = repeat(batch['canvas'], 'bs ch h w -> (bs n_samples) ch h w', n_samples=n_samples)
+
+    frames = np.empty([p_bs, L, 256, 256, 3])
+    alphas = np.empty([p_bs, L, 256, 256, 1])
+    for i in range(p_bs) :
+        x = canvas_start[i].permute(1, 2, 0).cpu().numpy()
         for l in range(L) :
             x, alpha = renderer.inference(params[i, l, :][None, None, :], canvas_start=x)
             frames[i, l] = x

@@ -1,5 +1,6 @@
 import argparse
 import os
+import glob
 import pickle as pkl
 import random
 
@@ -14,93 +15,60 @@ import paddle
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 
-from evaluation.metrics import FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, FDMetricIncremental, FDWithContextMetricIncremental
+from evaluation.metrics import FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, compute_fid
 from evaluation.metrics import maskedL2, compute_dtw, compute_color_difference
 from evaluation.fvd import FVD
+from evaluation.tools import compute_features
 
 from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
-# from evaluation.paint_transformer.torch_implementation import PaintTransformer
 import pandas as pd
 import evaluation.tools as etools
 import numpy as np
 import copy
+from einops import rearrange, repeat
 import warnings
 warnings.filterwarnings("ignore")
 
 
-def eval_snp(data, net, metric_snp, fd, fd_ctx, metric_snp_plus, fd_plus, fd_ctx_plus, renderer):
+def np_and_save(x, path, name):
+    if not x:
+        return
+    x = np.concatenate(x)
+    np.save(os.path.join(path, name), x)
+
+def get_features(x, ctx=None):
+    if isinstance(x, list):
+        x = np.concatenate(x, axis=0)
+    feat_x = compute_features(x)
+    if ctx:
+        if isinstance(ctx, list):
+            ctx = np.concatenate(ctx)
+        feat_x_ctx = compute_features(np.concatenate((ctx, x), axis=1))
+        return feat_x, feat_x_ctx
+    else:
+        return feat_x
+
+def eval_fid(x, reference, reference_ctx, ctx):
+    x_feat, x_ctx_feat = get_features(x, ctx=ctx)
+    fid = compute_fid(reference, x_feat, compute_mean_cov=True)
+    ctx_fid = compute_fid(reference_ctx, x_ctx_feat, compute_mean_cov=True)
+    return fid, ctx_fid
+
+def eval_model(data, net, metric_logger, is_our, renderer):
+
     Wdist = WassersteinDistance()
+    if args.lpips and is_our:
+        LPIPS = LPIPSDiversityMetric()
+        feature_div = FeaturesDiversity()
 
     ctx = data['strokes_ctx'].cpu()
     targets = data['strokes_seq'].cpu()
     bs = targets.size(0)
 
-
-    snp, snp_plus = net.generate(data)
-    #######################################################
-    # SNP
-    snp = etools.check_strokes(snp)  # clamp in range [0,1]
-    snp_visuals = etools.render_frames(snp, data, renderer)
-    # color difference
-    color_diff_l1, color_diff_l2 = compute_color_difference(snp)
-    maskedl2 = maskedL2(data['img'], snp_visuals['frames'], snp_visuals['alphas'])
-    wd = Wdist(targets[:, :, :5], torch.tensor(snp[:, :, :5]))
-    dtw = compute_dtw(targets, snp)
-    fd.update_queue(original=targets,
-                    generated=snp)
-    fd_ctx.update_queue(original=np.concatenate((ctx, targets), axis=1),
-                        generated=np.concatenate((ctx, snp), axis=1))
-
-    # record metrics
-    metric_snp.update(
-        dict(
-            maskedL2=maskedl2.item(),
-            wd=wd.item(),
-            color_diff_l1=color_diff_l1.item(),
-            color_diff_l2=color_diff_l2.item(),
-            dtw=dtw.item()), bs)
-
-
-    ##################
-    # SNP plus
-    snp_plus = etools.check_strokes(snp_plus)  # clamp in range [0,1]
-    snp_plus_visuals = etools.render_frames(snp_plus, data, renderer)
-    # color difference
-    color_diff_l1, color_diff_l2 = compute_color_difference(snp_plus)
-    maskedl2 = maskedL2(data['img'], snp_plus_visuals['frames'], snp_plus_visuals['alphas'])
-    wd = Wdist(targets[:, :, :5], torch.tensor(snp_plus[:, :, :5]))
-    dtw = compute_dtw(targets, snp_plus)
-    fd_plus.update_queue(original=targets,
-                    generated=snp_plus)
-    fd_ctx_plus.update_queue(original=np.concatenate((ctx, targets), axis=1),
-                        generated=np.concatenate((ctx, snp_plus), axis=1))
-
-    # record metrics
-    metric_snp_plus.update(
-        dict(
-            maskedL2=maskedl2.item(),
-            wd=wd.item(),
-            color_diff_l1=color_diff_l1.item(),
-            color_diff_l2=color_diff_l2.item(),
-            dtw=dtw.item()), bs)
-
-def eval_model(data, net, metric_logger, fd, fd_ctx, is_our, renderer):
-
-    Wdist = WassersteinDistance()
-    # LPIPS = LPIPSDiversityMetric()
-    feature_div = FeaturesDiversity()
-
-    ctx = data['strokes_ctx'].cpu()
-    targets = data['strokes_seq'].cpu()
-    bs = targets.size(0)
-
-    # if is_our:
-    #     net.eval()
-    #     print(f'Model is training: {net.training}')
     if is_our:
         net.eval()
         with torch.no_grad() :
-            predictions = net.generate(data, n_samples=1)["fake_data_random"]
+            predictions = net.generate(data, n_samples=args.n_samples)["fake_data_random"]
     else:
         predictions = net.generate(data)
 
@@ -111,15 +79,24 @@ def eval_model(data, net, metric_logger, fd, fd_ctx, is_our, renderer):
 
     visuals = etools.render_frames(predictions, data, renderer)
 
+    if args.lpips and is_our:
+        predictions = rearrange(predictions, '(bs n_samples) L n_params -> bs n_samples L n_params', n_samples=args.n_samples)
+        visuals['frames'] = rearrange(visuals['frames'], '(bs n_samples) L H W ch -> bs n_samples L H W ch', n_samples=args.n_samples)
+        visuals['alphas'] = rearrange(visuals['alphas'], '(bs n_samples) L H W ch -> bs n_samples L H W ch', n_samples=args.n_samples)
+
+        lpips_val = LPIPS(visuals['frames'], visuals['alphas'])
+        metric_logger.update(dict(lpips = lpips_val.item()), bs)
+
+
+        visuals['frames'] = visuals['frames'][:, 0]
+        visuals['alphas'] = visuals['alphas'][:, 0]
+        predictions = predictions[:, 0]
+
     # color difference
     color_diff_l1, color_diff_l2 = compute_color_difference(predictions)
     maskedl2 = maskedL2(data['img'], visuals['frames'], visuals['alphas'])
     wd = Wdist(targets[:, :, :5], torch.tensor(predictions[:, :, :5]))
     dtw = compute_dtw(targets, predictions)
-    fd.update_queue(original=targets,
-                    generated=predictions)
-    fd_ctx.update_queue(original=np.concatenate((ctx, targets), axis=1),
-                        generated=np.concatenate((ctx, predictions), axis=1))
 
     # record metrics
     metric_logger.update(
@@ -129,6 +106,8 @@ def eval_model(data, net, metric_logger, fd, fd_ctx, is_our, renderer):
             color_diff_l1 = color_diff_l1.item(),
             color_diff_l2 = color_diff_l2.item(),
             dtw = dtw.item()), bs)
+
+    return predictions, visuals['frames']
 
 
 def main(args, exp_name):
@@ -158,13 +137,18 @@ def main(args, exp_name):
     renderer = Painter(args=render_config)
     if args.use_snp:
         snp_plus_config = copy.deepcopy(render_config)
-        snp_plus_config.beta_kl = 0.00000001
         snp_plus_config.with_kl_loss = True
         snp_plus = Painter(args=snp_plus_config)
 
 
     print(f'Processing: {exp_name}')
-    checkpoint_path = os.path.join(args.checkpoint_base, exp_name, 'latest.pth.tar')
+    tmp_path = os.path.join(args.checkpoint_base, exp_name)
+    if os.path.exists(os.path.join(tmp_path, 'latest.pth.tar')):
+        checkpoint_path = os.path.join(tmp_path, 'latest.pth.tar')
+    else:
+        checkpoint_path = sorted(glob.glob(os.path.join(tmp_path, '*.pth.tar')))[-1]
+    if len(checkpoint_path) == 0:
+        print(f'No checkpoint found at : {tmp_path}, skipping to the next!')
 
     # Output Path
     output_path = os.path.join(args.output_path, exp_name)
@@ -185,21 +169,11 @@ def main(args, exp_name):
     n_files = len(dataset_test) * args.n_iters_dataloader
     print('Number of files')
     # ======= Metrics ========================
-    # fvd = FVD()
-    fd_our = FDMetricIncremental()
-    fd_our_w_context = FDWithContextMetricIncremental(name='our', seq_len=18, K=10)
-
-    fd_baseline = FDMetricIncremental()
-    fd_baseline_w_context = FDWithContextMetricIncremental(name='pt', seq_len=18, K=10)
-
-    fd_snp = FDMetricIncremental()
-    fd_snp_w_context = FDWithContextMetricIncremental(name='snp', seq_len=18, K=10)
-
-    fd_snp_plus = FDMetricIncremental()
-    fd_snp_plus_w_context = FDWithContextMetricIncremental(name='snp_plus', seq_len=18, K=10)
+    original, ctx, our, pt, snp, snp2 = [], [], [], [], [], []
+    visual_original, visual_our, visual_pt, visual_snp, visual_snp2 = [], [], [], [], []
 
     # Average Meters
-    eval_names = ['wd', 'maskedL2', 'color_diff_l1', 'color_diff_l2', 'dtw']
+    eval_names = ['wd', 'maskedL2', 'color_diff_l1', 'color_diff_l2', 'dtw', 'lpips']
     our_metrics = AverageMetersDict(names=eval_names)
     baseline_metrics = AverageMetersDict(names=eval_names)
     snp_metrics = AverageMetersDict(names=eval_names)
@@ -216,56 +190,75 @@ def main(args, exp_name):
             ref_l1, ref_l2 = compute_color_difference(data['strokes_seq'])
             dataset_metrics.update(dict(color_diff_l1=ref_l1.item(), color_diff_l2 = ref_l2.item()), data['strokes_seq'].shape[0])
             # ======= Predict   ===========
-            eval_model(data=data, net=model, metric_logger=our_metrics, fd=fd_our, fd_ctx=fd_our_w_context,
-                       is_our=True, renderer=renderer)
+            our_predictions, our_vis = eval_model(data=data, net=model, metric_logger=our_metrics, is_our=True, renderer=renderer)
             if args.use_pt:
-                eval_model(data=data, net=baseline, metric_logger=baseline_metrics, fd=fd_baseline, fd_ctx=fd_baseline_w_context,
-                           is_our=False, renderer=renderer)
+                pt_predictions, pt_vis =eval_model(data=data, net=baseline, metric_logger=baseline_metrics, is_our=False, renderer=renderer)
             if args.use_snp:
-                eval_model(data=data, net=renderer, metric_logger=snp_metrics, fd=fd_snp,
-                           fd_ctx=fd_snp_w_context,
-                           is_our=False,
-                           renderer=renderer)
+                snp_predictions, snp_vis =eval_model(data=data, net=renderer, metric_logger=snp_metrics, is_our=False, renderer=renderer)
 
-                eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics,
-                           fd=fd_snp_plus,
-                           fd_ctx=fd_snp_plus_w_context,
-                           is_our=False,
-                           renderer=renderer)
+                snp2_predictions, snp2_vis = eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics, is_our=False, renderer=renderer)
 
+            # Add to the list
+            our.append(our_predictions)
+            visual_our.append(our_vis)
+            if args.use_pt:
+                pt.append(pt_predictions)
+                visual_pt.append(pt_vis)
+            if args.use_snp:
+                snp.append(snp_predictions)
+                visual_snp.append(snp_vis)
+                snp2.append(snp2_predictions)
+                visual_snp2.append(snp2_vis)
+            # Original
+            original.append(batch['strokes_seq'])
+            ctx.append(batch['strokes_ctx'])
+            orig_vis = etools.render_frames(batch['strokes_seq'], data, renderer)
+            visual_original.append(orig_vis['frames'])
 
-                '''
-                eval_snp(data=data, net=renderer,
-                         metric_snp=snp_metrics,
-                         fd=fd_snp,
-                         fd_ctx=fd_snp_w_context,
-                         metric_snp_plus=snp_plus_metrics,
-                         fd_plus=fd_snp_plus,
-                         fd_ctx_plus=fd_snp_plus_w_context,
-                         renderer=renderer)
-                '''
-
-    #  TODO:
+    # Aggragte metrics
     results = {}
+    original_feat, original_ctx_feat = get_features(original, ctx=ctx)
+    visual_original = np.concatenate(visual_original)
+    results.update(dataset_metrics.get_avg(header='dataset_'))
+
+
     results.update(our_metrics.get_avg(header='our_'))
-    results.update({f'our_fd_{k}' : v for k, v in fd_our.compute_fd().items()})
-    results.update({f'our_fd_wctx_{k}' : v for k, v in fd_our_w_context.compute_fd().items()})
+    our_fid, our_ctx_fid = eval_fid(x=our, reference=original_feat, reference_ctx=original_ctx_feat, ctx=ctx)
+    visual_our = np.concatenate(visual_our)
+    results.update({f'our_{k}' : v for k, v in our_fid.items()})
+    results.update({f'our_ctx_{k}' : v for k, v in our_ctx_fid.items()})
 
     if args.use_pt:
-        results.update(baseline_metrics.get_avg(header='baseline_'))
-        results.update({f'baseline_fd_{k}' : v for k, v in fd_baseline.compute_fd().items()})
-        results.update({f'baseline_fd_wctx_{k}' : v for k, v in fd_baseline_w_context.compute_fd().items()})
+        results.update(baseline_metrics.get_avg(header='pt_'))
+        pt_fid, pt_ctx_fid = eval_fid(x=pt, reference=original_feat, reference_ctx=original_ctx_feat, ctx=ctx)
+        visual_pt = np.concatenate(visual_pt)
+        results.update({f'pt_{k}' : v for k, v in pt_fid.items()})
+        results.update({f'pt_ctx_{k}' : v for k, v in pt_ctx_fid.items()})
 
     if args.use_snp:
         results.update(snp_metrics.get_avg(header='snp_'))
-        results.update({f'snp_fd_{k}' : v for k, v in fd_snp.compute_fd().items()})
-        results.update({f'snp_fd_wctx_{k}' : v for k, v in fd_snp_w_context.compute_fd().items()})
+        snp_fid, snp_ctx_fid = eval_fid(x=snp, reference=original_feat, reference_ctx=original_ctx_feat, ctx=ctx)
+        results.update({f'snp_{k}' : v for k, v in snp_fid.items()})
+        results.update({f'snp_ctx_{k}' : v for k, v in snp_ctx_fid.items()})
 
         results.update(snp_plus_metrics.get_avg(header='snp++_'))
-        results.update({f'snp++_fd_{k}' : v for k, v in fd_snp_plus.compute_fd().items()})
-        results.update({f'snp++_fd_wctx_{k}' : v for k, v in fd_snp_plus_w_context.compute_fd().items()})
+        snp2_fid, snp2_ctx_fid = eval_fid(x=snp2, reference=original_feat, reference_ctx=original_ctx_feat, ctx=ctx)
+        results.update({f'snp++_{k}' : v for k, v in snp2_fid.items()})
+        results.update({f'snp++_ctx_{k}' : v for k, v in snp2_ctx_fid.items()})
+    # FVD
+    if args.fvd:
+        fvd = FVD()
 
-    results.update(dataset_metrics.get_avg(header='dataset_'))
+        fvd_our = fvd(reference_observations=visual_original, generated_observations=visual_our)
+        results.update({'our_fvd' : fvd_our})
+        if args.use_pt:
+            fvd_pt = fvd(reference_observations=visual_original, generated_observations=visual_pt)
+            results.update({'pt_fvd' : fvd_pt})
+        if args.use_snp:
+            fvd_snp = fvd(reference_observations=visual_original, generated_observations=visual_snp)
+            fvd_snp2 = fvd(reference_observations=visual_original, generated_observations=visual_snp2)
+            results.update({'snp_fvd' : fvd_snp})
+            results.update({'snp++_fvd' : fvd_snp2})
 
     # save
     os.makedirs(output_path, exist_ok=True)
@@ -273,6 +266,14 @@ def main(args, exp_name):
         pkl.dump(results, f)
     results_df = pd.DataFrame.from_dict(results, orient='index')
     results_df.to_csv(os.path.join(output_path, 'metrics.csv'))
+
+    # Save to output
+    np_and_save(original, path=output_path, name='original')
+    np_and_save(ctx, path=output_path, name='ctx')
+    np_and_save(our, path=output_path, name='our')
+    np_and_save(pt, path=output_path, name='pt')
+    np_and_save(snp, path=output_path, name='snp')
+    np_and_save(snp2, path=output_path, name='snp2')
 
 
 if __name__ == '__main__' :
@@ -287,12 +288,16 @@ if __name__ == '__main__' :
                         default='/home/eperuzzo/PaintTransformerPaddle/inference/paint_best.pdparams')
     parser.add_argument('--lpips', action='store_true')
     parser.add_argument('--fvd', action='store_true')
-    parser.add_argument("--n_samples_lpips", type=int, default=3,
+    parser.add_argument("--n_samples", type=int, default=1,
                         help="number of samples to test lpips, diverstiy in generation")
     parser.add_argument("-n", "--n_iters_dataloader", default=1, type=int)
     parser.add_argument("--use-pt", action='store_true', default=False)
     parser.add_argument("--use-snp", action='store_true',default=False)
     args = parser.parse_args()
+
+    if args.lpips and args.n_samples == 1:
+        print('To evalutate LPIPS need more than 1 sample')
+        args.n_samples = 3
 
     # List
     experiments = os.listdir(args.checkpoint_base)

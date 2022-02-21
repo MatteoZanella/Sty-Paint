@@ -10,9 +10,12 @@ from .networks import *
 
 import torch
 import torch.optim as optim
+from torch.nn.functional import interpolate
+from torchvision.transforms.functional import crop
 
 def _normalize(x, width):
-    return (int)(x * (width - 1) + 0.5)
+    x = x * (width - 1) + 0.5
+    return x.type(torch.LongTensor)
 
 def get_bbox(st_point,  window_size, max_h_w):
     """
@@ -23,24 +26,25 @@ def get_bbox(st_point,  window_size, max_h_w):
     Returns:
         coordinates to crop the input image
     """
+    h_ws = (0.5 * window_size).type(torch.LongTensor)
+    xc, yc = torch.split(st_point, 1, dim=-1)
+    xc = xc.squeeze()
+    yc = yc.squeeze()
 
-    xc, yc = st_point
+    x1 = torch.where(xc - h_ws > 0, xc - h_ws, torch.zeros_like(xc))
+    x2 = torch.where(xc + h_ws < max_h_w, xc + h_ws, torch.full_like(xc, torch.tensor(max_h_w)))
 
-    x1 = max(0, xc - int(window_size / 2))
-    if x1 == 0:
-        x2 = window_size
-    else:
-        x2 = min(max_h_w, xc + int(window_size/2))
-    if x2 == max_h_w:
-        x1 = x2 - window_size
+    # Fix
+    x1[torch.where(x2 == max_h_w)] = max_h_w - 2 * h_ws[torch.where(x2 == max_h_w)]
+    x2[torch.where(x1 == 0)] = 2 * h_ws[torch.where(x1 == 0)]
 
-    y1 = max(0, yc - int(window_size / 2))
-    if y1 == 0:
-        y2 = window_size
-    else:
-        y2 = min(max_h_w,  yc + int(window_size/2))
-    if y2 == max_h_w:
-        y1 = y2 - window_size
+    # Y
+    y1 = torch.where(yc - h_ws > 0, yc - h_ws, torch.zeros_like(yc))
+    y2 = torch.where(yc + h_ws < max_h_w, yc + h_ws, torch.full_like(yc, torch.tensor(max_h_w)))
+    # Fix
+    y1[torch.where(y2 == max_h_w)] = max_h_w - 2 * h_ws[torch.where(y2 == max_h_w)]
+    y2[torch.where(y1 == 0)] = 2 * h_ws[torch.where(y1 == 0)]
+
     return x1, x2, y1, y2
 
 class PainterBase():
@@ -268,16 +272,25 @@ class PainterBase():
                 self.rderr.stroke_params[self.rderr.d_shape:self.rderr.d_shape+self.rderr.d_color])
             self.x_alpha.data[i, anchor_id, :] = torch.tensor(self.rderr.stroke_params[-1])
 
+    def _compute_kl(self, params):
+        pass
 
     def _backward_x(self):
 
         self.G_loss = 0
-        self.G_loss += self.args.beta_L1 * self._pxl_loss(
+        pxl_loss =  self._pxl_loss(
             canvas=self.G_final_pred_canvas, gt=self.img_batch)
+        self.G_loss += self.args.beta_L1 * pxl_loss
         if self.args.with_ot_loss:
             self.G_loss += self.args.beta_ot * self._sinkhorn_loss(
                 self.G_final_pred_canvas, self.img_batch)
+        if self.args.with_kl_loss:
+            kl_loss = self._compute_kl(params = self.x)
+            self.G_loss += self.args.beta_kl * kl_loss
         self.G_loss.backward()
+        print(f'G loss : {self.G_loss.item()}, Pixel: {pxl_loss.item()}')
+        if self.args.with_kl_loss:
+            print(f'KL : {kl_loss.item()}')
 
 
     def _forward_pass(self):
@@ -456,14 +469,15 @@ class Painter(PainterBase):
     def clamp(self, val):
         # Modification, use a different clamp for width and height
         pos = torch.clamp(self.x_ctt.data[:, :, :2], 0.1, 1 - 0.1)
-        size = torch.clamp(self.x_ctt.data[:, :, 2:4], 0.1, val)
         theta = torch.clamp(self.x_ctt.data[:, :, 4], 0.1, 1 - 0.1)
+        size = torch.empty_like(self.x_ctt.data[:, :, 2:4])
+        for i in range(pos.shape[0]):
+            size[i] = torch.clamp(self.x_ctt.data[i, :, 2:4], min=0.1, max=val[i])
 
         # Put all back together
         self.x_ctt.data = torch.cat([pos, size, theta.unsqueeze(-1)], dim=-1)
         self.x_color.data = torch.clamp(self.x_color.data, 0, 1)
         self.x_alpha.data = torch.clamp(self.x_alpha.data, 0, 1)
-
 
     def train(self):
         # -------------------------------------------------------------------------------------------------------------
@@ -562,6 +576,46 @@ class Painter(PainterBase):
                              save_video=save_video,
                              save_gif=save_gif)
 
+    ###############################################################################################################
+    # ADDED FOR INTERACTIVE TASK
+    def initialize_params_predict(self, bs):
+
+        self.x_ctt = np.random.rand(bs, self.m_strokes_per_block, self.rderr.d_shape).astype(np.float32)
+        self.x_ctt = torch.tensor(self.x_ctt).to(self.device)
+
+        self.x_color = np.random.rand(bs, self.m_strokes_per_block, self.rderr.d_color).astype(np.float32)
+        self.x_color = torch.tensor(self.x_color).to(self.device)
+
+        self.x_alpha = np.random.rand(bs, self.m_strokes_per_block, self.rderr.d_alpha).astype(np.float32)
+        self.x_alpha = torch.tensor(self.x_alpha).to(self.device)
+
+    def _compute_kl(self, params, eps=1e-7):
+        params = params[:, :, :11]
+        color = 0.5 * (params[:, :, 5:8] + params[:, :, 8:11])
+        params = torch.cat((params[:, :, :5], color), dim=-1)
+        x = torch.cat((self.ctx, params), dim=1)
+        x = utils.compute_features(x)
+
+        ## Reference
+        reference_variance = self.variance.to(params.device)
+        reference_mean = self.mean.to(params.device)
+        reference_variance = torch.clamp(reference_variance, min=eps)
+        reference_log_variance = torch.log(reference_variance)
+
+        ## Preds
+        variance, mean = torch.var_mean(x, dim=0)
+        variance = torch.clamp(variance, min=eps)
+        log_variance = torch.log(variance)
+
+        # Compute KL
+        variance_ratio = variance / reference_variance
+        mus_term = (reference_mean - mean).pow(2) / reference_variance
+        kl = reference_log_variance - log_variance - 1 + variance_ratio + mus_term
+
+        kl = kl.sum(dim=-1)
+        kl = 0.5 * kl.mean()
+        return kl
+
     def _optimize_kl(self, params, eps=1e-7):
 
         params.requires_grad = True
@@ -596,27 +650,12 @@ class Painter(PainterBase):
         return params
 
     def _normalize_strokes_predict(self, v):
-        v = v.detach()
+        v = v.detach().cpu()
 
-        # xc, yc, w, h, theta ...
-        xs = np.array([0])
-        ys = np.array([1])
-        rs = np.array([2, 3])
-
-        for y_id in range(self.m_grid):
-            for x_id in range(self.m_grid):
-                y_bias = y_id / self.m_grid
-                x_bias = x_id / self.m_grid
-                v[y_id * self.m_grid + x_id, :, ys] = \
-                    y_bias + v[y_id * self.m_grid + x_id, :, ys] / self.m_grid
-                v[y_id * self.m_grid + x_id, :, xs] = \
-                    x_bias + v[y_id * self.m_grid + x_id, :, xs] / self.m_grid
-                v[y_id * self.m_grid + x_id, :, rs] /= self.m_grid
-
-        v[:, :, 0] = (v[:, :, 0] * self.ws + self.x1) / self.args.canvas_size
-        v[:, :, 1] = (v[:, :, 1] * self.ws + self.y1) / self.args.canvas_size
-        v[:, :, 2] = (v[:, :, 2] * self.ws) / self.args.canvas_size
-        v[:, :, 3] = (v[:, :, 3] * self.ws) / self.args.canvas_size
+        v[:, :, 0] = (v[:, :, 0] * self.ws[:, None] + self.x1[:, None]) / self.args.canvas_size
+        v[:, :, 1] = (v[:, :, 1] * self.ws[:, None] + self.y1[:, None]) / self.args.canvas_size
+        v[:, :, 2] = (v[:, :, 2] * self.ws[:, None]) / self.args.canvas_size
+        v[:, :, 3] = (v[:, :, 3] * self.ws[:, None]) / self.args.canvas_size
 
         v = v[:, :, :11]  # remove alpha
         final_color = 0.5 * (v[:, :, 5 :8] + v[:, :, 8 :])
@@ -625,40 +664,26 @@ class Painter(PainterBase):
 
     def predict(self, img, CANVAS_tmp=None) :
 
+        bs = img.size(0)
         self.max_divide = 1
-        self.m_grid = 10
+        self.m_grid = np.uint8(np.sqrt(bs))
         self.m_strokes_per_block = 8
         self.max_strokes = 8
 
-        import pdb
-        pdb.set_trace()
         iters_per_stroke = self.args.n_iters_per_strokes  # number of optimizations steps for a single stroke
-        if CANVAS_tmp.shape[-1] == 128:
-            clamp_value = 0.4
-        elif CANVAS_tmp.shape[-1] == 64:
-            clamp_value = 0.3
-        else:
-            clamp_value = 0.25
-        img = cv2.resize(img.permute(1,2,0).cpu().numpy(), (self.net_G.out_size * self.max_divide, self.net_G.out_size * self.max_divide), cv2.INTER_AREA)
-        if CANVAS_tmp is not None:
-            CANVAS_tmp = torch.nn.functional.interpolate(CANVAS_tmp.unsqueeze(0), size=(self.net_G.out_size * self.max_divide, self.net_G.out_size * self.max_divide))
 
+        clamp_value = torch.empty(self.ws.shape, dtype=torch.float32)
+        clamp_value[torch.where(self.ws == 128)] = 0.4
+        clamp_value[torch.where(self.ws == 64)] = 0.3
+        clamp_value[torch.where(self.ws == 32)] = 0.25
         # --------------------------------------------------------------------------------------------------------------
         #print('begin drawing...')
 
 
-        PARAMS = np.zeros([1, 0, self.rderr.d], np.float32)
-
-        if CANVAS_tmp is not None:
-            if self.rderr.canvas_color == 'white':
-                CANVAS_tmp = torch.ones([1, 3, 128, 128]).to(self.device)
-            else :
-                CANVAS_tmp = torch.zeros([1, 3, 128, 128]).to(self.device)
-
-        self.img_batch = utils.img2patches(img, self.m_grid, self.net_G.out_size).to(self.device)
+        self.img_batch = img #utils.img2patches(img, self.m_grid, self.net_G.out_size).to(self.device)
         self.G_final_pred_canvas = CANVAS_tmp
 
-        self.initialize_params()
+        self.initialize_params_predict(bs=bs)
         self.x_ctt.requires_grad = True
         self.x_color.requires_grad = True
         self.x_alpha.requires_grad = True
@@ -672,44 +697,36 @@ class Painter(PainterBase):
             for i in range(iters_per_stroke) :
                 #print(f'Anchor: {self.anchor_id}, iter: {i} / {iters_per_stroke}')
                 self.G_pred_canvas = CANVAS_tmp
-
                 # update x
                 self.optimizer_x.zero_grad()
                 self.clamp(clamp_value)
-
                 self._forward_pass()
                 self._drawing_step_states()
                 self._backward_x()
-
-                self.clamp(clamp_value)
-
+                #self.clamp(clamp_value)
                 self.optimizer_x.step()
                 self.step_id += 1
 
-        PARAMS = self._normalize_strokes_predict(self.x)
-        #PARAMS, idx_grid = self._shuffle_strokes_and_reshape(PARAMS)
-        #PARAMS = self.get_checked_strokes(PARAMS)
-        #final_rendered_image, alphas = self._render(final_params, save_jpgs=False, save_video=False)
-        return PARAMS
+        return self._normalize_strokes_predict(self.x)
 
     def get_ctx(self, ctx):
         # Location of the last stroke
-        x_start, y_start = ctx[-1, :2]
+        '''
+        x_start, y_start = ctx[:, -1, :2]
         x_start = _normalize(x_start, self.args.canvas_size)
         y_start = _normalize(y_start, self.args.canvas_size)
+        '''
+        start = _normalize(ctx[:, -1, :2], self.args.canvas_size)
 
         # Select window size based on average stroke area
-        area = ctx[:, 2] * ctx[:, 3]   # h*w
-        area = area.mean()
-        if area < 0.004:
-            windows_size = 32
-        elif area < 0.01:
-            windows_size = 64
-        else:
-            windows_size = 128
-        print(f'Area: {area}, ws: {windows_size}')
+        area = torch.mean(ctx[:, :, 2] * ctx[:, :, 3], dim=-1)
 
-        return (x_start, y_start), windows_size
+        windows_size = torch.empty_like(area)
+
+        windows_size[torch.where(area < 0.004)] = 32
+        windows_size[torch.where(torch.logical_and(area >= 0.004, area<0.01))] = 64
+        windows_size[torch.where(area >= 0.01)] = 128
+        return start, windows_size.type(torch.LongTensor)
 
     def generate(self, data):
         original = data['img']
@@ -725,23 +742,23 @@ class Painter(PainterBase):
             self.variance, self.mean = torch.var_mean(tmp_feat, dim=0)
             self.ctx = data['strokes_ctx']
 
+        st_point, self.ws = self.get_ctx(strokes_ctx)
+        self.x1, self.x2, self.y1, self.y2 = get_bbox(st_point, self.ws, self.args.canvas_size)
+
+        # crop
+        curr_imgs = []
+        curr_canvas = []
         for b in range(bs):
-            print(f'Elem: [{b} / {bs}]')
-            st_point, self.ws = self.get_ctx(strokes_ctx[b])
+            curr_imgs.append(
+                interpolate(crop(original[b][None], top=self.y1[b], left=self.x1[b], height=self.ws[b], width=self.ws[b]),
+                            size=(self.net_G.out_size, self.net_G.out_size)))
+            curr_canvas.append(
+                interpolate(crop(canvas_start[b][None], top=self.y1[b], left=self.x1[b], height=self.ws[b], width=self.ws[b]),
+                            size=(self.net_G.out_size, self.net_G.out_size)))
 
-            self.x1, self.x2, self.y1, self.y2 = get_bbox(st_point, self.ws, self.args.canvas_size)
+        curr_imgs = torch.cat(curr_imgs, dim=0)
+        curr_canvas = torch.cat(curr_canvas, dim=0)
 
-            # crop
-            curr_img = original[b, :, self.y1 : self.y2, self.x1 : self.x2]
-            curr_canvas = canvas_start[b, :, self.y1 : self.y2, self.x1 : self.x2]
-
-            # Predict strokes
-            sparms = self.predict(curr_img, curr_canvas)
-            out.append(sparms)
-
-        snp_preds = torch.cat(out, dim=0)
-        snp_plus = self._optimize_kl(snp_preds.clone())
-
-        snp_preds = snp_preds.detach().cpu().numpy().astype('float32')
-        snp_plus = snp_plus.detach().cpu().numpy().astype('float32')
-        return snp_preds, snp_plus
+        # Predict strokes
+        snp_preds = self.predict(curr_imgs, curr_canvas)
+        return snp_preds.numpy().astype('float32')
