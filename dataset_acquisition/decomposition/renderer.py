@@ -322,10 +322,16 @@ class Renderer():
 
         self.foreground = np.array(self.foreground, dtype=np.float32)/255.
         self.stroke_alpha_map = np.array(self.stroke_alpha_map, dtype=np.float32)/255.
+        if self.highlight_border:
+            cnt = cv2.findContours(self.stroke_alpha_map[:, :, 0][:, :, None].astype('uint8'),
+                                   cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_NONE)[0]
+
+            cv2.drawContours(self.foreground, cnt, -1, self.color_border, 1)
+
         self.canvas = self._update_canvas()
 
         return np.expand_dims(self.stroke_alpha_map[:, :, 0], 0).astype('bool')   # return the alpha matte, only change
-
 
     def _update_canvas(self):
         return self.foreground * self.stroke_alpha_map + \

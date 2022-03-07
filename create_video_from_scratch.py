@@ -10,11 +10,12 @@ from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 import torch
 import torchvision.transforms as transforms
-import evaluation.tools as etools
+from evaluation.metrics import compute_color_difference
 import numpy as np
 import matplotlib.pyplot as plt
 import glob
 import warnings
+import evaluation.tools as etools
 warnings.filterwarnings("ignore")
 
 class ClampSchedule:
@@ -58,7 +59,7 @@ if __name__ == '__main__' :
 
     # Create config
     c_parser = ConfigParser(args.config, isTrain=False)
-    c_parser.parse_config(args)
+    c_parser.parse_config()
     config = c_parser.get_config()
 
     print(f'Sampling z : {args.no_z}, dimension of input {config["dataset"]["resize"]}')
@@ -158,3 +159,4 @@ if __name__ == '__main__' :
             plt.imsave(os.path.join(args.output_path, img_name + '_renders', f'frame_{str(i).zfill(3)}.jpg'), to_save[i])
 
         np.savez(os.path.join(args.output_path, img_name + '_strokes.npz'))
+        print(compute_color_difference(strokes))

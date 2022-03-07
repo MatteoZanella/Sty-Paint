@@ -10,7 +10,7 @@ from .networks import *
 
 import torch
 import torch.optim as optim
-from torch.nn.functional import interpolate
+from torch.nn.functional import interpolate, mse_loss
 from torchvision.transforms.functional import crop
 
 def _normalize(x, width):
@@ -93,11 +93,13 @@ class PainterBase():
         self.m_grid = None
         self.m_strokes_per_block = None
 
-        '''
+
         if os.path.exists(self.args.dataset_feat_mean) and os.path.exists(self.args.dataset_feat_var):
-            self.mu_dataset = torch.load('/home/eperuzzo/kl_mean_var/features_seq_mean.pth')
-            self.sigma_dataset = torch.load('/home/eperuzzo/kl_mean_var/features_seq_var.pth')
-        '''
+            self.mu = torch.load(self.args.dataset_feat_mean).unsqueeze(0)
+            var = torch.load(self.args.dataset_feat_var)
+            self.var_1 = (1 / var).unsqueeze(0)
+            self.sigma_1 = torch.linalg.inv(torch.diag(var)).unsqueeze(0)
+
 
     def _load_checkpoint(self):
 
@@ -275,6 +277,9 @@ class PainterBase():
     def _compute_kl(self, params):
         pass
 
+    def _compute_log_prob(self, params):
+        pass
+
     def _backward_x(self):
 
         self.G_loss = 0
@@ -285,12 +290,9 @@ class PainterBase():
             self.G_loss += self.args.beta_ot * self._sinkhorn_loss(
                 self.G_final_pred_canvas, self.img_batch)
         if self.args.with_kl_loss:
-            kl_loss = self._compute_kl(params = self.x)
+            kl_loss = self._compute_log_prob(params = self.x)
             self.G_loss += self.args.beta_kl * kl_loss
         self.G_loss.backward()
-        print(f'G loss : {self.G_loss.item()}, Pixel: {pxl_loss.item()}')
-        if self.args.with_kl_loss:
-            print(f'KL : {kl_loss.item()}')
 
 
     def _forward_pass(self):
@@ -363,8 +365,16 @@ class Painter(PainterBase):
             cv2.waitKey(1)
 
 
-    def _render(self, v, path=None, canvas_start=None, save_jpgs=False, save_video=False, save_gif=False):
+    def _render(self, v, path=None,
+                canvas_start=None,
+                save_jpgs=False,
+                save_video=False,
+                save_gif=False,
+                highlight_border=False,
+                color_border=(1,0,0)):
 
+        self.rderr.highlight_border = highlight_border
+        self.rderr.color_border = color_border
         v = v[0,:,:self.rderr.d]   # if we add additional information, make sure to use only needed parms
         if self.args.keep_aspect_ratio:
             if self.input_aspect_ratio < 1:
@@ -378,9 +388,12 @@ class Painter(PainterBase):
             out_w = self.args.canvas_size
 
         if save_video:
+            '''
             video_writer = cv2.VideoWriter(
-                path + '_animated.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 20,
+                path + '_animated.mp4', cv2.VideoWriter_fourcc(*'MP4V'), 10,
                 (out_w, out_h))
+            '''
+            video_writer = imageio.get_writer(path + '_animated.mp4', codec='libx264', fps=3)
 
         #print('rendering canvas...')
         if canvas_start is None:
@@ -399,7 +412,8 @@ class Painter(PainterBase):
             if save_jpgs:
                 plt.imsave(os.path.join(path, str(i) + '.jpg'), this_frame)
             if save_video:
-                video_writer.write((this_frame[:,:,::-1] * 255.).astype(np.uint8))
+                #video_writer.write((this_frame[:,:,::-1] * 255.).astype(np.uint8))
+                video_writer.append_data(np.uint8(this_frame * 255))
             if save_gif :
                 if i == 0 :
                     gif_imgs = []
@@ -415,7 +429,8 @@ class Painter(PainterBase):
         if save_gif:
             print('saving gif ...')
             imageio.mimsave(path + '.gif', gif_imgs, duration = 0.1)
-
+        if save_video:
+            video_writer.close()
         return final_rendered_image, np.concatenate(alphas)
 
     def get_checked_strokes(self, v):
@@ -561,7 +576,7 @@ class Painter(PainterBase):
         #final_rendered_image, alphas = self._render(PARAMS, save_jpgs=False, save_video=False)
         return PARAMS
 
-    def inference(self, strokes, output_path=None, order=None, canvas_start=None, save_jpgs=False, save_video=False, save_gif=False):
+    def inference(self, strokes, output_path=None, order=None, canvas_start=None, save_jpgs=False, save_video=False, save_gif=False, hilight=False):
 
         if order is not None:
             strokes = strokes[:, order, :]
@@ -574,7 +589,8 @@ class Painter(PainterBase):
                              canvas_start=canvas_start,
                              save_jpgs=save_jpgs,
                              save_video=save_video,
-                             save_gif=save_gif)
+                             save_gif=save_gif,
+                             highlight_border=hilight)
 
     ###############################################################################################################
     # ADDED FOR INTERACTIVE TASK
@@ -589,65 +605,27 @@ class Painter(PainterBase):
         self.x_alpha = np.random.rand(bs, self.m_strokes_per_block, self.rderr.d_alpha).astype(np.float32)
         self.x_alpha = torch.tensor(self.x_alpha).to(self.device)
 
-    def _compute_kl(self, params, eps=1e-7):
+    def _compute_log_prob(self, params):
+        bs = params.shape[0]
         params = params[:, :, :11]
-        color = 0.5 * (params[:, :, 5:8] + params[:, :, 8:11])
+        color = 0.5 * (params[:, :, 5 :8] + params[:, :, 8 :11])
         params = torch.cat((params[:, :, :5], color), dim=-1)
         x = torch.cat((self.ctx, params), dim=1)
         x = utils.compute_features(x)
 
-        ## Reference
-        reference_variance = self.variance.to(params.device)
-        reference_mean = self.mean.to(params.device)
-        reference_variance = torch.clamp(reference_variance, min=eps)
-        reference_log_variance = torch.log(reference_variance)
-
-        ## Preds
-        variance, mean = torch.var_mean(x, dim=0)
-        variance = torch.clamp(variance, min=eps)
-        log_variance = torch.log(variance)
-
-        # Compute KL
-        variance_ratio = variance / reference_variance
-        mus_term = (reference_mean - mean).pow(2) / reference_variance
-        kl = reference_log_variance - log_variance - 1 + variance_ratio + mus_term
-
-        kl = kl.sum(dim=-1)
-        kl = 0.5 * kl.mean()
-        return kl
-
-    def _optimize_kl(self, params, eps=1e-7):
-
-        params.requires_grad = True
-        opt = optim.RMSprop([params], lr=float(self.args.kl_lr), centered=True)
-
-        # Reference
-        reference_variance = self.variance.to(params.device)
-        reference_mean = self.mean.to(params.device)
-        reference_variance = torch.clamp(reference_variance, min=eps)
-        reference_log_variance = torch.log(reference_variance)
-
-        for i in range(50):
-            opt.zero_grad()
-
-            x = torch.cat((self.ctx, params), dim=1)
-            x = utils.compute_features(x)
-            variance, mean = torch.var_mean(x, dim=0)
-            variance = torch.clamp(variance, min=eps)
-            log_variance = torch.log(variance)
-
-            variance_ratio = variance / reference_variance
-            mus_term = (reference_mean - mean).pow(2) / reference_variance
-            kl = reference_log_variance - log_variance - 1 + variance_ratio + mus_term
-
-            kl = kl.sum(dim=-1)
-            kl = 0.5 * kl.mean()
-            print(f'Iter: [{i} / 20], : kl : {kl.item()}')
-            kl = kl * self.args.beta_kl
-            kl.backward()
-            opt.step()
-
-        return params
+        mu = self.mu.repeat(bs, 1).to(x.device)
+        weights = self.var_1.repeat(bs, 1).to(x.device)
+        weights[:, 2*250 : 5*250] = 0
+        log_prob = mse_loss(x, mu, reduction='none') * weights
+        log_prob = torch.mean(torch.sum(log_prob, dim=-1))
+        '''
+        sigma_1 = self.sigma_1[:, :].repeat(bs, 1, 1).to(x.device)
+        mu = self.mu.to(x.device)
+        diff = (x-mu).unsqueeze(1)
+        log_prob = diff.bmm(sigma_1).bmm(diff.transpose(1,2))
+        log_prob = torch.mean(log_prob)
+        '''
+        return log_prob
 
     def _normalize_strokes_predict(self, v):
         v = v.detach().cpu()
@@ -737,9 +715,6 @@ class Painter(PainterBase):
         out = []
 
         if self.args.with_kl_loss :
-            tmp = torch.cat((data['strokes_ctx'], data['strokes_seq']), dim=1)
-            tmp_feat = utils.compute_features(tmp)
-            self.variance, self.mean = torch.var_mean(tmp_feat, dim=0)
             self.ctx = data['strokes_ctx']
 
         st_point, self.ws = self.get_ctx(strokes_ctx)

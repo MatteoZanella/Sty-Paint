@@ -342,7 +342,7 @@ class ConvEncoder(nn.Module):
     def forward(self, x):
         x = self.block1(x)
         x = self.block2(x)
-        hres = x
+        hres = x.clone()
         x = self.block3(x)
         x = self.block4(x)
         x = self.out(x)

@@ -35,7 +35,7 @@ def draw_contours(foreground, alpha, alpha_ctx) :
     res = cv2.drawContours(res, contours, -1, (0, 255, 0), 1)
     return res
 
-
+'''
 def produce_visuals(params, batch, renderer, batch_id=0) :
     canvas_status = batch['canvas'][batch_id].permute(1,2,0).cpu().numpy()
     ctx = batch['strokes_ctx'][batch_id][None].cpu().numpy()
@@ -47,6 +47,7 @@ def produce_visuals(params, batch, renderer, batch_id=0) :
     # Draw Contours
     cont = draw_contours(fg, alpha, alpha_ctx)
     return cont
+'''
 
 def check_strokes(params, clamp_wh=1):
     if torch.is_tensor(params):
@@ -134,3 +135,29 @@ def create_video(frames, path, size, scale=False):
 
     for this_frame in frames:
         video_writer.write((this_frame[:, :, : :-1] * mul).astype(np.uint8))
+
+
+def produce_visuals(params, renderer, starting_canvas, ctx=None, seq=None) :
+    params = check_strokes(params)
+    red = (1, 0, 0)
+    blue = (0, 0, 1)
+    green = (0, 1, 0)
+
+    final_result = np.copy(starting_canvas)
+    if ctx is not None:
+        final_result = renderer._render(ctx,
+                                        canvas_start=final_result,
+                                        highlight_border=True,
+                                        color_border=blue)[0]
+
+    if seq is not None:
+        final_result = renderer._render(seq,
+                                        canvas_start=final_result,
+                                        highlight_border=True,
+                                        color_border=green)[0]
+
+    final_result = renderer._render(params,
+                                    canvas_start=final_result,
+                                    highlight_border=True,
+                                    color_border=red)[0]
+    return np.uint8(final_result * 255)

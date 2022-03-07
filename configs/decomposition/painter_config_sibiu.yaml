@@ -7,12 +7,12 @@ keep_aspect_ratio: False
 beta_L1: 1.0
 with_ot_loss: False
 beta_ot: 0.1
-with_kl_loss : True
-dataset_feat_mean : ''
-dataset_feat_var : ''
-beta_kl : 1.0
+dataset_feat_mean : '/home/eperuzzo/dataset_statistics/features_seq_ctx_mean.pth'
+dataset_feat_var : '/home/eperuzzo/dataset_statistics/features_seq_ctx_var.pth'
+with_kl_loss : False
+beta_kl : 2.5e-6
 kl_lr : 0.00005
-n_iters_per_strokes : 10
+n_iters_per_strokes : 15
 net_G: 'zou-fusion-net'
 renderer_checkpoint_dir: '/home/eperuzzo/checkpoints_G_oilpaintbrush'
 lr: 0.005

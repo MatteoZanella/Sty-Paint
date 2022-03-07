@@ -172,7 +172,7 @@ class Decoder2Step(nn.Module):
         # Decode Shape / Color
         color_tokens = self.bilinear_sampling_length_first(visual_features, pos_pred)
         color_tokens = self.color_tokens_proj(color_tokens)
-        color_tokens += self.PE.pe_strokes_tokens(pos=pos_pred, device=color_tokens.device)
+        color_tokens = color_tokens + self.PE.pe_strokes_tokens(pos=pos_pred, device=color_tokens.device)
         color_tokens = self.color_decoder(color_tokens, context)
 
         if not self.residual_position:

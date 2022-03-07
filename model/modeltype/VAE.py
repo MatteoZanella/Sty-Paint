@@ -93,7 +93,7 @@ class VAEModel(nn.Module) :
 
     def save_checkpoint(self, epoch, filename=None):
         if filename is None :
-            path = os.path.join(self.checkpoint_path, f"checkpoint_{epoch}.pth.tar")
+            path = os.path.join(self.checkpoint_path, f"checkpoint_{str(epoch).zfill(4)}.pth.tar")
         else :
             path = os.path.join(self.checkpoint_path, f"latest.pth.tar")
         torch.save({"model" : self.state_dict(),

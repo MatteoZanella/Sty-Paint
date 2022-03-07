@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import evaluation.tools as etools
 
 from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
-from evaluation.tools import render_frames
+from evaluation.tools import render_frames, produce_visuals
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -23,12 +23,14 @@ from einops import rearrange, repeat
 import torch.nn.functional as F
 import imageio
 import random
+import copy
+from scipy import stats
 # import paddle
 
 from dataset_acquisition.sorting.graph import Graph
 from dataset_acquisition.sorting.utils import load_segmentation, StrokesLoader
-
-
+import pandas as pd
+'''
 files = {
     'american_bulldog_115' : 191,
     'Maine_Coon_264' : 70,
@@ -41,7 +43,7 @@ files = {
     'english_cocker_spaniel_112' : 290,
     'great_pyrenees_44' : 375,
     'staffordshire_bull_terrier_81' : 120}
-
+'''
 # files = {
 #     'Bengal_192' : 30,
 #     'american_bulldog_115' : 191,
@@ -79,6 +81,41 @@ files = {
     # 'staffordshire_bull_terrier_144' : None,
     # 'staffordshire_bull_terrier_119' : None,
     # 'wheaten_terrier_94' : None}
+
+def get_index(L, K=10) :
+    ids = []
+    for i in range(L) :
+        for j in range(L) :
+            if j < i :
+                continue
+            if (j > i + K) or i == j :
+                continue
+            else :
+                ids.append([i, j])
+    ids = np.array(ids)
+    id0 = ids[:, 0]
+    id1 = ids[:, 1]
+    n = ids.shape[0]
+    return id0, id1, n
+
+
+def compute(x, attribute) :
+    if attribute == 'pos' :
+        x = x[:, :, :2]
+    elif attribute == 'hw' :
+        x = x[:, :, 2] * x[:, :, 3]
+        x = x[:, :, None]
+    elif attribute == 'theta' :
+        x = x[:, :, 4][:, :, None]
+    elif attribute == 'color' :
+        x = x[:, :, 5 :]
+    else :
+        print('Unknown attribute')
+
+    id0, id1, _ = get_index(L=x.shape[1])
+
+    score = np.square(x[:, id0] - x[:, id1])
+    return score.mean(axis=-1).reshape(-1)
 
 def compute_diff(x):
 
@@ -150,6 +187,7 @@ def prepare_feature_difference(preds_lpips, bs, n_samples):
     return out
 
 
+'''
 def produce_visuals(params, ctx, renderer, st) :
     fg, alpha = renderer.inference(params, canvas_start=st)
     _, alpha_ctx = renderer.inference(ctx)
@@ -159,65 +197,75 @@ def produce_visuals(params, ctx, renderer, st) :
 
 
 def visualize(foreground, alpha, alpha_ctx) :
-    tmp = ((alpha.sum(0) * 255)[:, :, None]).astype('uint8')
-    contours, hierarchy = cv2.findContours(tmp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    tmp_alpha = ((alpha_ctx.sum(0) * 255)[:, :, None]).astype('uint8')
-    contours_ctx, _ = cv2.findContours(tmp_alpha, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    strokes_cnt, ctx_cnt = [], []
+    for i in range(alpha.shape[0]):
+        strokes_cnt.append(
+            cv2.findContours(alpha[i][:, :, None].astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[0]
+        )
+    for i in range(alpha_ctx.shape[0]):
+        ctx_cnt.append(
+            cv2.findContours(alpha_ctx[i][:, :, None].astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[0]
+        )
 
     x = (np.copy(foreground) * 255).astype('uint8')
-    res = cv2.drawContours(x, contours_ctx, -1, (255, 0, 0), 1)
-    res = cv2.drawContours(res, contours, -1, (0, 255, 0), 1)
-    return res
+    for cnt in ctx_cnt:
+        cv2.drawContours(x, cnt, -1, (0, 0, 255), 1)
+    for cnt in strokes_cnt:
+        cv2.drawContours(x, cnt, -1, (255, 0, 0), 1)
 
+    return x
+'''
 
-def save_histogram(our,
-               gt,
-               baseline,
-               path,
-               filename):
+def save_histogram(inp, kde_pos, kde_col, path, filename):
 
+    # Position
+    pos = compute(inp, 'pos')
 
-    our_color = compute_diff(our[:, :, 5:])
-    our_pos = compute_diff(our[:, :, :2])
+    x_pos = np.linspace(0, 0.3, num=200)
+    y_pos = kde_pos(x_pos)
 
-    gt_color = compute_diff(gt[:, :, 5:])
-    gt_pos = compute_diff(gt[:, :, :2])
-
-    baseline_color = compute_diff(baseline[:, :, 5:])
-    baseline_pos = compute_diff(baseline[:, :, :2])
-
-
-    pos_bins = (0, gt_pos.max().item())
-    col_bins = (0, gt_color.max().item())
-
-    f = plt.figure(figsize=(20,15))
-
-    plt.subplot(3,2,1)
-    plt.hist(gt_pos.cpu().numpy(), bins=50, range=pos_bins, density=True)
-    plt.title('GT pos')
-
-    plt.subplot(3,2,2)
-    plt.hist(gt_color.cpu().numpy(), bins=50, range=col_bins, density=True)
-    plt.title('GT color')
-
-    plt.subplot(3, 2, 3)
-    plt.hist(our_pos, bins=50, range=pos_bins, density=True)
-    plt.title('Our pos')
-
-    plt.subplot(3, 2, 4)
-    plt.hist(our_color, bins=50, range=col_bins, density=True)
-    plt.title('Our color')
-
-    plt.subplot(3, 2, 5)
-    plt.hist(baseline_pos, bins=50, range=pos_bins, density=True)
-    plt.title('Baseline pos')
-
-    plt.subplot(3, 2, 6)
-    plt.hist(baseline_color, bins=50, range=col_bins, density=True)
-    plt.title('Baseline color')
-
-    plt.savefig(os.path.join(path, filename + 'hist.png'))
+    f = plt.figure()
+    plt.hist(pos, bins=50, density=True, label='prediction', color='red')
+    plt.plot(x_pos, y_pos, label='reference', linewidth=2, color='blue')
+    plt.title('Position')
+    plt.ylim(bottom=0, top=1.6 * np.max(y_pos))
+    plt.xlim(left=0, right=0.3)
+    plt.xlabel('Relative Distance')
+    plt.legend()
+    plt.savefig(os.path.join(path, filename + '_pos.png'), bbox_inches='tight')
     plt.close(f)
+
+    # Color
+    color = compute(inp, 'color')
+
+    x_col = np.linspace(0, 0.45, num=200)
+    y_col = kde_col(x_col)
+
+    f = plt.figure()
+    plt.hist(color, bins=50, density=True, label='prediction', color='red')
+    plt.plot(x_col, y_col, label='reference', linewidth=2, color='blue')
+    plt.title('Color')
+    plt.ylim(bottom=0, top=1.3 * np.max(y_col))
+    plt.xlim(left=0, right=0.45)
+    plt.xlabel('Relative Distance')
+    plt.legend()
+    plt.savefig(os.path.join(path, filename + '_col.png'), bbox_inches='tight')
+    plt.close(f)
+
+def main_histogram(our,
+                    pt,
+                    snp,
+                    snp2,
+                   kde_pos,
+                   kde_col,
+                    path):
+
+    # Our
+    save_histogram(our, kde_pos, kde_col, path, filename='our')
+    save_histogram(pt, kde_pos, kde_col, path, filename='pt')
+    save_histogram(snp, kde_pos, kde_col, path, filename='snp')
+    save_histogram(snp2, kde_pos, kde_col, path, filename='snp2')
+
 
 
 def compute_img_l2(gt,
@@ -314,6 +362,34 @@ def combine_gifs(path, tot):
     os.remove(os.path.join(path, f'baseline_video_{tot}.gif'))
     #new_gif.close()
 
+def combine_videos(path, tot):
+
+    config = [f'original', f'our', f'pt', f'snp', 'snp2']
+    video_readers = [imageio.get_reader(os.path.join(path, l + '_animated.mp4'), 'ffmpeg') for l in config]
+
+    # Reading the frames
+    F = {}
+
+    for vd in video_readers :
+        for idx, im in enumerate(vd) :
+            if idx in F.keys() :
+                F[idx].append(im)
+            else :
+                F[idx] = [im]
+
+    # Creating the final video
+    final_video = []
+    for frame_id, tot_frames in F.items() :
+        final_frame = np.concatenate((tot_frames[0], tot_frames[1], tot_frames[2]), axis=1)
+        final_video.append(final_frame)
+
+    # write final video
+    out_name = os.path.join(path, 'animation_result.mp4')
+    writer = imageio.get_writer(out_name, fps=10)
+    for im in final_video :
+        writer.append_data(im)
+    writer.close()
+
 
 def predict(net, batch, renderer, n_iters=5, L=8, is_our=True):
 
@@ -328,7 +404,7 @@ def predict(net, batch, renderer, n_iters=5, L=8, is_our=True):
         # Predict
         if is_our:
             with torch.no_grad() :
-                preds = net(data, sample_z=True, seq_length=L)["fake_data_random"]
+                preds = net.generate(data)["fake_data_random"]
         else:
             preds = net.generate(data)
 
@@ -353,12 +429,12 @@ def predict(net, batch, renderer, n_iters=5, L=8, is_our=True):
         )
         drawn_strokes += L
 
+    print(drawn_strokes)
     strokes = np.concatenate(strokes, axis=1)
     return strokes
 
 
-
-def main(args, exp_name):
+def main(args):
 
     # Seed
     seed = 1234
@@ -382,8 +458,13 @@ def main(args, exp_name):
     render_config = load_painter_config(config["renderer"]["painter_config"])
     renderer = Painter(args=render_config)
 
+    snp_plus_config = copy.deepcopy(render_config)
+    snp_plus_config.with_kl_loss = True
+    snp_plus = Painter(args=snp_plus_config)
+
     # Loop over files
-    checkpoint_path = os.path.join(args.checkpoint_base, exp_name, 'latest.pth.tar')
+    exp_name = 'videos_db'
+    checkpoint_path = os.path.join(args.model)
     output_path = os.path.join(args.output_path, exp_name)
 
     # load checkpoint, update model config based on the stored config
@@ -397,14 +478,26 @@ def main(args, exp_name):
     model.eval()
 
     # baseline Paint Transformer
-    baseline = PaddlePT(model_path=args.checkpoint_baseline, config=render_config)
+    pt = PaddlePT(model_path=args.checkpoint_baseline, config=render_config)
 
     os.makedirs(output_path, exist_ok=True)
 
     n_iters = args.n_iters
     L = 8
     tot = n_iters * L
-    for filename, ts in files.items() :
+
+    # Load and compute KDE
+    gt_position = np.load('/home/eperuzzo/reference_position.np.npy')
+    gt_color = np.load('/home/eperuzzo/reference_color.np.npy')
+
+    kde_position = stats.gaussian_kde(gt_position, bw_method=0.1)
+    kde_color = stats.gaussian_kde(gt_color, bw_method=0.1)
+
+
+    files = pd.read_csv('/home/eperuzzo/config.csv')
+    for idx, row in files.iterrows() :
+        filename = row["filename"]
+        ts = row["ts"]
         print(f'==> Processing img : {filename}')
 
         os.makedirs(os.path.join(output_path, filename), exist_ok=True)
@@ -418,79 +511,112 @@ def main(args, exp_name):
 
         # Our
         our_prediction = predict(net=model, batch=batch, renderer=renderer, is_our=True, n_iters=args.n_iters)
-        res_our = produce_visuals(our_prediction, batch['strokes_ctx'], renderer, starting_point)
+        res_our = produce_visuals(our_prediction,
+                                  renderer=renderer,
+                                  starting_canvas=starting_point,
+                                  ctx=batch['strokes_ctx'])
         renderer.inference(our_prediction,
-                           os.path.join(output_path, filename, f'our_video_{tot}'),
-                           save_video=False,
+                           os.path.join(output_path, filename, f'our'),
+                           save_video=True,
                            save_jpgs=False,
-                           save_gif=True,
-                           canvas_start=starting_point)
+                           save_gif=False,
+                           canvas_start=starting_point,
+                           hilight=True)
 
         # Baseline
-        baseline_preds = predict(net=baseline, batch=batch, renderer=renderer, is_our=False, n_iters=args.n_iters)
-        res_baseline = produce_visuals(baseline_preds, batch['strokes_ctx'], renderer, starting_point)
-        renderer.inference(baseline_preds,
-                           os.path.join(output_path, filename, f'baseline_video_{tot}'),
-                           save_video=False,
-                           save_jpgs=False,
-                           save_gif=True,
-                           canvas_start=starting_point)
+        pt_preds = predict(net=pt, batch=batch, renderer=renderer, is_our=False, n_iters=args.n_iters)
+        res_pt = produce_visuals(pt_preds,
+                                 renderer=renderer,
+                                 starting_canvas=starting_point,
+                                 ctx=batch['strokes_ctx'])
 
+        renderer.inference(pt_preds,
+                           os.path.join(output_path, filename, f'pt'),
+                           save_video=True,
+                           save_jpgs=False,
+                           save_gif=False,
+                           canvas_start=starting_point,
+                           hilight=True)
+
+        # SNP
+        snp_preds = predict(net=renderer, batch=batch, renderer=renderer, is_our=False, n_iters=args.n_iters)
+        res_snp = produce_visuals(snp_preds,
+                                  renderer=renderer,
+                                  starting_canvas=starting_point,
+                                  ctx=batch['strokes_ctx'])
+        renderer.inference(snp_preds,
+                           os.path.join(output_path, filename, f'snp'),
+                           save_video=True,
+                           save_jpgs=False,
+                           save_gif=False,
+                           canvas_start=starting_point,
+                           hilight=True)
+
+        # SNP+
+        snp2_preds = predict(net=snp_plus, batch=batch, renderer=renderer, is_our=False, n_iters=args.n_iters)
+        res_snp2 = produce_visuals(snp2_preds,
+                                   renderer=renderer,
+                                   starting_canvas=starting_point,
+                                   ctx=batch['strokes_ctx'])
+
+        renderer.inference(snp2_preds,
+                           os.path.join(output_path, filename, f'snp2'),
+                           save_video=True,
+                           save_jpgs=False,
+                           save_gif=False,
+                           canvas_start=starting_point,
+                           hilight=True)
+
+
+        main_histogram(our=our_prediction,
+                       pt=pt_preds,
+                       snp=snp_preds,
+                       snp2=snp2_preds,
+                       kde_pos=kde_position,
+                       kde_col = kde_color,
+                       path= os.path.join(output_path, filename))
         # Reference
-        original = produce_visuals(original_seq, batch['strokes_ctx'], renderer, starting_point)
+        original = produce_visuals(original_seq,
+                                   renderer=renderer,
+                                   starting_canvas=starting_point,
+                                   ctx=batch['strokes_ctx'])
         renderer.inference(original_seq,
-                           os.path.join(output_path, filename, f'original_video_{tot}'),
-                           save_video=False,
+                           os.path.join(output_path, filename, f'original'),
+                           save_video=True,
                            save_jpgs=False,
-                           save_gif=True,
-                           canvas_start=starting_point)
+                           save_gif=False,
+                           canvas_start=starting_point,
+                           hilight=True)
 
-        ## plot difference
-        save_histogram(our=our_prediction,
-                       gt=original_seq,
-                       baseline=baseline_preds,
-                       path=output_path,
-                       filename=filename)
+        flag = False
+        if flag:
+            fig, axs = plt.subplots(1, 5, figsize=(30, 10), gridspec_kw={'wspace' : 0, 'hspace' : 0})
+            images = [img, original, res_our, res_pt, res_snp]
+            title = ['Img', 'Original', 'Our', 'PT', 'SNP']
+            for ii in range(len(images)) :
+                axs[ii].imshow(images[ii])
+                axs[ii].set_title(title[ii])
+                axs[ii].axis('off')
+                axs[ii].set_xticklabels([])
+                axs[ii].set_yticklabels([])
+                axs[ii].set_aspect('equal')
+            plt.savefig(os.path.join(output_path, filename, f'result_{tot}.jpg'), bbox_inches="tight")
+            plt.close(fig)
+        else:
+            images = [img, original, res_our, res_pt, res_snp, res_snp2]
+            title = ['reference_img', 'original', 'our', 'pt', 'snp', 'snp2']
 
-        '''
-        compute_img_l2(gt=original_seq,
-                       our=our_prediction,
-                       baseline=baseline_preds,
-                       data= data,
-                       renderer=renderer,
-                       path=output_path,
-                       filename=filename)
-        '''
-        ##
-        print('Original')
-        compute_cost(original_seq, filename=filename)
-        print('Our')
-        compute_cost(our_prediction, filename=filename)
-        print('Baseline')
-        compute_cost(baseline_preds, filename=filename)
-
-
-        fig, axs = plt.subplots(1, 4, figsize=(30, 10), gridspec_kw={'wspace' : 0, 'hspace' : 0})
-        images = [img, original, res_our, res_baseline]
-        title = ['Img', 'Original', 'Our', 'Baseline']
-        for ii in range(len(images)) :
-            axs[ii].imshow(images[ii])
-            axs[ii].set_title(title[ii])
-            axs[ii].axis('off')
-            axs[ii].set_xticklabels([])
-            axs[ii].set_yticklabels([])
-            axs[ii].set_aspect('equal')
-        plt.savefig(os.path.join(output_path, filename, f'result_{tot}.jpg'), bbox_inches="tight")
-        plt.close(fig)
+            for i, t in zip(images, title):
+                plt.imsave(os.path.join(output_path, filename, f'{t}.png'), i)
 
         # Load gifs and combine in a unique one
-        combine_gifs(path=os.path.join(output_path, filename), tot=tot)
+        #combine_videos(path=os.path.join(output_path, filename), tot=tot)
 
 
 if __name__ == '__main__' :
     # Extra parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint_base", type=str, required=True)
+    parser.add_argument("--model", type=str, required=True)
     parser.add_argument("--checkpoint_baseline", type=str,
                         default='/home/eperuzzo/PaintTransformerPaddle/inference/paint_best.pdparams')
 
@@ -502,13 +628,6 @@ if __name__ == '__main__' :
     args = parser.parse_args()
 
 
-
-    # List
-    experiments = os.listdir(args.checkpoint_base)
-    print(f'Experiments to evaluate : {experiments}')
-
-    for exp in experiments:
-        print(f'Processing: {exp}')
-        main(args, exp_name=exp)
+    main(args)
 
 

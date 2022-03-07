@@ -48,14 +48,16 @@ def find_zero(inc_count):
 class Node:
 
     def __init__(self, features):
-        self.position = features[:2]
-        self.w = features[3]
-        self.h = features[4]
-        self.color = features[5:11]
-        self.alpha = features[11]
 
-        self.cl = features[12]
-        self.is_salient = features[13]
+        self.position = features[:2]
+        self.w = features[2]
+        self.h = features[3]
+        self.theta = features[4]
+        self.color = features[5:8]
+        #self.alpha = features[11]
+
+        self.cl = features[-1]
+        self.is_salient = 1 # features[13], removed
 
     def area(self):
         return self.h * self.w
@@ -96,9 +98,9 @@ class Graph:
         LKH
         """
 
-        color = np.sum((self.nodes[ref].color - self.nodes[c].color) ** 2)
+        color = np.mean((self.nodes[ref].color - self.nodes[c].color) ** 2)
         area = (self.nodes[ref].area() - self.nodes[c].area()) ** 2
-        pos = np.sum((self.nodes[ref].position - self.nodes[c].position) ** 2)
+        pos = np.mean((self.nodes[ref].position - self.nodes[c].position) ** 2)
         cl = (self.nodes[ref].cl != self.nodes[c].cl)
         sal = (1 - self.nodes[c].is_salient)
 

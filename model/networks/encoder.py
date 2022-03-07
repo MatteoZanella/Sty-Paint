@@ -72,9 +72,7 @@ class Encoder(nn.Module):
             strokes_seq = data['strokes_seq']
             strokes_seq = rearrange(strokes_seq, 'bs L dim -> L bs dim')
 
-            x_sequence = self.proj_features(strokes_seq)
-            x_sequence += self.PE.pe_strokes_tokens(pos=strokes_seq, device=x_sequence.device)
-            x_sequence += self.stroke_token
+            x_sequence = self.proj_features(strokes_seq) + self.PE.pe_strokes_tokens(pos=strokes_seq, device=strokes_seq.device) +self.stroke_token
 
 
             # Encoder
@@ -100,8 +98,7 @@ class Encoder(nn.Module):
             strokes = rearrange(strokes, 'bs L dim -> L bs dim')
 
             strokes = self.proj_features(strokes)
-            strokes += self.PE.pe_strokes_tokens(pos=strokes, device=strokes.device)
-            strokes += self.stroke_token
+            x_sequence = self.proj_features(strokes_seq) + self.PE.pe_strokes_tokens(pos=strokes_seq, device=strokes_seq.device) +self.stroke_token
 
             # Encoder
             bs = strokes.size(1)

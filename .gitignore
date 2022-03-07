@@ -148,3 +148,4 @@ slurm/
 configs/train/conf*.yaml
 configs/eval/conf*.yaml
 evaluation/content/
+tmp/

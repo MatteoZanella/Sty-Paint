@@ -30,21 +30,23 @@ class StrokesLoader:
         """
         return (int)(x * (width - 1) + 0.5)
 
-    def add_segmentation_saliency(self, seg_map, sal_map, canvas_size):
+    def add_segmentation_saliency(self, seg_map, canvas_size):
 
         segm_info = np.zeros((1, self.num_strokes, 1))
-        sal_info = np.zeros((1, self.num_strokes, 1))
 
-        # Assing a class to each stroke
+        # Assign a class to each stroke
         for i in range(self.num_strokes):
             x0, y0 = self.strokes[0, i, :2]
             x0 = self._normalize(x0, canvas_size)
             y0 = self._normalize(y0, canvas_size)
 
-            segm_info[0, i, 0] = seg_map[y0, x0]
-            sal_info[0, i, 0] = sal_map[y0, x0]
+            # TODO: only for pet dataset
+            if seg_map[y0, x0] == 3:
+                segm_info[0, i, 0] = 1.0
+            else:
+                segm_info[0, i, 0] = seg_map[y0, x0]
 
-        return np.concatenate([self.strokes, segm_info, sal_info], axis=-1)
+        return np.concatenate([self.strokes, segm_info], axis=-1)
 
 
 ########################################################################################################################
@@ -185,10 +187,10 @@ def check_tour(graph, tour):
 
 ########################################################################################################################
 def lkh_cost_matrix(graph, start):
-    scale = 100
+    scale = 1000
     C = np.zeros((graph.n_nodes + 1, graph.n_nodes + 1))
 
-    # Populte the matrix
+    # Populate the matrix
     for i in range(graph.n_nodes):
         for j in range(graph.n_nodes):
             # Keep the convention of the documentation

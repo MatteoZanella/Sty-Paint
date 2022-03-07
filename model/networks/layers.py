@@ -101,7 +101,7 @@ class PositionalEncoding:
         start = (self.visual_features / 2)
         end = self.img_size - (self.visual_features / 2)
         grid = torch.linspace(start=start, end=end, steps=self.visual_features)
-        pos_y, pos_x = torch.meshgrid(grid, grid, indexing='ij')
+        pos_y, pos_x = torch.meshgrid(grid, grid)
         pos_y = rearrange(pos_y, 'h w -> (h w)')
         pos_x = rearrange(pos_x, 'h w -> (h w)')
         pos_z = None
