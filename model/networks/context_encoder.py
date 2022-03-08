@@ -21,7 +21,6 @@ class ContextEncoder(nn.Module) :
             self.use_context = True
 
         if config["model"]["encoder_pe"] == "new":
-            print('Using new encodings')
             self.PE = PositionalEncoding(config)
         else:
             self.PE = PEWrapper(config)

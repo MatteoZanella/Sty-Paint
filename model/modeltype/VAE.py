@@ -20,10 +20,10 @@ class VAEModel(nn.Module) :
         self.context_encoder = context_encoder.ContextEncoder(config)
         self.vae_encoder = encoder.Encoder(config)
         self.vae_decoder = decoder.Decoder(config)
-        self.renderer = Painter(args=load_painter_config(config["renderer"]["painter_config"]))
 
 
     def train_setup(self, n_iters_per_epoch):
+        self.renderer = Painter(args=load_painter_config(self.config["renderer"]["painter_config"]))
         self.checkpoint_path = self.config["train"]["logging"]["checkpoint_path"]
         self.n_iters_per_epoch = n_iters_per_epoch
 

@@ -25,7 +25,6 @@ class Decoder1Step(nn.Module):
         self.d_model = config["model"]["d_model"]
 
         if config["model"]["encoder_pe"] == "new" :
-            print('Using new encodings')
             self.PE = PositionalEncoding(config)
         else :
             self.PE = PEWrapper(config)

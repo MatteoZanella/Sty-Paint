@@ -30,7 +30,6 @@ class Encoder(nn.Module):
         self.proj_features = nn.Linear(self.s_params, self.d_model)
 
         if config["model"]["encoder_pe"] == "new":
-            print('Using new encodings')
             self.PE = PositionalEncoding(config)
         else:
             self.PE = PEWrapper(config)

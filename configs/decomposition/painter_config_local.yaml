@@ -2,7 +2,7 @@ img_path: ''
 output_dir: ''
 renderer: 'oilpaintbrush'
 canvas_color: 'black'
-canvas_size: 256
+canvas_size: 512
 keep_aspect_ratio: False
 beta_L1: 1.0
 with_ot_loss: False
@@ -13,7 +13,6 @@ with_kl_loss : False
 beta_kl : 2.5e-6
 kl_lr : 0.00005
 n_iters_per_strokes : 15
-net_G: 'zou-fusion-net'
 net_G: 'zou-fusion-net'
 renderer_checkpoint_dir: '/Users/eliap/Downloads/checkpoints_G_oilpaintbrush/'
 lr: 0.005
