@@ -147,5 +147,6 @@ __pycache__/
 slurm/
 configs/train/conf*.yaml
 configs/eval/conf*.yaml
+configs/decomposition/conf*.yaml
 evaluation/content/
 tmp/
