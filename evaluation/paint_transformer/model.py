@@ -2,7 +2,6 @@ from . import network, render_utils
 import paddle
 import paddle.nn as nn
 import numpy as np
-from . import inference
 
 '''
 Code adapted from https://github.com/wzmsltw/PaintTransformer
@@ -220,11 +219,3 @@ class PaintTransformer:
         param[:, :2] = param[:, :2] / 1.25 + 0.1
         param[:, 2 :4] = param[:, 2 :4] / 1.25
         return param, decision
-
-    def full_prediction(self, original_img):
-        original_img = render_utils.torch_to_paddle(original_img)
-        frames = inference.render_serial(original_img,
-                                          self.net_g,
-                                          self.meta_brushes)
-
-        return frames
