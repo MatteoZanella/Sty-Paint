@@ -2,9 +2,8 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-from .layers import PEWrapper, PositionalEncoding
+from .layers import PositionalEncoding
 import functools
-
 
 
 class TransformerDiscriminator(nn.Module):
@@ -18,13 +17,7 @@ class TransformerDiscriminator(nn.Module):
         self.context_length = config["dataset"]["context_length"]
 
         self.proj_features = nn.Linear(self.s_params, self.d_model)
-
-        if config["model"]["encoder_pe"] == "new":
-            print('Using new encodings')
-            self.PE = PositionalEncoding(config)
-        else:
-            self.PE = PEWrapper(config)
-
+        self.PE = PositionalEncoding(config)
 
         # [CLS] token
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.d_model))

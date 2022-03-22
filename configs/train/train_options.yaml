@@ -116,7 +116,6 @@ train:
       mu_dataset :
       sigma_dataset :
   logging:
-    wandb_api_key :
     project_name :
     exp_name :
     checkpoint_path :

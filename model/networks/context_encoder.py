@@ -3,7 +3,7 @@ import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
 from .image_encoders import resnet18, ConvEncoder, PatchEmbed
-from .layers import PEWrapper, PositionalEncoding
+from .layers import PositionalEncoding
 
 
 class ContextEncoder(nn.Module) :
@@ -20,10 +20,8 @@ class ContextEncoder(nn.Module) :
         else:
             self.use_context = True
 
-        if config["model"]["encoder_pe"] == "new":
-            self.PE = PositionalEncoding(config)
-        else:
-            self.PE = PEWrapper(config)
+        self.PE = PositionalEncoding(config)
+
         self.visual_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
         trunc_normal_(self.visual_token, std=0.02)
         if self.use_context:

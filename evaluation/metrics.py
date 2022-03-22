@@ -1,7 +1,12 @@
 import numpy as np
 from scipy import linalg
 import torch
-from einops import rearrange
+from einops import repeat
+from tslearn.metrics import dtw
+import lpips
+import itertools
+from . import tools
+
 
 def compute_color_difference(x):
     x = x[:, :, 5:]
@@ -9,7 +14,7 @@ def compute_color_difference(x):
         l1 = torch.abs(torch.diff(x, dim=1)).mean()
         l2 = torch.pow(torch.diff(x, dim=1), 2).mean()
     else:
-        l1 = np.abs(np.diff(x, axis=1)).mean()  #TODO check
+        l1 = np.abs(np.diff(x, axis=1)).mean()
         l2 = np.square(np.diff(x, axis=1)).mean()
 
     return l1, l2
@@ -70,279 +75,34 @@ class WassersteinDistance:
         return loss.mean()  # average over the batch/length dimension
 
 #######################################################################################################################
-class FDMetric :
-    def __init__(self, seq_len=8) :
-        """
-        Compute batched FD metric
-        """
+# Frechet Strokes Distance
+class FSD:
+    def __init__(self):
+        super(FSD, self).__init__()
 
-        self.param_per_stroke = 8
-        ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
-        self.id0 = ids[:, 0]
-        self.id1 = ids[:, 1]
-        self.n = ids.shape[0]
+    def __call__(self, generated, original, ctx=None):
 
-        #print(f'Numebr of permutations : {self.n}')
+        generated = tools.compute_features(generated, ctx=ctx)
+        original = tools.compute_features(original, ctx=ctx)
 
-        self.dim_features = self.n * self.param_per_stroke
-        self.keys = ['all', 'position', 'color']   # Divide the FD for these parameters
+        fsd = self.calculate_frechet_distance(generated["feat"], original["feat"])
+        fsd_pos = self.calculate_frechet_distance(generated["feat_pos"], original["feat_pos"])
+        fsd_color = self.calculate_frechet_distance(generated["feat_color"], original["feat_color"])
 
-    def _calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2, eps=1e-6) :
-        """Numpy implementation of the Frechet Distance.
-        The Frechet distance between two multivariate Gaussians X_1 ~ N(mu_1, C_1)
-        and X_2 ~ N(mu_2, C_2) is
-                d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2)).
-        Stable version by Dougal J. Sutherland.
-        Params:
-        -- mu1   : Numpy array containing the activations of a layer of the
-                   inception net (like returned by the function 'get_predictions')
-                   for generated samples.
-        -- mu2   : The sample mean over activations, precalculated on an
-                   representative data set.
-        -- sigma1: The covariance matrix over activations for generated samples.
-        -- sigma2: The covariance matrix over activations, precalculated on an
-                   representative data set.
-        Returns:
-        --   : The Frechet Distance.
-        """
+        return dict(fsd=fsd, fsd_pos=fsd_pos, fsd_color=fsd_color)
 
-        mu1 = np.atleast_1d(mu1)
-        mu2 = np.atleast_1d(mu2)
+    def calculate_frechet_distance(self, x, y, compute_mean_cov=True, eps=1e-6):
 
-        sigma1 = np.atleast_2d(sigma1)
-        sigma2 = np.atleast_2d(sigma2)
-
-        assert mu1.shape == mu2.shape, \
-            'Training and test mean vectors have different lengths'
-        assert sigma1.shape == sigma2.shape, \
-            'Training and test covariances have different dimensions'
-
-        diff = mu1 - mu2
-
-        # Product might be almost singular
-        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
-        if not np.isfinite(covmean).all() :
-            msg = ('fid calculation produces singular product; '
-                   'adding %s to diagonal of cov estimates') % eps
-            print(msg)
-            offset = np.eye(sigma1.shape[0]) * eps
-            covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
-
-        # Numerical error might give slight imaginary component
-        if np.iscomplexobj(covmean) :
-            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3) :
-                m = np.max(np.abs(covmean.imag))
-                raise ValueError('Imaginary component {}'.format(m))
-            covmean = covmean.real
-
-        tr_covmean = np.trace(covmean)
-
-        return (diff.dot(diff) + np.trace(sigma1)
-                + np.trace(sigma2) - 2 * tr_covmean)
-
-    def compute_features(self, x) :
         if torch.is_tensor(x):
             x = x.detach().cpu().numpy()
-        bs = x.shape[0]
-        feat = np.empty((bs, self.dim_features))
-        for j in range(self.param_per_stroke):
-            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, j] - x[:, self.id1, j]
-        return feat
+        if torch.is_tensor(y):
+            y = y.detach().cpu().numpy()
 
-    def compute_mean_cov(self, feat):
-        out = dict(mu_all=np.mean(feat, axis=0),
-                   cov_all=np.cov(feat, rowvar=False),
-                   mu_position=np.mean(feat[:, :2 * self.n]),
-                   cov_position=np.cov(feat[:, :2 * self.n], rowvar=False),
-                   mu_color=np.mean(feat[:, 5 * self.n:]),
-                   cov_color=np.cov(feat[:, 5 * self.n:], rowvar=False))
-        return out
-
-    def __call__(self, original, generated):
-        # Original
-        orig_feat = self.compute_features(original)
-        orig = self.compute_mean_cov(orig_feat)
-
-        # Generated
-        gen_feat = self.compute_features(generated)
-        gen = self.compute_mean_cov(gen_feat)
-
-        output = dict(
-            all = self._calculate_frechet_distance(mu1=gen['mu_all'], sigma1=gen['cov_all'], mu2=orig['mu_all'], sigma2=orig['cov_all']),
-            position = self._calculate_frechet_distance(mu1=gen['mu_position'], sigma1=gen['cov_position'], mu2=orig['mu_position'], sigma2=orig['cov_position']),
-            color = self._calculate_frechet_distance(mu1=gen['mu_color'], sigma1=gen['cov_color'], mu2=orig['mu_color'], sigma2=orig['cov_color']))
-
-        return output
-
-########################################################################################################################
-class FDMetricIncremental :
-    def __init__(self, seq_len=8) :
-        """
-        Compute batched FD metric
-        """
-
-        self.param_per_stroke = 8
-        ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
-        self.id0 = ids[:, 0]
-        self.id1 = ids[:, 1]
-        self.n = ids.shape[0]
-
-        #print(f'Numebr of permutations : {self.n}')
-
-        self.dim_features = self.n * self.param_per_stroke
-        self.original_features = []
-        self.generated_features = []
-        self.keys = ['all', 'position', 'color']   # Divide the FD for these parameters
-
-    def _calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2, eps=1e-6) :
-        """Numpy implementation of the Frechet Distance.
-        The Frechet distance between two multivariate Gaussians X_1 ~ N(mu_1, C_1)
-        and X_2 ~ N(mu_2, C_2) is
-                d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2)).
-        Stable version by Dougal J. Sutherland.
-        Params:
-        -- mu1   : Numpy array containing the activations of a layer of the
-                   inception net (like returned by the function 'get_predictions')
-                   for generated samples.
-        -- mu2   : The sample mean over activations, precalculated on an
-                   representative data set.
-        -- sigma1: The covariance matrix over activations for generated samples.
-        -- sigma2: The covariance matrix over activations, precalculated on an
-                   representative data set.
-        Returns:
-        --   : The Frechet Distance.
-        """
-
-        mu1 = np.atleast_1d(mu1)
-        mu2 = np.atleast_1d(mu2)
-
-        sigma1 = np.atleast_2d(sigma1)
-        sigma2 = np.atleast_2d(sigma2)
-
-        assert mu1.shape == mu2.shape, \
-            'Training and test mean vectors have different lengths'
-        assert sigma1.shape == sigma2.shape, \
-            'Training and test covariances have different dimensions'
-
-        diff = mu1 - mu2
-
-        # Product might be almost singular
-        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
-        if not np.isfinite(covmean).all() :
-            msg = ('fid calculation produces singular product; '
-                   'adding %s to diagonal of cov estimates') % eps
-            print(msg)
-            offset = np.eye(sigma1.shape[0]) * eps
-            covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
-
-        # Numerical error might give slight imaginary component
-        if np.iscomplexobj(covmean) :
-            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3) :
-                m = np.max(np.abs(covmean.imag))
-                raise ValueError('Imaginary component {}'.format(m))
-            covmean = covmean.real
-
-        tr_covmean = np.trace(covmean)
-
-        return (diff.dot(diff) + np.trace(sigma1)
-                + np.trace(sigma2) - 2 * tr_covmean)
-
-    def compute_features(self, x) :
-        if torch.is_tensor(x):
-            x = x.detach().cpu().numpy()
-        bs = x.shape[0]
-        feat = np.empty((bs, self.dim_features))
-        for j in range(self.param_per_stroke):
-            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, j] - x[:, self.id1, j]
-        return feat
-
-    def compute_mean_cov(self):
-        self.generated_features = np.concatenate(self.generated_features)
-        generated = dict(mu_all=np.mean(self.generated_features, axis=0),
-                   cov_all=np.cov(self.generated_features, rowvar=False),
-                   mu_position=np.mean(self.generated_features[:, :2 * self.n]),
-                   cov_position=np.cov(self.generated_features[:, :2 * self.n], rowvar=False),
-                   mu_color=np.mean(self.generated_features[:, 5 * self.n:]),
-                   cov_color=np.cov(self.generated_features[:, 5 * self.n:], rowvar=False))
-
-
-        # Original
-        self.original_features = np.concatenate(self.original_features)
-        original =  dict(mu_all=np.mean(self.original_features, axis=0),
-                   cov_all=np.cov(self.original_features, rowvar=False),
-                   mu_position=np.mean(self.original_features[:, :2 * self.n]),
-                   cov_position=np.cov(self.original_features[:, :2 * self.n], rowvar=False),
-                   mu_color=np.mean(self.original_features[:, 5 * self.n:]),
-                   cov_color=np.cov(self.original_features[:, 5 * self.n:], rowvar=False))
-
-        return generated, original
-
-    def update_queue(self, original, generated):
-        original = original[:, :, :self.param_per_stroke]
-        generated = generated[:, :, :self.param_per_stroke]
-
-        self.original_features.append(self.compute_features(original))
-        self.generated_features.append(self.compute_features(generated))
-
-    def compute_fd(self):
-        gen, orig = self.compute_mean_cov()
-
-        output = dict(
-            all = self._calculate_frechet_distance(mu1=gen['mu_all'], sigma1=gen['cov_all'], mu2=orig['mu_all'], sigma2=orig['cov_all']),
-            position = self._calculate_frechet_distance(mu1=gen['mu_position'], sigma1=gen['cov_position'], mu2=orig['mu_position'], sigma2=orig['cov_position']),
-            color = self._calculate_frechet_distance(mu1=gen['mu_color'], sigma1=gen['cov_color'], mu2=orig['mu_color'], sigma2=orig['cov_color']))
-
-        return output
-
-
-########################################################################################################################
-class FDWithContextMetricIncremental :
-    def __init__(self, name= '', seq_len=18, K =10) :
-        """
-        Compute batched FD metric
-        """
-        self.name = name
-        self.param_per_stroke = 8
-
-        L = seq_len
-        ids = []
-        for i in range(L) :
-            for j in range(L) :
-                if (j > i + K) or (j < i - K) or i == j :
-                    continue
-                else :
-                    ids.append([i, j])
-
-        ids = np.array(ids)
-        self.id0 = ids[:, 0]
-        self.id1 = ids[:, 1]
-        self.n = ids.shape[0]
-
-        # print(f'Numebr of permutations : {self.n}')
-
-        self.dim_features = self.n * self.param_per_stroke
-        self.original_features = []
-        self.generated_features = []
-        self.keys = ['all', 'position', 'color']  # Divide the FD for these parameters
-
-    def _calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2, eps=1e-6) :
-        """Numpy implementation of the Frechet Distance.
-        The Frechet distance between two multivariate Gaussians X_1 ~ N(mu_1, C_1)
-        and X_2 ~ N(mu_2, C_2) is
-                d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2)).
-        Stable version by Dougal J. Sutherland.
-        Params:
-        -- mu1   : Numpy array containing the activations of a layer of the
-                   inception net (like returned by the function 'get_predictions')
-                   for generated samples.
-        -- mu2   : The sample mean over activations, precalculated on an
-                   representative data set.
-        -- sigma1: The covariance matrix over activations for generated samples.
-        -- sigma2: The covariance matrix over activations, precalculated on an
-                   representative data set.
-        Returns:
-        --   : The Frechet Distance.
-        """
+        if compute_mean_cov:
+            mu1 = np.mean(x, axis=0)
+            sigma1 = np.cov(x, rowvar=False)
+            mu2 = np.mean(y, axis=0)
+            sigma2 = np.cov(y, rowvar=False)
 
         mu1 = np.atleast_1d(mu1)
         mu2 = np.atleast_1d(mu2)
@@ -376,117 +136,8 @@ class FDWithContextMetricIncremental :
         tr_covmean = np.trace(covmean)
         return (diff.dot(diff) + np.trace(sigma1)
                 + np.trace(sigma2) - 2 * tr_covmean)
-
-    def compute_features(self, x) :
-        if torch.is_tensor(x) :
-            x = x.detach().cpu().numpy()
-        bs = x.shape[0]
-        feat = np.empty((bs, self.dim_features))
-        for j in range(self.param_per_stroke) :
-            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, j] - x[:, self.id1, j]
-        return feat
-
-    def compute_mean_cov(self) :
-        self.generated_features = np.concatenate(self.generated_features)
-        np.save(f'/home/eperuzzo/FEAT/{self.name}_generated', self.generated_features)
-        generated = dict(mu_all=np.mean(self.generated_features, axis=0),
-                         cov_all=np.cov(self.generated_features, rowvar=False),
-                         mu_position=np.mean(self.generated_features[:, :5 * self.n]),
-                         cov_position=np.cov(self.generated_features[:, :5 * self.n], rowvar=False),
-                         mu_color=np.mean(self.generated_features[:, 5 * self.n :]),
-                         cov_color=np.cov(self.generated_features[:, 5 * self.n :], rowvar=False))
-
-        # Original
-        self.original_features = np.concatenate(self.original_features)
-        np.save(f'/home/eperuzzo/FEAT/{self.name}_original', self.original_features)
-        original = dict(mu_all=np.mean(self.original_features, axis=0),
-                        cov_all=np.cov(self.original_features, rowvar=False),
-                        mu_position=np.mean(self.original_features[:, :5 * self.n]),
-                        cov_position=np.cov(self.original_features[:, :5 * self.n], rowvar=False),
-                        mu_color=np.mean(self.original_features[:, 5 * self.n :]),
-                        cov_color=np.cov(self.original_features[:, 5 * self.n :], rowvar=False))
-
-        return generated, original
-
-    def update_queue(self, original, generated) :
-        original = original[:, :, :self.param_per_stroke]
-        generated = generated[:, :, :self.param_per_stroke]
-
-        self.original_features.append(self.compute_features(original))
-        self.generated_features.append(self.compute_features(generated))
-
-    def compute_fd(self) :
-        gen, orig = self.compute_mean_cov()
-
-        output = dict(
-            all=self._calculate_frechet_distance(mu1=gen['mu_all'], sigma1=gen['cov_all'], mu2=orig['mu_all'],
-                                                 sigma2=orig['cov_all']),
-            position=self._calculate_frechet_distance(mu1=gen['mu_position'], sigma1=gen['cov_position'],
-                                                      mu2=orig['mu_position'], sigma2=orig['cov_position']),
-            color=self._calculate_frechet_distance(mu1=gen['mu_color'], sigma1=gen['cov_color'], mu2=orig['mu_color'],
-                                                   sigma2=orig['cov_color']))
-
-        return output
-
-
-def calculate_frechet_distance(x, y, compute_mean_cov=True, eps=1e-6):
-
-    if torch.is_tensor(x):
-        x = x.detach().cpu().numpy()
-    if torch.is_tensor(y):
-        y = y.detach().cpu().numpy()
-
-    if compute_mean_cov:
-        mu1 = np.mean(x, axis=0)
-        sigma1 = np.cov(x, rowvar=False)
-        mu2 = np.mean(y, axis=0)
-        sigma2 = np.cov(y, rowvar=False)
-
-    mu1 = np.atleast_1d(mu1)
-    mu2 = np.atleast_1d(mu2)
-
-    sigma1 = np.atleast_2d(sigma1)
-    sigma2 = np.atleast_2d(sigma2)
-
-    assert mu1.shape == mu2.shape, \
-        'Training and test mean vectors have different lengths'
-    assert sigma1.shape == sigma2.shape, \
-        'Training and test covariances have different dimensions'
-
-    diff = mu1 - mu2
-
-    # Product might be almost singular
-    covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
-    if not np.isfinite(covmean).all() :
-        msg = ('fid calculation produces singular product; '
-               'adding %s to diagonal of cov estimates') % eps
-        print(msg)
-        offset = np.eye(sigma1.shape[0]) * eps
-        covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
-
-    # Numerical error might give slight imaginary component
-    if np.iscomplexobj(covmean) :
-        if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3) :
-            m = np.max(np.abs(covmean.imag))
-            raise ValueError('Imaginary component {}'.format(m))
-        covmean = covmean.real
-
-    tr_covmean = np.trace(covmean)
-    return (diff.dot(diff) + np.trace(sigma1)
-            + np.trace(sigma2) - 2 * tr_covmean)
-
-def compute_fid(x, y, compute_mean_cov=True):
-    fid = calculate_frechet_distance(x["feat"], y["feat"])
-    fid_pos = calculate_frechet_distance(x["feat_pos"], y["feat_pos"])
-    fid_color = calculate_frechet_distance(x["feat_color"], y["feat_color"])
-
-    return {"fid" : fid, "fid_pos" : fid_pos, "fid_color" : fid_color}
-
 # ======================================================================================================================
-import lpips
-import itertools
-
-
+# LPIPS Diversity
 # code from https://github.com/richzhang/PerceptualSimilarity, pip install lpips
 class LPIPSDiversityMetric:
     def __init__(self, fn_backbone='vgg') :
@@ -530,89 +181,43 @@ class LPIPSDiversityMetric:
         loss = torch.tensor(loss)
         return loss.mean()
 
+# ======================================================================================================================
+# Stroke Color L2
+class StrokeColorL2:
+    def __init__(self):
+        super(StrokeColorL2, self).__init__()
 
-
-class FeaturesDiversity:
-    def __init__(self) :
-        seq_len = 8
-        self.param_per_stroke = 8
-        ids = np.array([i for i in itertools.permutations(range(seq_len), 2)])
-        self.id0 = ids[:, 0]
-        self.id1 = ids[:, 1]
-        self.n = ids.shape[0]
-
-        # print(f'Numebr of permutations : {self.n}')
-
-        self.dim_features = self.n * self.param_per_stroke
-
-    def get_combinations(self, n) :
-        return np.array([i for i in itertools.combinations(range(n), 2)])
-
-    def compute_features(self, x) :
-        if torch.is_tensor(x) :
-            x = x.detach().cpu().numpy()
-        bs = x.shape[0]
-        n_samples = x.shape[1]
-
-        feat = np.empty((bs, n_samples, self.dim_features))
-        for j in range(self.param_per_stroke) :
-            for n in range(n_samples) :
-                feat[:, n, j * self.n : (j + 1) * self.n] = x[:, n, self.id0, j] - x[:, n, self.id1, j]
-        return feat
-
-    def mse(self, x, y) :
-        return np.square(np.subtract(x, y)).mean()
-
-    def __call__(self, x) :
+    def __call__(self, ref_imgs, frames, alphas):
         """
+        All input range [0,1].
         Args:
-            x: [bs x n_samples x len x params]
+            ref: [bs x 3 x h x w]
+            frames: [bs x L x h x w x 3]  rendered frames
+            alphas: [bs x L x h x w x 1]  0, 1 binary map showing the transparency matrix
+
         Returns:
+
         """
-        bs = x.shape[0]
-        n_samples = x.shape[1]
-        idxs = self.get_combinations(n_samples)
+        L = frames.shape[1]
 
-        x_feat = self.compute_features(x)
+        ref_imgs = repeat(ref_imgs.cpu(), 'bs ch h w -> bs L h w ch', L=L)
+        ref_imgs = ref_imgs.numpy()
 
-        loss = []
-        for b in range(bs) :
-            for idx in idxs :
-                loss.append(self.mse(x_feat[b, idx[0]], x_feat[b, idx[1]]))
-        loss = np.array(loss)
+        loss = np.square(np.subtract(ref_imgs, frames) * alphas)
+        area = alphas.sum(axis=(2, 3, 4))
+        loss = loss.sum(axis=(2, 3, 4)) / area
+
         return loss.mean()
 
-
-
 # ======================================================================================================================
-from einops import repeat
-from tslearn.metrics import dtw
+# DTW
+class DTW:
+    def __init__(self):
+        super(DTW, self).__init__()
 
-def maskedL2(ref_imgs, frames, alphas) :
-    """
-    All input between 0, 1 range
-    Args:
-        ref: [bs x 3 x h x w]
-        frames: [bs x L x h x w x 3]  rendered frames
-        alphas: [bs x L x h x w x 1]  0, 1 binary map showing the transparency matrix
-
-    Returns:
-
-    """
-    L = frames.shape[1]
-
-    ref_imgs = repeat(ref_imgs.cpu(), 'bs ch h w -> bs L h w ch', L=L)
-    ref_imgs = ref_imgs.numpy()
-
-    loss = np.square(np.subtract(ref_imgs, frames) * alphas)
-    area = alphas.sum(axis=(2, 3, 4))
-    loss = loss.sum(axis=(2,3,4)) / area
-
-    return loss.mean()
-
-def compute_dtw(x, y) :
-    bs = x.shape[0]
-    dtw_scores = np.empty(bs)
-    for b in range(bs) :
-        dtw_scores[b] = dtw(x[b], y[b])
-    return dtw_scores.mean()
+    def __call__(self, x, y):
+        bs = x.shape[0]
+        output = np.empty(bs)
+        for b in range(bs):
+            output[b] = dtw(x[b], y[b])
+        return output.mean()

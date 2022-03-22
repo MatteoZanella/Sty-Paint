@@ -1,5 +1,4 @@
 import argparse
-import os
 import logging
 import numpy as np
 import torch
@@ -9,7 +8,6 @@ from model.dataset import StrokesDataset
 from model.training.trainer import Trainer
 from torch.utils.data import DataLoader
 from model import build_model
-
 
 import wandb
 
@@ -39,7 +37,6 @@ if __name__ == '__main__':
     torch.backends.cudnn.benchmark = True
 
     # Initialize wandb
-    os.environ["WANDB_API_KEY"] = config["train"]["logging"]["wandb_api_key"]
     wandb.init(project=config["train"]["logging"]["project_name"], config=config)
     wandb.run.name = config["train"]["logging"]["exp_name"]
 

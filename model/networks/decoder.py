@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
-from .layers import PEWrapper, PositionalEncoding, positionalencoding1d
+from .layers import PositionalEncoding, positionalencoding1d
 import torch.nn.functional as F
 
 def get_act(name):
@@ -24,10 +24,7 @@ class Decoder1Step(nn.Module):
         self.s_params = config["model"]["n_strokes_params"]
         self.d_model = config["model"]["d_model"]
 
-        if config["model"]["encoder_pe"] == "new" :
-            self.PE = PositionalEncoding(config)
-        else :
-            self.PE = PEWrapper(config)
+        self.PE = PositionalEncoding(config)
 
         self.ctx_z = config["model"]["ctx_z"]  # how to merge context and z
         if self.ctx_z == 'proj' :

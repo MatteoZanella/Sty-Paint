@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
-from .layers import PEWrapper, PositionalEncoding
+from .layers import PositionalEncoding
 
 
 def reparameterize(mu, log_sigma):
@@ -28,11 +28,8 @@ class Encoder(nn.Module):
             self.encoder_only = config["model"]["encoder"]["encoder_only"]
 
         self.proj_features = nn.Linear(self.s_params, self.d_model)
+        self.PE = PositionalEncoding(config)
 
-        if config["model"]["encoder_pe"] == "new":
-            self.PE = PositionalEncoding(config)
-        else:
-            self.PE = PEWrapper(config)
         self.stroke_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
         trunc_normal_(self.stroke_token, std=0.02)
 

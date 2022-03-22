@@ -1,33 +1,26 @@
 import argparse
 import os
-import glob
 import pickle as pkl
 import random
+import numpy as np
+import pandas as pd
+import copy
+import torch
+import paddle
+from torch.utils.data import DataLoader
 
 from model.utils.utils import dict_to_device, AverageMetersDict
 from model.utils.parse_config import ConfigParser
 from model import build_model
 from model.dataset import StrokesDataset
-from torch.utils.data import DataLoader
-import torch
-import paddle
 
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 
-from evaluation.metrics import FeaturesDiversity, LPIPSDiversityMetric, WassersteinDistance, compute_fid
-from evaluation.metrics import maskedL2, compute_dtw, compute_color_difference
+from evaluation.metrics import LPIPSDiversityMetric, WassersteinDistance, FSD, StrokeColorL2, DTW, compute_color_difference
 from evaluation.fvd import FVD
-from evaluation.tools import compute_features
-
 from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
-import pandas as pd
 import evaluation.tools as etools
-import numpy as np
-import copy
-from einops import rearrange, repeat
-import warnings
-warnings.filterwarnings("ignore")
 
 
 def np_and_save(x, path, name):
@@ -36,29 +29,13 @@ def np_and_save(x, path, name):
     x = np.concatenate(x)
     np.save(os.path.join(path, name), x)
 
-def get_features(x, ctx=None):
-    if isinstance(x, list):
-        x = np.concatenate(x, axis=0)
-    feat_x = compute_features(x)
-    if ctx:
-        if isinstance(ctx, list):
-            ctx = np.concatenate(ctx)
-        feat_x_ctx = compute_features(np.concatenate((ctx, x), axis=1))
-        return feat_x, feat_x_ctx
-    else:
-        return feat_x
 
-def eval_fid(x, reference, reference_ctx, ctx):
-    x_feat, x_ctx_feat = get_features(x, ctx=ctx)
-    fid = compute_fid(reference, x_feat, compute_mean_cov=True)
-    ctx_fid = compute_fid(reference_ctx, x_ctx_feat, compute_mean_cov=True)
-    return fid, ctx_fid
+def eval_model(data, net, metric_logger, is_our, renderer):
 
-def eval_model(data, net, metric_logger, is_our, renderer, LPIPS):
+    wdMetric = WassersteinDistance()
+    scl2Metric = StrokeColorL2()
+    dtwMetric = DTW()
 
-    Wdist = WassersteinDistance()
-
-    ctx = data['strokes_ctx'].cpu()
     targets = data['strokes_seq'].cpu()
     bs = targets.size(0)
 
@@ -76,29 +53,16 @@ def eval_model(data, net, metric_logger, is_our, renderer, LPIPS):
 
     visuals = etools.render_frames(predictions, data, renderer)
 
-    if args.lpips and is_our:
-        predictions = rearrange(predictions, '(bs n_samples) L n_params -> bs n_samples L n_params', n_samples=args.n_samples)
-        visuals['frames'] = rearrange(visuals['frames'], '(bs n_samples) L H W ch -> bs n_samples L H W ch', n_samples=args.n_samples)
-        visuals['alphas'] = rearrange(visuals['alphas'], '(bs n_samples) L H W ch -> bs n_samples L H W ch', n_samples=args.n_samples)
-
-        lpips_val = LPIPS(visuals['frames'], visuals['alphas'])
-        metric_logger.update(dict(lpips = lpips_val.item()), bs)
-
-
-        visuals['frames'] = visuals['frames'][:, 0]
-        visuals['alphas'] = visuals['alphas'][:, 0]
-        predictions = predictions[:, 0]
-
     # color difference
     color_diff_l1, color_diff_l2 = compute_color_difference(predictions)
-    maskedl2 = maskedL2(data['img'], visuals['frames'], visuals['alphas'])
-    wd = Wdist(targets[:, :, :5], torch.tensor(predictions[:, :, :5]))
-    dtw = compute_dtw(targets, predictions)
+    scl2 = scl2Metric(data['img'], visuals['frames'], visuals['alphas'])
+    wd = wdMetric(targets[:, :, :5], torch.tensor(predictions[:, :, :5]))
+    dtw = dtwMetric(targets, predictions)
 
     # record metrics
     metric_logger.update(
         dict(
-            maskedL2 = maskedl2.item(),
+            scl2 = scl2.item(),
             wd = wd.item(),
             color_diff_l1 = color_diff_l1.item(),
             color_diff_l2 = color_diff_l2.item(),
@@ -107,7 +71,7 @@ def eval_model(data, net, metric_logger, is_our, renderer, LPIPS):
     return predictions, visuals['frames']
 
 
-def main(args, exp_name):
+def main(args):
 
     # Seed
     seed = 1234
@@ -141,48 +105,33 @@ def main(args, exp_name):
         snp_plus_config.with_kl_loss = True
         snp_plus = Painter(args=snp_plus_config)
 
-
-    print(f'Processing: {exp_name}')
-    tmp_path = os.path.join(args.checkpoint_base, exp_name)
-    if os.path.exists(os.path.join(tmp_path, 'latest.pth.tar')):
-        checkpoint_path = os.path.join(tmp_path, 'latest.pth.tar')
-    else:
-        checkpoint_path = sorted(glob.glob(os.path.join(tmp_path, '*.pth.tar')))[-1]
-    if len(checkpoint_path) == 0:
-        print(f'No checkpoint found at : {tmp_path}, skipping to the next!')
-
-    # Output Path
-    output_path = os.path.join(args.output_path, exp_name)
-
     # load checkpoint, update model config based on the stored config
-    ckpt = torch.load(checkpoint_path, map_location='cpu')
+    ckpt = torch.load(args.checkpoint, map_location='cpu')
     config.update(dict(model=ckpt["config"]["model"]))
 
     model = build_model(config)
     msg = model.load_state_dict(ckpt["model"], strict=False)
-    print(f'==> Loading model form {checkpoint_path}, with : {msg}')
+    print(f'==> Loading model form {args.checkpoint}, with : {msg}')
     model.cuda()
     model.eval()
 
-    # basline Paint Transformer
-    baseline = PaddlePT(model_path=args.checkpoint_baseline, config=render_config)
+    # Output Path
+    output_path = os.path.join(args.output_path, ckpt["config"]["train"]["logging"]["exp_name"])
 
-    n_files = len(dataset_test) * args.n_iters_dataloader
-    print('Number of files')
+    # Paint Transformer
+    baseline = PaddlePT(model_path=args.pt_checkpoint, config=render_config)
     # ======= Metrics ========================
+    fsdMetric = FSD()
     original, ctx, our, pt, snp, snp2 = [], [], [], [], [], []
     visual_original, visual_ctx, visual_our, visual_pt, visual_snp, visual_snp2 = [], [], [], [], [], []
 
     # Average Meters
-    eval_names = ['wd', 'maskedL2', 'color_diff_l1', 'color_diff_l2', 'dtw', 'lpips']
+    eval_names = ['fsd', 'scl2', 'dtw', 'lpips', 'wd', 'color_diff_l1', 'color_diff_l2']
     our_metrics = AverageMetersDict(names=eval_names)
     baseline_metrics = AverageMetersDict(names=eval_names)
     snp_metrics = AverageMetersDict(names=eval_names)
     snp_plus_metrics = AverageMetersDict(names = eval_names)
     dataset_metrics = AverageMetersDict(names=['color_diff_l1', 'color_diff_l2'])
-    LPIPSM = None
-    if args.lpips:
-        LPIPSM = LPIPSDiversityMetric()
 
     # ======= Run ========================
     for iter in range(args.n_iters_dataloader) :
@@ -194,13 +143,13 @@ def main(args, exp_name):
             ref_l1, ref_l2 = compute_color_difference(data['strokes_seq'])
             dataset_metrics.update(dict(color_diff_l1=ref_l1.item(), color_diff_l2 = ref_l2.item()), data['strokes_seq'].shape[0])
             # ======= Predict   ===========
-            our_predictions, our_vis = eval_model(data=data, net=model, metric_logger=our_metrics, is_our=True, renderer=renderer, LPIPS=LPIPSM)
+            our_predictions, our_vis = eval_model(data=data, net=model, metric_logger=our_metrics, is_our=True, renderer=renderer)
             if args.use_pt:
-                pt_predictions, pt_vis =eval_model(data=data, net=baseline, metric_logger=baseline_metrics, is_our=False, renderer=renderer, LPIPS=LPIPSM)
+                pt_predictions, pt_vis =eval_model(data=data, net=baseline, metric_logger=baseline_metrics, is_our=False, renderer=renderer)
             if args.use_snp:
-                snp_predictions, snp_vis =eval_model(data=data, net=renderer, metric_logger=snp_metrics, is_our=False, renderer=renderer, LPIPS=LPIPSM)
+                snp_predictions, snp_vis =eval_model(data=data, net=renderer, metric_logger=snp_metrics, is_our=False, renderer=renderer)
             if args.use_snp2:
-                snp2_predictions, snp2_vis = eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics, is_our=False, renderer=renderer, LPIPS=LPIPSM)
+                snp2_predictions, snp2_vis = eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics, is_our=False, renderer=renderer)
 
             # Add to the list
             our.append(our_predictions)
@@ -222,39 +171,35 @@ def main(args, exp_name):
             visual_original.append(orig_vis['frames'])
             visual_ctx.append(ctx_vis['frames'])
 
-    # Aggragte metrics
+    # Aggregate metrics
     results = {}
-    original_feat, original_ctx_feat = get_features(original, ctx=ctx)
     visual_original = np.concatenate(visual_original)
     visual_ctx = np.concatenate(visual_ctx)
     results.update(dataset_metrics.get_avg(header='dataset_'))
 
-
     results.update(our_metrics.get_avg(header='our_'))
-    our_fid, our_ctx_fid = eval_fid(x=our, reference=original_feat, reference_ctx=original_ctx_feat, ctx=ctx)
+    our_fid = fsdMetric(generated=our, original=original, ctx=ctx)
     visual_our = np.concatenate(visual_our)
     results.update({f'our_{k}' : v for k, v in our_fid.items()})
-    results.update({f'our_ctx_{k}' : v for k, v in our_ctx_fid.items()})
 
     if args.use_pt:
         results.update(baseline_metrics.get_avg(header='pt_'))
-        pt_fid, pt_ctx_fid = eval_fid(x=pt, reference=original_feat, reference_ctx=original_ctx_feat, ctx=ctx)
+        pt_fid = fsdMetric(generated=pt, original=original, ctx=ctx)
         visual_pt = np.concatenate(visual_pt)
         results.update({f'pt_{k}' : v for k, v in pt_fid.items()})
-        results.update({f'pt_ctx_{k}' : v for k, v in pt_ctx_fid.items()})
 
     if args.use_snp:
         results.update(snp_metrics.get_avg(header='snp_'))
-        snp_fid, snp_ctx_fid = eval_fid(x=snp, reference=original_feat, reference_ctx=original_ctx_feat, ctx=ctx)
+        snp_fid = fsdMetric(generated=snp, original=original, ctx=ctx)
         visual_snp = np.concatenate(visual_snp)
         results.update({f'snp_{k}' : v for k, v in snp_fid.items()})
-        results.update({f'snp_ctx_{k}' : v for k, v in snp_ctx_fid.items()})
+
     if args.use_snp2:
         results.update(snp_plus_metrics.get_avg(header='snp++_'))
-        snp2_fid, snp2_ctx_fid = eval_fid(x=snp2, reference=original_feat, reference_ctx=original_ctx_feat, ctx=ctx)
+        snp2_fid = fsdMetric(generated=snp2, original=original, ctx=ctx)
         visual_snp2 = np.concatenate(visual_snp2)
         results.update({f'snp++_{k}' : v for k, v in snp2_fid.items()})
-        results.update({f'snp++_ctx_{k}' : v for k, v in snp2_ctx_fid.items()})
+
     # FVD
     if args.fvd:
         fvd = FVD()
@@ -293,14 +238,12 @@ def main(args, exp_name):
 if __name__ == '__main__' :
     # Extra parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint_base", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=False)
     parser.add_argument("--config", default='/home/eperuzzo/brushstrokes-generation/configs/eval/eval_v2.yaml')
 
     parser.add_argument("--output_path", type=str, default='/home/eperuzzo/eval_metrics/')
-    parser.add_argument("--checkpoint_baseline", type=str,
+    parser.add_argument("--pt_checkpoint", type=str,
                         default='/home/eperuzzo/PaintTransformerPaddle/inference/paint_best.pdparams')
-    parser.add_argument('--lpips', action='store_true')
     parser.add_argument('--fvd', action='store_true')
     parser.add_argument("--n_samples", type=int, default=1,
                         help="number of samples to test lpips, diverstiy in generation")
@@ -310,12 +253,5 @@ if __name__ == '__main__' :
     parser.add_argument("--use-snp2", action='store_true', default=False)
     args = parser.parse_args()
 
-    if args.lpips and args.n_samples == 1:
-        print('To evalutate LPIPS need more than 1 sample')
-        args.n_samples = 3
-
-    # List
-    experiments = os.listdir(args.checkpoint_base)
-    print(f'Experiments to evaluate : {experiments}')
-    for exp in experiments:
-        main(args, exp)
+    # Run
+    main(args)
