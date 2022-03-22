@@ -12,6 +12,7 @@ def reparameterize(mu, log_sigma):
 
     return z
 
+
 class Encoder(nn.Module):
 
     def __init__(self, config):
@@ -68,8 +69,8 @@ class Encoder(nn.Module):
             strokes_seq = data['strokes_seq']
             strokes_seq = rearrange(strokes_seq, 'bs L dim -> L bs dim')
 
-            x_sequence = self.proj_features(strokes_seq) + self.PE.pe_strokes_tokens(pos=strokes_seq, device=strokes_seq.device) +self.stroke_token
-
+            x_sequence = self.proj_features(strokes_seq) + self.PE.pe_strokes_tokens(pos=strokes_seq,
+                                                                                     device=strokes_seq.device) + self.stroke_token
 
             # Encoder
             bs = x_sequence.size(1)
@@ -85,16 +86,17 @@ class Encoder(nn.Module):
             log_sigma = x[1]  # second element of the seq
             z = reparameterize(mu, log_sigma)
         else:
-            #TODO clean here
+            # TODO clean here
 
             strokes_ctx = data['strokes_ctx']
             strokes_seq = data['strokes_seq']
 
-            strokes = torch.cat((strokes_ctx, strokes_seq), dim=1) # cat along length dim
+            strokes = torch.cat((strokes_ctx, strokes_seq), dim=1)  # cat along length dim
             strokes = rearrange(strokes, 'bs L dim -> L bs dim')
 
             strokes = self.proj_features(strokes)
-            x_sequence = self.proj_features(strokes_seq) + self.PE.pe_strokes_tokens(pos=strokes_seq, device=strokes_seq.device) +self.stroke_token
+            x_sequence = self.proj_features(strokes_seq) + self.PE.pe_strokes_tokens(pos=strokes_seq,
+                                                                                     device=strokes_seq.device) + self.stroke_token
 
             # Encoder
             bs = strokes.size(1)

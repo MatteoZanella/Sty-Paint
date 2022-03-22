@@ -4,20 +4,22 @@ from einops import rearrange, repeat
 from .layers import PositionalEncoding, positionalencoding1d
 import torch.nn.functional as F
 
+
 def get_act(name):
-    if name == "sigmoid" :
+    if name == "sigmoid":
         act = nn.Sigmoid()
-    elif name == "relu" :
+    elif name == "relu":
         act = nn.ReLU()
-    elif name == "identity" :
+    elif name == "identity":
         act = nn.Identity()
-    else :
+    else:
         raise NotImplementedError('Activation can be either: sigmoid, relu or identity')
     return act
 
+
 # ======================================================================================================================
 class Decoder1Step(nn.Module):
-    def __init__(self, config) :
+    def __init__(self, config):
         super(Decoder1Step, self).__init__()
 
         self.device = config["device"]
@@ -27,7 +29,7 @@ class Decoder1Step(nn.Module):
         self.PE = PositionalEncoding(config)
 
         self.ctx_z = config["model"]["ctx_z"]  # how to merge context and z
-        if self.ctx_z == 'proj' :
+        if self.ctx_z == 'proj':
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
 
         self.decoder = nn.TransformerDecoder(
@@ -46,16 +48,16 @@ class Decoder1Step(nn.Module):
             nn.Linear(self.d_model, self.s_params))
         self.head.add_module('act', act)
 
-    def forward(self,  z,
+    def forward(self, z,
                 context,
                 visual_features,
                 seq_length):
 
         # Concatenate z and context
-        if self.ctx_z == 'proj' :
+        if self.ctx_z == 'proj':
             z = repeat(z, 'bs dim -> ctx_len bs dim', ctx_len=context.size(0))
             context = self.proj_ctx_z(torch.cat((context, z), dim=-1))  # cat on the channel dimension and project
-        elif self.ctx_z == 'cat' :
+        elif self.ctx_z == 'cat':
             context = torch.cat((context, z[None]), dim=0)  # cat on the length dimension
 
         # Positional encodings
@@ -69,9 +71,10 @@ class Decoder1Step(nn.Module):
 
         return output
 
+
 # ======================================================================================================================
 class Decoder2Step(nn.Module):
-    def __init__(self, config) :
+    def __init__(self, config):
         super(Decoder2Step, self).__init__()
 
         self.device = config["device"]
@@ -82,14 +85,14 @@ class Decoder2Step(nn.Module):
         else:
             self.residual_position = False
 
-        if config["model"]["encoder_pe"] == "new" :
+        if config["model"]["encoder_pe"] == "new":
             print('Using new encodings')
             self.PE = PositionalEncoding(config)
-        else :
+        else:
             self.PE = PEWrapper(config)
 
         self.ctx_z = config["model"]["ctx_z"]  # how to merge context and z
-        if self.ctx_z == 'proj' :
+        if self.ctx_z == 'proj':
             self.proj_ctx_z = nn.Linear(2 * self.d_model, self.d_model)
 
         # Divide the decoder in 2 modules
@@ -135,12 +138,13 @@ class Decoder2Step(nn.Module):
                 nn.Linear(self.d_model, 2))
             self.residual_pos_head.add_module('act', act)
 
-    def bilinear_sampling_length_first(self, feat, pos) :
+    def bilinear_sampling_length_first(self, feat, pos):
         n_strokes = pos.size(0)
         feat_temp = repeat(feat, 'bs ch h w -> (L bs) ch h w', L=n_strokes)
         grid = rearrange(pos, 'L bs p -> (L bs) 1 1 p')
 
-        pooled_features = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='bilinear', padding_mode='border')
+        pooled_features = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='bilinear',
+                                        padding_mode='border')
         pooled_features = rearrange(pooled_features, '(L bs) ch 1 1 -> L bs ch', L=n_strokes)
 
         return pooled_features
@@ -155,7 +159,7 @@ class Decoder2Step(nn.Module):
             z = repeat(z, 'bs dim -> ctx_len bs dim', ctx_len=context.size(0))
             context = self.proj_ctx_z(torch.cat((context, z), dim=-1))  # cat on the channel dimension and project
         elif self.ctx_z == 'cat':
-            context = torch.cat((context, z[None]), dim=0)              # cat on the length dimension
+            context = torch.cat((context, z[None]), dim=0)  # cat on the length dimension
 
         # Positional encodings
         pos_tokens = positionalencoding1d(x=seq_length, orig_channels=self.d_model)
@@ -184,11 +188,12 @@ class Decoder2Step(nn.Module):
 
         return output
 
+
 ###########################################################################
 # Wrapper for the previous 2 classes
 
-class Decoder(nn.Module) :
-    def __init__(self, config) :
+class Decoder(nn.Module):
+    def __init__(self, config):
         super(Decoder, self).__init__()
         self.type = config["model"]["decoder"]["type"]
         if self.type == '1_step':
@@ -197,7 +202,6 @@ class Decoder(nn.Module) :
             self.net = Decoder2Step(config)
         else:
             raise NotImplementedError(f'Decoder type {self.type} invalid')
-
 
     def forward(self, z,
                 context,

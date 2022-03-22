@@ -8,17 +8,19 @@ import math
 import sys
 import os
 
+
 class KLDivergence(nn.Module):
 
     def __init__(self):
         super(KLDivergence, self).__init__()
 
     def forward(self, mu, log_sigma):
-        kl_loss = 1 + log_sigma - mu.pow(2) - log_sigma.exp()   # bs x n_features
+        kl_loss = 1 + log_sigma - mu.pow(2) - log_sigma.exp()  # bs x n_features
         kl_loss = -0.5 * torch.sum(kl_loss, dim=-1)
         kl_loss = torch.mean(kl_loss)
 
         return kl_loss
+
 
 ########################################################################################################################
 
@@ -83,7 +85,8 @@ class GANLoss(nn.Module):
                 loss = prediction.mean()
         return loss
 
-def cal_gradient_penalty(netD, real_data, fake_data, device, context = None, type='mixed', constant=1.0, lambda_gp=10.0):
+
+def cal_gradient_penalty(netD, real_data, fake_data, device, context=None, type='mixed', constant=1.0, lambda_gp=10.0):
     """Calculate the gradient penalty loss, used in WGAN-GP paper https://arxiv.org/abs/1704.00028
     Arguments:
         netD (network)              -- discriminator network
@@ -96,13 +99,14 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, context = None, typ
     Returns the gradient penalty loss
     """
     if lambda_gp > 0.0:
-        if type == 'real':   # either use real images, fake images, or a linear interpolation of two.
+        if type == 'real':  # either use real images, fake images, or a linear interpolation of two.
             interpolatesv = real_data
         elif type == 'fake':
             interpolatesv = fake_data
         elif type == 'mixed':
             alpha = torch.rand(real_data.shape[0], 1)
-            alpha = alpha.expand(real_data.shape[0], real_data.nelement() // real_data.shape[0]).contiguous().view(*real_data.shape)
+            alpha = alpha.expand(real_data.shape[0], real_data.nelement() // real_data.shape[0]).contiguous().view(
+                *real_data.shape)
             alpha = alpha.to(device)
             interpolatesv = alpha * real_data + ((1 - alpha) * fake_data)
         else:
@@ -113,7 +117,7 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, context = None, typ
                                         grad_outputs=torch.ones(disc_interpolates.size()).to(device),
                                         create_graph=True, retain_graph=True, only_inputs=True)
         gradients = gradients[0].reshape(real_data.size(0), -1)  # flat the data
-        gradient_penalty = (((gradients + 1e-16).norm(2, dim=1) - constant) ** 2).mean() * lambda_gp        # added eps
+        gradient_penalty = (((gradients + 1e-16).norm(2, dim=1) - constant) ** 2).mean() * lambda_gp  # added eps
         return gradient_penalty, gradients
     else:
         return 0.0, None
@@ -122,7 +126,7 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, context = None, typ
 ########################################################################################################################
 class ReconstructionLoss(nn.Module):
 
-    def __init__(self, mode='l2') :
+    def __init__(self, mode='l2'):
         super(ReconstructionLoss, self).__init__()
 
         if mode == 'l2':
@@ -131,10 +135,11 @@ class ReconstructionLoss(nn.Module):
             self.criterion = nn.L1Loss(reduction='mean')
         else:
             raise NotImplementedError()
+
     def __call__(self,
                  predictions,
                  targets,
-                 isEval=False) :
+                 isEval=False):
         '''
         Args:
             predictions: [bs x L x dim] predicted sequence
@@ -162,6 +167,7 @@ class ReconstructionLoss(nn.Module):
 
         return mse_position, mse_size, mse_theta, mse_color
 
+
 ########################################################################################################################
 class ColorImageLoss(nn.Module):
     def __init__(self, config):
@@ -170,11 +176,11 @@ class ColorImageLoss(nn.Module):
         mode = config["train"]["losses"]["reference_img"]["color"]["mode"]
         self.detach_grid = config["train"]["losses"]["reference_img"]["color"]["detach"]
         # Criterion
-        if mode == 'l2' :
+        if mode == 'l2':
             self.criterion = nn.MSELoss()
-        elif mode == 'l1' :
+        elif mode == 'l1':
             self.criterion = nn.L1Loss()
-        else :
+        else:
             raise NotImplementedError()
 
     def __call__(self, predictions, ref_imgs):
@@ -219,11 +225,11 @@ class RenderImageLoss(nn.Module):
             raise NotImplementedError()
 
         # Criterion
-        if mode == 'l2' :
+        if mode == 'l2':
             self.criterion = nn.MSELoss(reduction=reduction)
-        elif mode == 'l1' :
+        elif mode == 'l1':
             self.criterion = nn.L1Loss(reduction=reduction)
-        else :
+        else:
             raise NotImplementedError()
 
     def __call__(self, predictions, ref_imgs, canvas_start=None):
@@ -245,6 +251,8 @@ class RenderImageLoss(nn.Module):
             loss = loss.mean()
 
             return loss
+
+
 ##################################
 class PosColorLoss(nn.Module):
     def __init__(self, mode='l2'):
@@ -252,11 +260,11 @@ class PosColorLoss(nn.Module):
         self.blur = torchvision.transforms.GaussianBlur(kernel_size=(7, 7))
 
         # Criterion
-        if mode == 'l2' :
+        if mode == 'l2':
             self.criterion = nn.MSELoss()
-        elif mode == 'l1' :
+        elif mode == 'l1':
             self.criterion = nn.L1Loss()
-        else :
+        else:
             raise NotImplementedError()
 
     def __call__(self, predictions, ref_imgs):
@@ -273,8 +281,8 @@ class PosColorLoss(nn.Module):
 
 
 ########################################################################
-class DistLoss(nn.Module) :
-    def __init__(self, config) :
+class DistLoss(nn.Module):
+    def __init__(self, config):
         '''
         Args:
             mode:
@@ -293,16 +301,16 @@ class DistLoss(nn.Module) :
         self.K = config["train"]["losses"]["reference_img"]["pos_color"]["K"]
 
         # Criterion
-        if mode == 'l2' :
+        if mode == 'l2':
             self.p = 2
-        elif mode == 'l1' :
+        elif mode == 'l1':
             self.p = 1
-        else :
+        else:
             raise NotImplementedError()
 
-    def __call__(self, predictions, ref_imgs) :
+    def __call__(self, predictions, ref_imgs):
 
-        if not self.active :
+        if not self.active:
             return torch.tensor([0], device=predictions.device)
 
         bs, L, _ = predictions.shape
@@ -348,10 +356,11 @@ class DistLoss(nn.Module) :
 
         return torch.mean(loss)
 
+
 ############################################################################################################
 
-class CCLoss(nn.Module) :
-    def __init__(self, config) :
+class CCLoss(nn.Module):
+    def __init__(self, config):
         '''
         Use all the kNN
         '''
@@ -359,19 +368,19 @@ class CCLoss(nn.Module) :
 
         mode = config["train"]["losses"]["reference_img"]["pos_color"]["mode"]
         self.active = config["train"]["losses"]["reference_img"]["pos_color"]["weight"] > 0
-        self.find_target = config["train"]["losses"]["reference_img"]["pos_color"]["find_target"] # wa = weighted average, knn
+        self.find_target = config["train"]["losses"]["reference_img"]["pos_color"][
+            "find_target"]  # wa = weighted average, knn
         self.tau = config["train"]["losses"]["reference_img"]["pos_color"]["tau"]
         self.p = config["train"]["losses"]["reference_img"]["pos_color"]["p"]
         self.K = config["train"]["losses"]["reference_img"]["pos_color"]["K"]
 
         # Criterion
-        if mode == 'l2' :
+        if mode == 'l2':
             self.p = 2
-        elif mode == 'l1' :
+        elif mode == 'l1':
             self.p = 1
-        else :
+        else:
             raise NotImplementedError()
-
 
     def find_target_knn(self, color_similarity, preds_position):
         bs, L, img_size, _ = color_similarity.shape
@@ -407,12 +416,13 @@ class CCLoss(nn.Module) :
 
         # Compute final Targets
         final_tgt = torch.zeros(bs, L, 2, device=preds_position.device)
-        for b in range(bs) :
-            for t_minus_one in range(L - 1) :
+        for b in range(bs):
+            for t_minus_one in range(L - 1):
                 iids = torch.logical_and(b_id == b, seq_id == t_minus_one)
                 nn_t_minus_one = tgt[iids]
                 # Distance between NN at time T-1, and predictions at time T
-                dist = torch.cdist(preds_position[b, t_minus_one + 1][None], nn_t_minus_one, p=2) + torch.tensor(1e-9, device=preds_position.device)
+                dist = torch.cdist(preds_position[b, t_minus_one + 1][None], nn_t_minus_one, p=2) + torch.tensor(1e-9,
+                                                                                                                 device=preds_position.device)
                 w = torch.pow(1 / dist, self.p)  # inverse of the distance
                 w_norm = w / w.sum()
 
@@ -421,8 +431,8 @@ class CCLoss(nn.Module) :
 
         return final_tgt
 
-    def __call__(self, predictions, ref_imgs) :
-        if not self.active :
+    def __call__(self, predictions, ref_imgs):
+        if not self.active:
             return torch.tensor([0], device=predictions.device)
 
         bs, L, _ = predictions.shape
@@ -451,7 +461,7 @@ class CCLoss(nn.Module) :
             raise NotImplementedError()
 
         # compute L2
-        loss = F.mse_loss(preds_position[:, 1 :], target[:, 1 :], reduction='none').sum(dim=-1)
+        loss = F.mse_loss(preds_position[:, 1:], target[:, 1:], reduction='none').sum(dim=-1)
         return torch.mean(loss)
 
 
@@ -462,23 +472,23 @@ import numpy as np
 from model.utils.utils import sample_color
 
 
-class MatrixSquareRoot(Function) :
+class MatrixSquareRoot(Function):
     """Square root of a positive definite matrix.
     NOTE: matrix square root is not differentiable for matrices with
           zero eigenvalues.
     """
 
     @staticmethod
-    def forward(ctx, input) :
+    def forward(ctx, input):
         m = input.detach().cpu().numpy().astype(np.float_)
         sqrtm = torch.from_numpy(scipy.linalg.sqrtm(m).real).to(input)
         ctx.save_for_backward(sqrtm)
         return sqrtm
 
     @staticmethod
-    def backward(ctx, grad_output) :
+    def backward(ctx, grad_output):
         grad_input = None
-        if ctx.needs_input_grad[0] :
+        if ctx.needs_input_grad[0]:
             sqrtm, = ctx.saved_tensors
             sqrtm = sqrtm.data.cpu().numpy().astype(np.float_)
             gm = grad_output.data.cpu().numpy().astype(np.float_)
@@ -495,13 +505,14 @@ class MatrixSquareRoot(Function) :
 
 sqrtm = MatrixSquareRoot.apply
 
-class FIDLoss(nn.Module) :
-    def __init__(self, config) :
+
+class FIDLoss(nn.Module):
+    def __init__(self, config):
         super(FIDLoss, self).__init__()
         tmp_config = config["train"]["losses"]["fid"]
 
         self.active = tmp_config["weight"] > 0
-        self.K = tmp_config["K"] # Number of neighbors to compute similarity
+        self.K = tmp_config["K"]  # Number of neighbors to compute similarity
         self.param_per_stroke = config["model"]["n_strokes_params"]
 
         self.mode = tmp_config["mode"]
@@ -511,7 +522,7 @@ class FIDLoss(nn.Module) :
         else:
             self.L = config["dataset"]["sequence_length"]
 
-        self.get_index(L = self.L, K = self.K)
+        self.get_index(L=self.L, K=self.K)
 
         if tmp_config["use_color"]:
             self.use_color_img = True
@@ -534,25 +545,25 @@ class FIDLoss(nn.Module) :
             print(self.mu_dataset.shape)
             print(self.sigma_dataset.shape)
 
-            #assert self.mu_dataset.shape[0] == self.dim_features
-            #assert self.sigma_dataset.shape == [self.dim_features, self.dim_features]
+            # assert self.mu_dataset.shape[0] == self.dim_features
+            # assert self.sigma_dataset.shape == [self.dim_features, self.dim_features]
 
             self.precomputed_dataset_statistics = True
 
-    def get_index(self, L, K=10) :
+    def get_index(self, L, K=10):
         ids = []
-        for i in range(L) :
-            for j in range(L) :
-                if (j > i + K) or (j < i - K) or i == j :
+        for i in range(L):
+            for j in range(L):
+                if (j > i + K) or (j < i - K) or i == j:
                     continue
-                else :
+                else:
                     ids.append([i, j])
         ids = np.array(ids)
         self.id0 = ids[:, 0]
         self.id1 = ids[:, 1]
         self.n = ids.shape[0]
 
-    def compute_features(self, x) :
+    def compute_features(self, x):
         bs = x.shape[0]
         feat = torch.empty((bs, self.dim_features))
         if self.reweight_kl:
@@ -560,8 +571,8 @@ class FIDLoss(nn.Module) :
         else:
             param_list = [0, 1, 2, 3, 4, 5, 6, 7]
 
-        for j in range(len(param_list)) :
-            feat[:, j * self.n : (j + 1) * self.n] = x[:, self.id0, param_list[j]] - x[:, self.id1, param_list[j]]
+        for j in range(len(param_list)):
+            feat[:, j * self.n: (j + 1) * self.n] = x[:, self.id0, param_list[j]] - x[:, self.id1, param_list[j]]
         return feat.t().contiguous()
 
     def fid_score_torch(self,
@@ -569,15 +580,15 @@ class FIDLoss(nn.Module) :
                         mu2: torch.Tensor,
                         sigma1: torch.Tensor,
                         sigma2: torch.Tensor,
-                        eps: float = 1e-6) -> float :
-        try :
+                        eps: float = 1e-6) -> float:
+        try:
             import numpy as np
-        except ImportError :
+        except ImportError:
             raise RuntimeError("fid_score requires numpy to be installed.")
 
-        try :
+        try:
             import scipy.linalg
-        except ImportError :
+        except ImportError:
             raise RuntimeError("fid_score requires scipy to be installed.")
 
         # mu1, mu2 = mu1.cpu(), mu2.cpu()
@@ -587,31 +598,29 @@ class FIDLoss(nn.Module) :
 
         # Product might be almost singular
         offset = torch.eye(sigma1.shape[0]) * eps
-        covmean = sqrtm((sigma1+offset).mm(sigma2+offset))
+        covmean = sqrtm((sigma1 + offset).mm(sigma2 + offset))
         # Numerical error might give slight imaginary component
 
-        if torch.is_complex(covmean) :
-            if not torch.allclose(torch.diagonal(covmean), torch.tensor([0.0], dtype=torch.double), atol=1e-3) :
+        if torch.is_complex(covmean):
+            if not torch.allclose(torch.diagonal(covmean), torch.tensor([0.0], dtype=torch.double), atol=1e-3):
                 m = torch.max(torch.abs(covmean.imag))
                 raise ValueError("Imaginary component {}".format(m))
             covmean = covmean.real
 
         tr_covmean = torch.trace(covmean)
 
-        if not torch.isfinite(covmean).all() :
+        if not torch.isfinite(covmean).all():
             tr_covmean = torch.sum(torch.sqrt(((torch.diag(sigma1) * eps) * (torch.diag(sigma2) * eps)) / (eps * eps)))
 
         return diff.dot(diff) + torch.trace(sigma1) + torch.trace(sigma2) - 2 * tr_covmean
 
-
-    def fast_fid(self, x, y, eps: float = 1e-6) -> float :
+    def fast_fid(self, x, y, eps: float = 1e-6) -> float:
         # https://arxiv.org/pdf/2009.14075.pdf
 
         _, m = x.shape
         mu_x = torch.mean(x, dim=1, keepdim=False)
-        C_x = (x - mu_x[:, None]) / np.sqrt(m-1)
+        C_x = (x - mu_x[:, None]) / np.sqrt(m - 1)
         sigma_x = C_x.mm(C_x.t())
-
 
         # Load the pre-computed mu and sigma if exists
         if self.precomputed_dataset_statistics:
@@ -619,9 +628,8 @@ class FIDLoss(nn.Module) :
             sigma_y = self.sigma_dataset.to(x.device)
         else:
             mu_y = torch.mean(y, dim=1, keepdim=False)
-            C_y = (y - mu_y[:, None]) / np.sqrt(m-1)
+            C_y = (y - mu_y[:, None]) / np.sqrt(m - 1)
             sigma_y = C_y.mm(C_y.t())
-
 
         # Compute the FID
         diff = mu_x - mu_y
@@ -656,7 +664,6 @@ class FIDLoss(nn.Module) :
         kl = 0.5 * kl.mean()
         return kl
 
-
     def __call__(self, preds, batch):
 
         if not self.active:
@@ -666,18 +673,17 @@ class FIDLoss(nn.Module) :
 
         # REAL
         if self.precomputed_dataset_statistics:
-            f_real = None   # Use the one stored
+            f_real = None  # Use the one stored
         else:
-            x_real = torch.cat((batch['strokes_ctx'], batch['strokes_seq']), dim=1) # cat on length dim
+            x_real = torch.cat((batch['strokes_ctx'], batch['strokes_seq']), dim=1)  # cat on length dim
             if self.use_color_img:
                 c_real = sample_color(pos=x_real[:, :, :2],
                                       ref_imgs=batch['img'])
 
-                x_real = torch.cat((x_real, c_real), dim=-1) # cat on the channel dim
+                x_real = torch.cat((x_real, c_real), dim=-1)  # cat on the channel dim
 
             # Compute the features
             f_real = self.compute_features(x_real)
-
 
         # PREDS
         x_pred = torch.cat((batch['strokes_ctx'], preds), dim=1)

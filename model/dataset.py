@@ -24,6 +24,7 @@ root_dir:
             - j.png   # image rendered until the j-th
 """
 
+
 class StrokesDataset(Dataset):
 
     def __init__(self,
@@ -40,11 +41,13 @@ class StrokesDataset(Dataset):
         self.sampling_threshold = config["dataset"]["sampling"]["threshold"]
         self.sampling_p = config["dataset"]["sampling"]["prob"]
 
-
         self.df = pd.read_csv(self.config["dataset"]["csv_file"])
-        self.root_dir = os.path.join(self.config["dataset"]["root"], partition + f'_{self.config["dataset"]["version"]}', 'brushstrokes_generation_dataset')
+        self.root_dir = os.path.join(self.config["dataset"]["root"],
+                                     partition + f'_{self.config["dataset"]["version"]}',
+                                     'brushstrokes_generation_dataset')
 
-        self.filenames = list(self.df[(self.df["partition"] == partition) & (self.df["isTrain"] == self.isTrain)]['filename'])
+        self.filenames = list(
+            self.df[(self.df["partition"] == partition) & (self.df["isTrain"] == self.isTrain)]['filename'])
 
         # Configs
         self.context_length = config["dataset"]["context_length"]
@@ -55,20 +58,20 @@ class StrokesDataset(Dataset):
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
-            transforms.ToTensor(),])
-            #transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
+            transforms.ToTensor(), ])
+        # transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
 
     def __len__(self):
         return len(self.filenames)
 
     def load_strokes(self, name):
         '''
-        Format is 1 x T x 12   (x,y,h,w,theta,r1,g1,b1,r2,g2,b2,alpha)
+        Format is 1 x T x 12   (x,y,h,w,theta,r1,g1,b1,r2,g2,b2)
         Exclude the alpha parameter: 1 x T x 11
         '''
 
         data = np.load(os.path.join(self.root_dir, name, 'strokes_params.npz'))
-        color = 0.5*(data['x_color'][:, :, :3] + data['x_color'][:, :, 3:])
+        color = 0.5 * (data['x_color'][:, :, :3] + data['x_color'][:, :, 3:])
         strokes = np.concatenate([data['x_ctt'], color], axis=-1)
         strokes = torch.tensor(strokes, dtype=torch.float).squeeze(0)
 
@@ -78,9 +81,9 @@ class StrokesDataset(Dataset):
         if self.active_sampling:
             if random.random() < self.sampling_p:
                 n = self.sampling_threshold
-        t = random.randint(self.context_length, n-self.sequence_length)
-        t_C = t-self.context_length
-        t_T = t+self.sequence_length
+        t = random.randint(self.context_length, n - self.sequence_length)
+        t_C = t - self.context_length
+        t_T = t + self.sequence_length
 
         return t_C, t, t_T
 
@@ -108,14 +111,14 @@ class StrokesDataset(Dataset):
         strokes = all_strokes[t_C:t_T, :]
         data = {
             'strokes_ctx': strokes[:self.context_length, :],
-            'strokes_seq': strokes[self.context_length :, :]}
+            'strokes_seq': strokes[self.context_length:, :]}
         # ---------
         if self.use_images:
             # Load rendered image up to s
-            canvas = self.load_canvas_states(name, t-1)
+            canvas = self.load_canvas_states(name, t - 1)
             # ---------
             # Load Image
-            img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
+            img = Image.open(os.path.join(self.root_dir, name, name + '.jpg')).convert('RGB')
             img = self.img_transform(img)
 
             data.update({
@@ -123,8 +126,8 @@ class StrokesDataset(Dataset):
                 'img': img})
 
         if not self.isTrain:
-            data.update({'time_steps' : [t_C, t, t_T]})
-            #data.update({'strokes' : all_strokes})  #TODO: fix here
+            data.update({'time_steps': [t_C, t, t_T]})
+            # data.update({'strokes' : all_strokes})  #TODO: fix here
 
         return data
 
@@ -146,11 +149,13 @@ class EvalDataset(Dataset):
         self.sampling_threshold = config["dataset"]["sampling"]["threshold"]
         self.sampling_p = config["dataset"]["sampling"]["prob"]
 
-
         self.df = pd.read_csv(self.config["dataset"]["csv_file"])
-        self.root_dir = os.path.join(self.config["dataset"]["root"], partition + f'_{self.config["dataset"]["version"]}', 'brushstrokes_generation_dataset')
+        self.root_dir = os.path.join(self.config["dataset"]["root"],
+                                     partition + f'_{self.config["dataset"]["version"]}',
+                                     'brushstrokes_generation_dataset')
 
-        self.filenames = list(self.df[(self.df["partition"] == partition) & (self.df["isTrain"] == self.isTrain)]['filename'])
+        self.filenames = list(
+            self.df[(self.df["partition"] == partition) & (self.df["isTrain"] == self.isTrain)]['filename'])
 
         # Configs
         self.context_length = config["dataset"]["context_length"]
@@ -161,8 +166,8 @@ class EvalDataset(Dataset):
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
-            transforms.ToTensor(),])
-            #transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
+            transforms.ToTensor(), ])
+        # transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
 
     def __len__(self):
         return len(self.filenames)
@@ -174,7 +179,7 @@ class EvalDataset(Dataset):
         '''
 
         data = np.load(os.path.join(self.root_dir, name, 'strokes_params.npz'))
-        color = 0.5*(data['x_color'][:, :, :3] + data['x_color'][:, :, 3:])
+        color = 0.5 * (data['x_color'][:, :, :3] + data['x_color'][:, :, 3:])
         strokes = np.concatenate([data['x_ctt'], color], axis=-1)
         strokes = torch.tensor(strokes, dtype=torch.float).squeeze(0)
 
@@ -187,9 +192,9 @@ class EvalDataset(Dataset):
         if ts is not None:
             t = ts
         else:
-            t = random.randint(self.context_length, n-self.sequence_length)
-        t_C = t-self.context_length
-        t_T = t+self.sequence_length
+            t = random.randint(self.context_length, n - self.sequence_length)
+        t_C = t - self.context_length
+        t_T = t + self.sequence_length
 
         return t_C, t, t_T
 
@@ -216,16 +221,16 @@ class EvalDataset(Dataset):
         t_C, t, t_T = self.sample_strokes(all_strokes.shape[0])
         strokes = all_strokes[t_C:t_T, :]
         data = {
-            'strokes_ctx': strokes[:self.context_length, :],   # context strokes
-            'strokes_seq': strokes[self.context_length :, :]}  # ground truth strokes
+            'strokes_ctx': strokes[:self.context_length, :],  # context strokes
+            'strokes_seq': strokes[self.context_length:, :]}  # ground truth strokes
         # ---------
         if self.use_images:
             # Load rendered image up to s
-            canvas = self.load_canvas_states(name, t-1)
+            canvas = self.load_canvas_states(name, t - 1)
             final_canvas = self.load_canvas_states(name, t_T)
             # ---------
             # Load Image
-            img = Image.open(os.path.join(self.root_dir, name, name+'.jpg')).convert('RGB')
+            img = Image.open(os.path.join(self.root_dir, name, name + '.jpg')).convert('RGB')
             img = self.img_transform(img)
 
             data.update({
@@ -234,8 +239,8 @@ class EvalDataset(Dataset):
                 'img': img})
 
         if not self.isTrain:
-            data.update({'time_steps' : [t_C, t, t_T]})
-            #data.update({'strokes' : all_strokes})  #TODO: fix here
+            data.update({'time_steps': [t_C, t, t_T]})
+            # data.update({'strokes' : all_strokes})  #TODO: fix here
 
         return data
 
@@ -248,14 +253,14 @@ class EvalDataset(Dataset):
         t_C, t, t_T = self.sample_strokes(all_strokes.shape[0], timestep)
 
         initial_context = all_strokes[:t_C]
-        original_sequence = all_strokes[t:t+tot]
+        original_sequence = all_strokes[t:t + tot]
 
-        strokes = all_strokes[t_C :t_T, :]
+        strokes = all_strokes[t_C:t_T, :]
         data = {
-            'strokes_ctx' : strokes[:self.context_length, :][None],
-            'strokes_seq' : strokes[self.context_length :, :][None]}
+            'strokes_ctx': strokes[:self.context_length, :][None],
+            'strokes_seq': strokes[self.context_length:, :][None]}
         # ---------
-        if self.use_images :
+        if self.use_images:
             # Load rendered image up to s
             canvas = self.load_canvas_states(filename, t - 1)
             # ---------
@@ -264,7 +269,7 @@ class EvalDataset(Dataset):
             img = self.img_transform(img)
 
             data.update({
-                'canvas' : canvas[None],
-                'img' : img[None]})
+                'canvas': canvas[None],
+                'img': img[None]})
 
         return data, initial_context, original_sequence[None]

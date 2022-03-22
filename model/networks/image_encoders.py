@@ -6,12 +6,10 @@ import torch.nn as nn
 from torch import Tensor
 from torch.hub import load_state_dict_from_url
 
-
 __all__ = [
     "ResNet",
     "resnet18",
 ]
-
 
 model_urls = {
     "resnet18": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
@@ -24,6 +22,7 @@ model_urls = {
     "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
     "wide_resnet101_2": "https://download.pytorch.org/models/wide_resnet101_2-32ee1156.pth",
 }
+
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
     """3x3 convolution with padding"""
@@ -48,15 +47,15 @@ class BasicBlock(nn.Module):
     expansion: int = 1
 
     def __init__(
-        self,
-        inplanes: int,
-        planes: int,
-        stride: int = 1,
-        downsample: Optional[nn.Module] = None,
-        groups: int = 1,
-        base_width: int = 64,
-        dilation: int = 1,
-        norm_layer: Optional[Callable[..., nn.Module]] = None,
+            self,
+            inplanes: int,
+            planes: int,
+            stride: int = 1,
+            downsample: Optional[nn.Module] = None,
+            groups: int = 1,
+            base_width: int = 64,
+            dilation: int = 1,
+            norm_layer: Optional[Callable[..., nn.Module]] = None,
     ) -> None:
         super(BasicBlock, self).__init__()
         if norm_layer is None:
@@ -103,15 +102,15 @@ class Bottleneck(nn.Module):
     expansion: int = 4
 
     def __init__(
-        self,
-        inplanes: int,
-        planes: int,
-        stride: int = 1,
-        downsample: Optional[nn.Module] = None,
-        groups: int = 1,
-        base_width: int = 64,
-        dilation: int = 1,
-        norm_layer: Optional[Callable[..., nn.Module]] = None,
+            self,
+            inplanes: int,
+            planes: int,
+            stride: int = 1,
+            downsample: Optional[nn.Module] = None,
+            groups: int = 1,
+            base_width: int = 64,
+            dilation: int = 1,
+            norm_layer: Optional[Callable[..., nn.Module]] = None,
     ) -> None:
         super(Bottleneck, self).__init__()
         if norm_layer is None:
@@ -153,16 +152,16 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
     def __init__(
-        self,
-        block: Type[Union[BasicBlock, Bottleneck]],
-        layers: List[int],
-        num_classes: int = 1000,
-        zero_init_residual: bool = False,
-        groups: int = 1,
-        width_per_group: int = 64,
-        replace_stride_with_dilation: Optional[List[bool]] = None,
-        norm_layer: Optional[Callable[..., nn.Module]] = None,
-        layers_to_remove = None,
+            self,
+            block: Type[Union[BasicBlock, Bottleneck]],
+            layers: List[int],
+            num_classes: int = 1000,
+            zero_init_residual: bool = False,
+            groups: int = 1,
+            width_per_group: int = 64,
+            replace_stride_with_dilation: Optional[List[bool]] = None,
+            norm_layer: Optional[Callable[..., nn.Module]] = None,
+            layers_to_remove=None,
     ) -> None:
         super(ResNet, self).__init__()
         if norm_layer is None:
@@ -197,7 +196,7 @@ class ResNet(nn.Module):
             self.out = nn.Identity()
         else:
             # smaller config
-            self.out = nn.AvgPool2d((2,2))
+            self.out = nn.AvgPool2d((2, 2))
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -217,12 +216,12 @@ class ResNet(nn.Module):
                     nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
 
     def _make_layer(
-        self,
-        block: Type[Union[BasicBlock, Bottleneck]],
-        planes: int,
-        blocks: int,
-        stride: int = 1,
-        dilate: bool = False,
+            self,
+            block: Type[Union[BasicBlock, Bottleneck]],
+            planes: int,
+            blocks: int,
+            stride: int = 1,
+            dilate: bool = False,
     ) -> nn.Sequential:
         norm_layer = self._norm_layer
         downsample = None
@@ -271,7 +270,7 @@ class ResNet(nn.Module):
 
         if self.layer4 is not None:
             x = self.layer4(x)
-        x = self.out(x)                # output is 256 x 8 x 8
+        x = self.out(x)  # output is 256 x 8 x 8
 
         return x, visual_feat
 
@@ -280,12 +279,12 @@ class ResNet(nn.Module):
 
 
 def _resnet(
-    arch: str,
-    block: Type[Union[BasicBlock, Bottleneck]],
-    layers: List[int],
-    pretrained: bool,
-    progress: bool,
-    **kwargs: Any,
+        arch: str,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        layers: List[int],
+        pretrained: bool,
+        progress: bool,
+        **kwargs: Any,
 ) -> ResNet:
     model = ResNet(block, layers, **kwargs)
     if pretrained:
@@ -293,6 +292,7 @@ def _resnet(
         state_dict = _remove_keys_from_state_dict(state_dict, kwargs['layers_to_remove'])
         model.load_state_dict(state_dict)
     return model
+
 
 def _remove_keys_from_state_dict(state_dict, to_remove):
     weights = OrderedDict()
@@ -319,16 +319,21 @@ def resnet18(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> 
 class ConvEncoder(nn.Module):
     def __init__(self, spatial_output_dim=8, features_dim=256):
         super(ConvEncoder, self).__init__()
-        self.block1 = BasicBlock(inplanes=3, planes=32, stride=2, downsample=nn.Sequential(conv1x1(in_planes=3, out_planes=32, stride=2)))
-        self.block2 = BasicBlock(inplanes=32, planes=64, stride=2, downsample=nn.Sequential(conv1x1(in_planes=32, out_planes=64, stride=2)))
+        self.block1 = BasicBlock(inplanes=3, planes=32, stride=2,
+                                 downsample=nn.Sequential(conv1x1(in_planes=3, out_planes=32, stride=2)))
+        self.block2 = BasicBlock(inplanes=32, planes=64, stride=2,
+                                 downsample=nn.Sequential(conv1x1(in_planes=32, out_planes=64, stride=2)))
 
         if spatial_output_dim == 32:
-            self.block3 = BasicBlock(inplanes=64, planes=features_dim, stride=2, downsample=nn.Sequential(conv1x1(in_planes=64, out_planes=features_dim, stride=2)))
+            self.block3 = BasicBlock(inplanes=64, planes=features_dim, stride=2,
+                                     downsample=nn.Sequential(conv1x1(in_planes=64, out_planes=features_dim, stride=2)))
             self.block4 = nn.Identity()
             self.out = nn.Identity()
         else:
-            self.block3 = BasicBlock(inplanes=64, planes=128, stride=2, downsample=nn.Sequential(conv1x1(in_planes=64, out_planes=128, stride=2)))
-            self.block4 = BasicBlock(inplanes=128, planes=features_dim, stride=2, downsample=nn.Sequential(conv1x1(in_planes=128, out_planes=features_dim, stride=2)))
+            self.block3 = BasicBlock(inplanes=64, planes=128, stride=2,
+                                     downsample=nn.Sequential(conv1x1(in_planes=64, out_planes=128, stride=2)))
+            self.block4 = BasicBlock(inplanes=128, planes=features_dim, stride=2, downsample=nn.Sequential(
+                conv1x1(in_planes=128, out_planes=features_dim, stride=2)))
 
             if spatial_output_dim == 8:
                 self.out = nn.AvgPool2d((2, 2))
@@ -337,7 +342,8 @@ class ConvEncoder(nn.Module):
             elif spatial_output_dim == 16:
                 self.out = nn.Identity()
             else:
-                raise NotImplementedError('Spatial dimension of visual features can be either 8x8, 14x14, 16x16 or 32x32')
+                raise NotImplementedError(
+                    'Spatial dimension of visual features can be either 8x8, 14x14, 16x16 or 32x32')
 
     def forward(self, x):
         x = self.block1(x)
@@ -353,6 +359,7 @@ class ConvEncoder(nn.Module):
 class PatchEmbed(nn.Module):
     """ 2D Image to Patch Embedding
     """
+
     def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, norm_layer=None, flatten=True):
         super().__init__()
 

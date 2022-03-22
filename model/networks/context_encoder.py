@@ -6,9 +6,9 @@ from .image_encoders import resnet18, ConvEncoder, PatchEmbed
 from .layers import PositionalEncoding
 
 
-class ContextEncoder(nn.Module) :
+class ContextEncoder(nn.Module):
 
-    def __init__(self, config) :
+    def __init__(self, config):
         super(ContextEncoder, self).__init__()
 
         self.s_params = config["model"]["n_strokes_params"]
@@ -47,8 +47,9 @@ class ContextEncoder(nn.Module) :
                                           norm_layer=None, flatten=False)
             if self.use_context:
                 self.canvas_encoder = PatchEmbed(img_size=config["dataset"]["resize"], patch_size=16,
-                                              in_chans=3, embed_dim=config["model"]["img_encoder"]["visual_feat_dim"],
-                                              norm_layer=None, flatten=False)
+                                                 in_chans=3,
+                                                 embed_dim=config["model"]["img_encoder"]["visual_feat_dim"],
+                                                 norm_layer=None, flatten=False)
         else:
             raise NotImplementedError("Encoder not available")
 
@@ -58,7 +59,6 @@ class ContextEncoder(nn.Module) :
                                        kernel_size=(1, 1))
             self.proj_features = nn.Linear(self.s_params, self.d_model)
 
-
         # Encoder sequence
         if "use_transformer" in config["model"]["context_encoder"]:
             self.use_transformer = config["model"]["context_encoder"]["use_transformer"]
@@ -66,17 +66,16 @@ class ContextEncoder(nn.Module) :
             self.use_transformer = True
         if self.use_transformer:
             self.transformer_encoder = nn.TransformerEncoder(
-                                        encoder_layer=nn.TransformerEncoderLayer(
-                                        d_model=config["model"]["d_model"],
-                                        nhead=config["model"]["context_encoder"]["n_heads"],
-                                        dim_feedforward=config["model"]["context_encoder"]["ff_dim"],
-                                        activation=config["model"]["context_encoder"]["act"],
-                                        dropout=config["model"]["dropout"]
-                                        ),
-                                        num_layers=config["model"]["context_encoder"]["n_layers"])
+                encoder_layer=nn.TransformerEncoderLayer(
+                    d_model=config["model"]["d_model"],
+                    nhead=config["model"]["context_encoder"]["n_heads"],
+                    dim_feedforward=config["model"]["context_encoder"]["ff_dim"],
+                    activation=config["model"]["context_encoder"]["act"],
+                    dropout=config["model"]["dropout"]
+                ),
+                num_layers=config["model"]["context_encoder"]["n_layers"])
 
-
-    def forward(self, data) :
+    def forward(self, data):
         if self.use_context:
 
             strokes_ctx = data['strokes_ctx']
@@ -98,7 +97,8 @@ class ContextEncoder(nn.Module) :
 
             # Add PE
             visual_feat = visual_feat + self.PE.pe_visual_tokens(device=visual_feat.device) + self.visual_token
-            ctx_sequence = ctx_sequence + self.PE.pe_strokes_tokens(pos=strokes_ctx, device=ctx_sequence.device) + self.stroke_token
+            ctx_sequence = ctx_sequence + self.PE.pe_strokes_tokens(pos=strokes_ctx,
+                                                                    device=ctx_sequence.device) + self.stroke_token
 
             # Merge Context
             ctx_sequence = torch.cat((visual_feat, ctx_sequence), dim=0)

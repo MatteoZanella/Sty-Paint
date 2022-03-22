@@ -17,7 +17,8 @@ from model.dataset import StrokesDataset
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 
-from evaluation.metrics import LPIPSDiversityMetric, WassersteinDistance, FSD, StrokeColorL2, DTW, compute_color_difference
+from evaluation.metrics import LPIPSDiversityMetric, WassersteinDistance, FSD, StrokeColorL2, DTW, \
+    compute_color_difference
 from evaluation.fvd import FVD
 from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
 import evaluation.tools as etools
@@ -30,8 +31,7 @@ def np_and_save(x, path, name):
     np.save(os.path.join(path, name), x)
 
 
-def eval_model(data, net, metric_logger, is_our, renderer):
-
+def eval_model(data, net, metric_logger, renderer):
     wdMetric = WassersteinDistance()
     scl2Metric = StrokeColorL2()
     dtwMetric = DTW()
@@ -39,14 +39,8 @@ def eval_model(data, net, metric_logger, is_our, renderer):
     targets = data['strokes_seq'].cpu()
     bs = targets.size(0)
 
-    if is_our:
-        net.eval()
-        with torch.no_grad() :
-            predictions = net.generate(data, n_samples=args.n_samples)["fake_data_random"]
-    else:
-        predictions = net.generate(data)
-
-    predictions = etools.check_strokes(predictions)   # clamp in range [0,1]
+    predictions = net.generate(data)
+    predictions = etools.check_strokes(predictions)  # clamp in range [0,1]
 
     if torch.is_tensor(predictions):
         predictions = predictions.cpu().numpy()
@@ -62,17 +56,16 @@ def eval_model(data, net, metric_logger, is_our, renderer):
     # record metrics
     metric_logger.update(
         dict(
-            scl2 = scl2.item(),
-            wd = wd.item(),
-            color_diff_l1 = color_diff_l1.item(),
-            color_diff_l2 = color_diff_l2.item(),
-            dtw = dtw.item()), bs)
+            scl2=scl2.item(),
+            wd=wd.item(),
+            color_diff_l1=color_diff_l1.item(),
+            color_diff_l2=color_diff_l2.item(),
+            dtw=dtw.item()), bs)
 
     return predictions, visuals['frames']
 
 
 def main(args):
-
     # Seed
     seed = 1234
     torch.manual_seed(seed)
@@ -130,26 +123,31 @@ def main(args):
     our_metrics = AverageMetersDict(names=eval_names)
     baseline_metrics = AverageMetersDict(names=eval_names)
     snp_metrics = AverageMetersDict(names=eval_names)
-    snp_plus_metrics = AverageMetersDict(names = eval_names)
+    snp_plus_metrics = AverageMetersDict(names=eval_names)
     dataset_metrics = AverageMetersDict(names=['color_diff_l1', 'color_diff_l2'])
 
     # ======= Run ========================
-    for iter in range(args.n_iters_dataloader) :
+    for iter in range(args.n_iters_dataloader):
         print(f'Iter : {iter} / {args.n_iters_dataloader}')
-        for idx, batch in enumerate(test_loader) :
+        for idx, batch in enumerate(test_loader):
             print(f'{idx} / {len(test_loader)}')
             data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])
             # ======= Baseline Metrics ====
             ref_l1, ref_l2 = compute_color_difference(data['strokes_seq'])
-            dataset_metrics.update(dict(color_diff_l1=ref_l1.item(), color_diff_l2 = ref_l2.item()), data['strokes_seq'].shape[0])
+            dataset_metrics.update(dict(color_diff_l1=ref_l1.item(), color_diff_l2=ref_l2.item()),
+                                   data['strokes_seq'].shape[0])
             # ======= Predict   ===========
-            our_predictions, our_vis = eval_model(data=data, net=model, metric_logger=our_metrics, is_our=True, renderer=renderer)
+            our_predictions, our_vis = eval_model(data=data, net=model, metric_logger=our_metrics,
+                                                  renderer=renderer)
             if args.use_pt:
-                pt_predictions, pt_vis =eval_model(data=data, net=baseline, metric_logger=baseline_metrics, is_our=False, renderer=renderer)
+                pt_predictions, pt_vis = eval_model(data=data, net=baseline, metric_logger=baseline_metrics,
+                                                    renderer=renderer)
             if args.use_snp:
-                snp_predictions, snp_vis =eval_model(data=data, net=renderer, metric_logger=snp_metrics, is_our=False, renderer=renderer)
+                snp_predictions, snp_vis = eval_model(data=data, net=renderer, metric_logger=snp_metrics,
+                                                      renderer=renderer)
             if args.use_snp2:
-                snp2_predictions, snp2_vis = eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics, is_our=False, renderer=renderer)
+                snp2_predictions, snp2_vis = eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics,
+                                                        renderer=renderer)
 
             # Add to the list
             our.append(our_predictions)
@@ -180,52 +178,53 @@ def main(args):
     results.update(our_metrics.get_avg(header='our_'))
     our_fid = fsdMetric(generated=our, original=original, ctx=ctx)
     visual_our = np.concatenate(visual_our)
-    results.update({f'our_{k}' : v for k, v in our_fid.items()})
+    results.update({f'our_{k}': v for k, v in our_fid.items()})
 
     if args.use_pt:
         results.update(baseline_metrics.get_avg(header='pt_'))
         pt_fid = fsdMetric(generated=pt, original=original, ctx=ctx)
         visual_pt = np.concatenate(visual_pt)
-        results.update({f'pt_{k}' : v for k, v in pt_fid.items()})
+        results.update({f'pt_{k}': v for k, v in pt_fid.items()})
 
     if args.use_snp:
         results.update(snp_metrics.get_avg(header='snp_'))
         snp_fid = fsdMetric(generated=snp, original=original, ctx=ctx)
         visual_snp = np.concatenate(visual_snp)
-        results.update({f'snp_{k}' : v for k, v in snp_fid.items()})
+        results.update({f'snp_{k}': v for k, v in snp_fid.items()})
 
     if args.use_snp2:
         results.update(snp_plus_metrics.get_avg(header='snp++_'))
         snp2_fid = fsdMetric(generated=snp2, original=original, ctx=ctx)
         visual_snp2 = np.concatenate(visual_snp2)
-        results.update({f'snp++_{k}' : v for k, v in snp2_fid.items()})
+        results.update({f'snp++_{k}': v for k, v in snp2_fid.items()})
 
     # FVD
     if args.fvd:
         fvd = FVD()
         fvd_our = fvd(reference_observations=np.concatenate((visual_ctx, visual_original), axis=1),
                       generated_observations=np.concatenate((visual_ctx, visual_our), axis=1))
-        results.update({'our_fvd' : fvd_our})
+        results.update({'our_fvd': fvd_our})
         if args.use_pt:
             fvd_pt = fvd(reference_observations=np.concatenate((visual_ctx, visual_original), axis=1),
-                        generated_observations=np.concatenate((visual_ctx, visual_pt), axis=1))
-            results.update({'pt_fvd' : fvd_pt})
+                         generated_observations=np.concatenate((visual_ctx, visual_pt), axis=1))
+            results.update({'pt_fvd': fvd_pt})
         if args.use_snp:
             fvd_snp = fvd(reference_observations=np.concatenate((visual_ctx, visual_original), axis=1),
                           generated_observations=np.concatenate((visual_ctx, visual_snp), axis=1))
-            results.update({'snp_fvd' : fvd_snp})
+            results.update({'snp_fvd': fvd_snp})
         if args.use_snp2:
             fvd_snp2 = fvd(reference_observations=np.concatenate((visual_ctx, visual_original), axis=1),
                            generated_observations=np.concatenate((visual_ctx, visual_snp2), axis=1))
-            results.update({'snp++_fvd' : fvd_snp2})
+            results.update({'snp++_fvd': fvd_snp2})
 
     # save
     os.makedirs(output_path, exist_ok=True)
-    with open(os.path.join(output_path, f'results.pkl'), 'wb') as f :
+    with open(os.path.join(output_path, f'results.pkl'), 'wb') as f:
         pkl.dump(results, f)
     results_df = pd.DataFrame.from_dict(results, orient='index')
     results_df.to_csv(os.path.join(output_path, 'metrics.csv'))
 
+    '''
     # Save to output
     np_and_save(original, path=output_path, name='original')
     np_and_save(ctx, path=output_path, name='ctx')
@@ -233,9 +232,10 @@ def main(args):
     np_and_save(pt, path=output_path, name='pt')
     np_and_save(snp, path=output_path, name='snp')
     np_and_save(snp2, path=output_path, name='snp2')
+    '''
 
 
-if __name__ == '__main__' :
+if __name__ == '__main__':
     # Extra parameters
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=False)
@@ -249,7 +249,7 @@ if __name__ == '__main__' :
                         help="number of samples to test lpips, diverstiy in generation")
     parser.add_argument("-n", "--n_iters_dataloader", default=1, type=int)
     parser.add_argument("--use-pt", action='store_true', default=False)
-    parser.add_argument("--use-snp", action='store_true',default=False)
+    parser.add_argument("--use-snp", action='store_true', default=False)
     parser.add_argument("--use-snp2", action='store_true', default=False)
     args = parser.parse_args()
 

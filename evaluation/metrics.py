@@ -19,11 +19,14 @@ def compute_color_difference(x):
 
     return l1, l2
 
+
+# ======================================================================================================================
+# WD
 class WassersteinDistance:
     def __init__(self):
         pass
 
-    def get_sigma_sqrt(self, w, h, theta) :
+    def get_sigma_sqrt(self, w, h, theta):
         sigma_00 = w * (torch.cos(theta) ** 2) / 2 + h * (torch.sin(theta) ** 2) / 2
         sigma_01 = (w - h) * torch.cos(theta) * torch.sin(theta) / 2
         sigma_11 = h * (torch.cos(theta) ** 2) / 2 + w * (torch.sin(theta) ** 2) / 2
@@ -32,7 +35,7 @@ class WassersteinDistance:
         sigma = torch.stack([sigma_0, sigma_1], dim=-2)
         return sigma
 
-    def get_sigma(self, w, h, theta) :
+    def get_sigma(self, w, h, theta):
         sigma_00 = w * w * (torch.cos(theta) ** 2) / 4 + h * h * (torch.sin(theta) ** 2) / 4
         sigma_01 = (w * w - h * h) * torch.cos(theta) * torch.sin(theta) / 4
         sigma_11 = h * h * (torch.cos(theta) ** 2) / 4 + w * w * (torch.sin(theta) ** 2) / 4
@@ -41,7 +44,7 @@ class WassersteinDistance:
         sigma = torch.stack([sigma_0, sigma_1], dim=-2)
         return sigma
 
-    def gaussian_w_distance(self, param_1, param_2) :
+    def gaussian_w_distance(self, param_1, param_2):
         """
         Args:
             param_1: bs x length x 5
@@ -74,7 +77,8 @@ class WassersteinDistance:
 
         return loss.mean()  # average over the batch/length dimension
 
-#######################################################################################################################
+
+# ======================================================================================================================
 # Frechet Strokes Distance
 class FSD:
     def __init__(self):
@@ -119,7 +123,7 @@ class FSD:
 
         # Product might be almost singular
         covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
-        if not np.isfinite(covmean).all() :
+        if not np.isfinite(covmean).all():
             msg = ('fid calculation produces singular product; '
                    'adding %s to diagonal of cov estimates') % eps
             print(msg)
@@ -127,8 +131,8 @@ class FSD:
             covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
 
         # Numerical error might give slight imaginary component
-        if np.iscomplexobj(covmean) :
-            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3) :
+        if np.iscomplexobj(covmean):
+            if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3):
                 m = np.max(np.abs(covmean.imag))
                 raise ValueError('Imaginary component {}'.format(m))
             covmean = covmean.real
@@ -136,31 +140,33 @@ class FSD:
         tr_covmean = np.trace(covmean)
         return (diff.dot(diff) + np.trace(sigma1)
                 + np.trace(sigma2) - 2 * tr_covmean)
+
+
 # ======================================================================================================================
 # LPIPS Diversity
 # code from https://github.com/richzhang/PerceptualSimilarity, pip install lpips
 class LPIPSDiversityMetric:
-    def __init__(self, fn_backbone='vgg') :
+    def __init__(self, fn_backbone='vgg'):
         self.loss_fn = lpips.LPIPS(net=fn_backbone)
 
-    def get_combinations(self, n) :
+    def get_combinations(self, n):
         return np.array([i for i in itertools.combinations(range(n), 2)])
 
     def rearrange_visuals(self, frames, alpha):
 
         bs, n_samples, L, H, W, c = frames.shape
         output = torch.empty((bs, n_samples, H, W, c))
-        for b in range(bs) :
-            for n in range(n_samples) :
+        for b in range(bs):
+            for n in range(n_samples):
                 rec = frames[b, n, 0]
-                for ii in range(1, L) :
+                for ii in range(1, L):
                     rec = frames[b, n, ii] * alpha[b, n, ii] + rec * (1 - alpha[b, n, ii])
-                output[b, n] = 2 * torch.tensor(rec) - 1   # shift to [-1, 1]
+                output[b, n] = 2 * torch.tensor(rec) - 1  # shift to [-1, 1]
 
         return output
 
     @torch.no_grad()
-    def __call__(self, x, a) :
+    def __call__(self, x, a):
         """
         Args:
             x: numpy array of size [bs x n_samples x H x W x 3], contains n_samples continuations suggested by the model
@@ -180,6 +186,7 @@ class LPIPSDiversityMetric:
 
         loss = torch.tensor(loss)
         return loss.mean()
+
 
 # ======================================================================================================================
 # Stroke Color L2
@@ -208,6 +215,7 @@ class StrokeColorL2:
         loss = loss.sum(axis=(2, 3, 4)) / area
 
         return loss.mean()
+
 
 # ======================================================================================================================
 # DTW

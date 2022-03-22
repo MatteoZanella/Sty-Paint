@@ -6,11 +6,11 @@ from torch.optim import AdamW
 from timm.scheduler.cosine_lr import CosineLRScheduler
 from model.training.losses import KLDivergence, ReconstructionLoss, RenderImageLoss, ColorImageLoss, CCLoss, FIDLoss
 from evaluation.metrics import compute_color_difference
-from model.utils.utils import cosine_scheduler, produce_visuals
+from model.utils.utils import cosine_scheduler
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 from einops import rearrange, repeat
-from evaluation.tools import check_strokes
+from evaluation.tools import check_strokes, produce_visuals
 
 class VAEModel(nn.Module) :
 
@@ -111,57 +111,20 @@ class VAEModel(nn.Module) :
         self.LRSchedulerG.load_state_dict(ckpt["schedulerG"])
         return ckpt["epoch"]
 
-
-    def forward(self, batch, sample_z=False, seq_length=None):
-        if seq_length is None:
-            _, seq_length, _ = batch['strokes_seq'].shape
-
-        # Encode z
-        context, visual_features = self.context_encoder(batch)
-        z, mu, log_sigma = self.vae_encoder(batch, context)
-
-        fake_data_encoded = self.vae_decoder(z=z,
-                                             context=context,
-                                             visual_features=visual_features,
-                                             seq_length=seq_length)
-        fake_data_random = None
-        if sample_z :
-            random_z = torch.randn_like(z)
-            fake_data_random = self.vae_decoder(z=random_z,
-                                                context=context,
-                                                visual_features=visual_features,
-                                                seq_length=seq_length)
-
-        out = dict(
-            fake_data_encoded=fake_data_encoded,
-            fake_data_random=fake_data_random,
-            mu=mu,
-            log_sigma=log_sigma,
-        )
-        return out
-
-    def generate(self, batch, n_samples=1, seq_length=None, select_best=False):
+    def generate(self, batch, seq_length=None, n_samples=1, select_best=False):
 
         if seq_length is None :
             bs, seq_length, _ = batch['strokes_seq'].shape
+        else:
+            bs = 1
 
         # Encode z
         context, visual_features = self.context_encoder(batch)
-        z, mu, log_sigma = self.vae_encoder(batch, context)
-
-
-        fake_data_encoded = self.vae_decoder(z=z,
-                                             context=context,
-                                             visual_features=visual_features,
-                                             seq_length=seq_length)
-
 
         # Fake data
-        Z = torch.randn((bs * n_samples, z.shape[-1]), device=z.device)
+        Z = torch.randn((bs * n_samples, 256), device=context.device)
         context = repeat(context, 'L bs dim -> L (bs n_samples) dim', n_samples=n_samples)
         visual_features = repeat(visual_features, 'bs dim h w -> (bs n_samples) dim h w', n_samples=n_samples)
-
-        # random_z = Z[torch.argmin(difference)][None]
         fake_data_random = self.vae_decoder(z=Z,
                                             context=context,
                                             visual_features=visual_features,
@@ -176,16 +139,7 @@ class VAEModel(nn.Module) :
             idx = torch.argmin(score, dim=1)
             fake_data_random = fake_data_random[:, idx].squeeze(dim=1)
 
-        #
-
-        out = dict(
-            fake_data_encoded=fake_data_encoded,
-            fake_data_random=fake_data_random,
-            mu=mu,
-            log_sigma=log_sigma,
-        )
-        return out
-
+        return fake_data_random
 
     def train_one_step(self, batch, epoch, idx):
         # prediction = self.forward(batch, sample_z=self.sample_z)
@@ -320,12 +274,12 @@ class VAEModel(nn.Module) :
             plot_w_z = produce_visuals(pred_wz,
                                        ctx=batch["strokes_ctx"][batch_id].unsqueeze(0),
                                        renderer=self.renderer,
-                                       st=batch['canvas'][0].permute(1, 2, 0).cpu().numpy(),
+                                       starting_canvas=batch['canvas'][0].permute(1, 2, 0).cpu().numpy(),
                                        seq = batch["strokes_seq"][batch_id].unsqueeze(0))
             plot_wo_z =  produce_visuals(pred_wo_z,
                                        ctx=batch["strokes_ctx"][batch_id].unsqueeze(0),
                                        renderer=self.renderer,
-                                       st=batch['canvas'][0].permute(1, 2, 0).cpu().numpy(),
+                                       starting_canvas=batch['canvas'][0].permute(1, 2, 0).cpu().numpy(),
                                        seq = batch["strokes_seq"][batch_id].unsqueeze(0))
 
             visuals = {'plot_w_z' : plot_w_z, 'plot_wo_z' : plot_wo_z}

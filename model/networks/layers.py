@@ -2,9 +2,9 @@ import torch
 import numpy as np
 from einops import rearrange, repeat
 
+
 ########################################################################################################################
 def positionalencoding1d(x, orig_channels, offset=None):
-
     channels = orig_channels
     inv_freq = 1. / (10000 ** (torch.arange(0, channels, 2).float() / channels))
 
@@ -22,13 +22,13 @@ def positionalencoding1d(x, orig_channels, offset=None):
 ########################################################################################################################
 class PositionalEncoding:
 
-    def __init__(self, config) :
+    def __init__(self, config):
         self.img_size = config["dataset"]["resize"]
         self.visual_features = config["model"]["img_encoder"]["visual_feat_hw"]
         self.d_model = config["model"]["d_model"]
 
         self.channels = int(np.ceil(self.d_model / 6) * 2)
-        if self.channels % 2 :
+        if self.channels % 2:
             self.channels += 1
         self.inv_freq = 1. / (10000 ** (torch.arange(0, self.channels, 2).float() / self.channels))
 
@@ -44,7 +44,7 @@ class PositionalEncoding:
         output = self.positionalencoding3d(pos_x, pos_y, pos_z).to(device)
         return output.unsqueeze(dim=1)  # Unsqueeze batch dimension
 
-    def pe_strokes_tokens(self, pos, device, offset_z = None):
+    def pe_strokes_tokens(self, pos, device, offset_z=None):
         pos = pos.cpu().detach()
         n_strokes, bs, dim = pos.shape
         if dim == 8:
@@ -61,7 +61,7 @@ class PositionalEncoding:
         output = rearrange(output, '(n_strokes bs) dim -> n_strokes bs dim', n_strokes=n_strokes)
         return output.to(device)
 
-    def positionalencoding3d(self, pos_x, pos_y, pos_z=None) :
+    def positionalencoding3d(self, pos_x, pos_y, pos_z=None):
 
         n = pos_x.shape[0]
 
@@ -73,12 +73,12 @@ class PositionalEncoding:
 
         spatial_emb = torch.zeros((n, self.channels * 2))
         spatial_emb[:, :self.channels] = emb_x
-        spatial_emb[:, self.channels: ] = emb_y
+        spatial_emb[:, self.channels:] = emb_y
 
         # Time
         if pos_z is None:
             time_emb = torch.zeros((n, self.channels))
-        else :
+        else:
             sin_inp_z = torch.einsum("i,j->ij", pos_z, self.inv_freq)
             time_emb = torch.cat((sin_inp_z.sin(), sin_inp_z.cos()), dim=-1)
 

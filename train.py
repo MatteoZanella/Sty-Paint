@@ -11,6 +11,7 @@ from model import build_model
 
 import wandb
 
+
 def count_parameters(net):
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
@@ -60,21 +61,21 @@ if __name__ == '__main__':
 
     # Create model
     model = build_model(config=config)
-    #model = nn.DataParallel(model)
+    # model = nn.DataParallel(model)
     model.cuda()
 
     params = count_parameters(model)
-    logging.info(f'Number of trainable parameters: {params / 10**6}M')
+    logging.info(f'Number of trainable parameters: {params / 10 ** 6}M')
 
     # Create
     start_epoch = 1
     trainer = Trainer(config, model, train_loader, test_loader)
     model.train_setup(n_iters_per_epoch=len(train_loader))
     if config["train"]["auto_resume"]["active"]:
-        start_epoch = model.load_checkpoint(config["train"]["auto_resume"]["resume_path"])+1
+        start_epoch = model.load_checkpoint(config["train"]["auto_resume"]["resume_path"]) + 1
     max_epochs = config["train"]["n_epochs"]
     wandb.watch(model)
-    for ep in range(start_epoch, max_epochs+1):
+    for ep in range(start_epoch, max_epochs + 1):
         # Print
         logging.info('=' * 50)
         logging.info(f'Epoch: {ep} / {config["train"]["n_epochs"]}')
@@ -90,7 +91,7 @@ if __name__ == '__main__':
             wandb.log(test_logs)
 
         # Save ckpt
-        if (ep % config["train"]["logging"]["save_freq"] == 0) :
+        if (ep % config["train"]["logging"]["save_freq"] == 0):
             model.save_checkpoint(epoch=ep)
 
     # Save final model
