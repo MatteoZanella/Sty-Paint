@@ -1,14 +1,16 @@
+import math
+import sys
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import repeat, rearrange
 import torchvision
 from model.networks.light_renderer import LightRenderer
-import math
-import sys
-import os
 
-
+# ======================================================================================================================
+# KL Divergence
 class KLDivergence(nn.Module):
 
     def __init__(self):
@@ -22,8 +24,8 @@ class KLDivergence(nn.Module):
         return kl_loss
 
 
-########################################################################################################################
-
+# ======================================================================================================================
+# GAN Losses form:
 class GANLoss(nn.Module):
     """Define different GAN objectives.
     The GANLoss class abstracts away the need to create the target label tensor
@@ -123,7 +125,8 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, context=None, type=
         return 0.0, None
 
 
-########################################################################################################################
+# ======================================================================================================================
+# L2 loss on strokes parameters
 class ReconstructionLoss(nn.Module):
 
     def __init__(self, mode='l2'):
@@ -168,7 +171,7 @@ class ReconstructionLoss(nn.Module):
         return mse_position, mse_size, mse_theta, mse_color
 
 
-########################################################################################################################
+# ======================================================================================================================
 class ColorImageLoss(nn.Module):
     def __init__(self, config):
         super(ColorImageLoss, self).__init__()
@@ -200,7 +203,6 @@ class ColorImageLoss(nn.Module):
         return loss
 
 
-######################################
 class RenderImageLoss(nn.Module):
     def __init__(self, config):
         super(RenderImageLoss, self).__init__()
@@ -253,263 +255,12 @@ class RenderImageLoss(nn.Module):
             return loss
 
 
-##################################
-class PosColorLoss(nn.Module):
-    def __init__(self, mode='l2'):
-        super(PosColorLoss, self).__init__()
-        self.blur = torchvision.transforms.GaussianBlur(kernel_size=(7, 7))
-
-        # Criterion
-        if mode == 'l2':
-            self.criterion = nn.MSELoss()
-        elif mode == 'l1':
-            self.criterion = nn.L1Loss()
-        else:
-            raise NotImplementedError()
-
-    def __call__(self, predictions, ref_imgs):
-
-        preds_position = predictions[:, :, :2]
-
-        ref_imgs = self.blur(ref_imgs)
-        ref_imgs = repeat(ref_imgs, 'bs ch h w -> (bs L) ch h w', L=predictions.size(1))
-        grid = rearrange(preds_position, 'bs L dim -> (bs L) 1 1 dim')
-        gt_color = F.grid_sample(ref_imgs, 2 * grid - 1, align_corners=False, padding_mode='border')
-        gt_color = rearrange(gt_color, '(bs L) ch 1 1 -> bs L ch', L=predictions.size(1))
-        loss = torch.pow(torch.diff(gt_color, dim=1), 2).mean()
-        return loss
-
-
-########################################################################
-class DistLoss(nn.Module):
+# ======================================================================================================================
+# DistReg
+class DistributionRegularization(nn.Module):
     def __init__(self, config):
-        '''
-        Args:
-            mode:
-
-        Aim of this loss is to change the position of the strokes such that subsequent strokes have similar color.
-        To do this, we:
-        1. Find the color of the reference image for each predicted stroke
-        2. Find the topK corespondencies with that color, and the respective (tgt_x, tgt_y) locations
-        3. Compute the distance between the current predicted position and the closest postion among the ones found by
-        the step 2. for the stroke before (or after) in the sequence
-        '''
-        super(DistLoss, self).__init__()
-
-        mode = config["train"]["losses"]["reference_img"]["pos_color"]["mode"]
-        self.active = config["train"]["losses"]["reference_img"]["pos_color"]["weight"] > 0
-        self.K = config["train"]["losses"]["reference_img"]["pos_color"]["K"]
-
-        # Criterion
-        if mode == 'l2':
-            self.p = 2
-        elif mode == 'l1':
-            self.p = 1
-        else:
-            raise NotImplementedError()
-
-    def __call__(self, predictions, ref_imgs):
-
-        if not self.active:
-            return torch.tensor([0], device=predictions.device)
-
-        bs, L, _ = predictions.shape
-        img_size = ref_imgs.shape[-1]
-
-        preds_position = predictions[:, :, :2]
-
-        # Sample GT colors
-        feat_temp = repeat(ref_imgs, 'bs ch h w -> (L bs) ch h w', L=L)
-        grid = rearrange(preds_position, 'L bs p -> (L bs) 1 1 p')
-        pooled_colors = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='nearest')
-
-        feat_temp = rearrange(feat_temp, '(L bs) ch h w -> bs L ch h w', bs=bs, L=L)
-        pooled_colors = rearrange(pooled_colors, '(L bs) ch 1 1 -> bs L ch 1 1', bs=bs, L=L)
-        pooled_colors = repeat(pooled_colors, 'bs L ch 1 1 -> bs L ch H W', H=img_size, W=img_size)
-
-        # Find top K similar color across the image
-        similar_colors = F.mse_loss(feat_temp, pooled_colors, reduction='none').sum(dim=2)
-        _, idx = similar_colors.reshape(bs, L, -1).topk(k=self.K, largest=False)
-
-        # Convert idx to (x,y)
-        tgt_x = torch.remainder(idx, img_size) / img_size
-        tgt_y = torch.div(idx, img_size, rounding_mode='floor') / img_size
-
-        tgt = torch.stack([tgt_x.reshape(bs, L * self.K), tgt_y.reshape(bs, L * self.K)], dim=-1)
-        tgt = tgt.reshape(bs, L, self.K, 2)
-
-        # Shift the target up and down by 1 position, i.e. compare each element of the sequence with the precedent
-        # and the following one
-        tgt_down = torch.roll(tgt, shifts=1, dims=1)
-        pos_detached = repeat(preds_position, 'bs L p -> bs L K p', K=self.K).detach()
-
-        # Computes distances
-        dist_down = F.mse_loss(pos_detached, tgt_down, reduction='none').sum(dim=-1)
-        _, closest_tgt_down = torch.min(dist_down, dim=-1)
-
-        #
-        final_tgt = tgt_down.reshape(bs * L, self.K, 2)[torch.arange(bs * L), closest_tgt_down.view(bs * L)]
-        final_tgt = final_tgt.reshape(bs, L, 2)
-
-        # compute L2
-        loss = F.mse_loss(preds_position[:, 1:], final_tgt[:, 1:], reduction='none').sum(dim=-1)
-
-        return torch.mean(loss)
-
-
-############################################################################################################
-
-class CCLoss(nn.Module):
-    def __init__(self, config):
-        '''
-        Use all the kNN
-        '''
-        super(CCLoss, self).__init__()
-
-        mode = config["train"]["losses"]["reference_img"]["pos_color"]["mode"]
-        self.active = config["train"]["losses"]["reference_img"]["pos_color"]["weight"] > 0
-        self.find_target = config["train"]["losses"]["reference_img"]["pos_color"][
-            "find_target"]  # wa = weighted average, knn
-        self.tau = config["train"]["losses"]["reference_img"]["pos_color"]["tau"]
-        self.p = config["train"]["losses"]["reference_img"]["pos_color"]["p"]
-        self.K = config["train"]["losses"]["reference_img"]["pos_color"]["K"]
-
-        # Criterion
-        if mode == 'l2':
-            self.p = 2
-        elif mode == 'l1':
-            self.p = 1
-        else:
-            raise NotImplementedError()
-
-    def find_target_knn(self, color_similarity, preds_position):
-        bs, L, img_size, _ = color_similarity.shape
-        _, idx = color_similarity.reshape(bs, L, -1).topk(k=self.K, largest=False)
-
-        # Convert idx to (x,y)
-        tgt_x = torch.remainder(idx, img_size) / img_size
-        tgt_y = torch.div(idx, img_size, rounding_mode='floor') / img_size
-
-        tgt = torch.stack([tgt_x.reshape(bs, L * self.K), tgt_y.reshape(bs, L * self.K)], dim=-1)
-        tgt = tgt.reshape(bs, L, self.K, 2)
-
-        # Shift the target up and down by 1 position, i.e. compare each element of the sequence with the precedent
-        # and the following one
-        tgt_down = torch.roll(tgt, shifts=1, dims=1)
-        pos_detached = repeat(preds_position, 'bs L p -> bs L K p', K=self.K).detach()
-
-        # Computes distances
-        dist_down = F.mse_loss(pos_detached, tgt_down, reduction='none').sum(dim=-1)
-        _, closest_tgt_down = torch.min(dist_down, dim=-1)
-
-        #
-        final_tgt = tgt_down.reshape(bs * L, self.K, 2)[torch.arange(bs * L), closest_tgt_down.view(bs * L)]
-        final_tgt = final_tgt.reshape(bs, L, 2)
-
-        return final_tgt
-
-    def find_target_wa(self, color_similarity, preds_position):
-        bs, L, img_size, _ = color_similarity.shape
-
-        b_id, seq_id, y_id, x_id = torch.where(color_similarity < self.tau)
-        tgt = torch.stack((x_id, y_id), dim=-1) / img_size
-
-        # Compute final Targets
-        final_tgt = torch.zeros(bs, L, 2, device=preds_position.device)
-        for b in range(bs):
-            for t_minus_one in range(L - 1):
-                iids = torch.logical_and(b_id == b, seq_id == t_minus_one)
-                nn_t_minus_one = tgt[iids]
-                # Distance between NN at time T-1, and predictions at time T
-                dist = torch.cdist(preds_position[b, t_minus_one + 1][None], nn_t_minus_one, p=2) + torch.tensor(1e-9,
-                                                                                                                 device=preds_position.device)
-                w = torch.pow(1 / dist, self.p)  # inverse of the distance
-                w_norm = w / w.sum()
-
-                # Target at time T is the weighted average of NN at time T-1
-                final_tgt[b, t_minus_one + 1, :] = torch.sum(w_norm.unsqueeze(-1) * nn_t_minus_one, dim=1)
-
-        return final_tgt
-
-    def __call__(self, predictions, ref_imgs):
-        if not self.active:
-            return torch.tensor([0], device=predictions.device)
-
-        bs, L, _ = predictions.shape
-        img_size = ref_imgs.shape[-1]
-
-        preds_position = predictions[:, :, :2]
-
-        # Sample GT colors
-        feat_temp = repeat(ref_imgs, 'bs ch h w -> (L bs) ch h w', L=L)
-        grid = rearrange(preds_position, 'L bs p -> (L bs) 1 1 p')
-        pooled_colors = F.grid_sample(feat_temp, 2 * grid - 1, align_corners=False, mode='nearest')
-
-        feat_temp = rearrange(feat_temp, '(L bs) ch h w -> bs L ch h w', bs=bs, L=L)
-        pooled_colors = rearrange(pooled_colors, '(L bs) ch 1 1 -> bs L ch 1 1', bs=bs, L=L)
-        pooled_colors = repeat(pooled_colors, 'bs L ch 1 1 -> bs L ch H W', H=img_size, W=img_size)
-
-        # Find similar color across the image
-        similar_colors = F.mse_loss(feat_temp, pooled_colors, reduction='none').sum(dim=2)
-
-        # Compute the target position
-        if self.find_target == "wa":
-            target = self.find_target_wa(color_similarity=similar_colors, preds_position=preds_position.detach())
-        elif self.find_target == "knn":
-            target = self.find_target_knn(color_similarity=similar_colors, preds_position=preds_position.detach())
-        else:
-            raise NotImplementedError()
-
-        # compute L2
-        loss = F.mse_loss(preds_position[:, 1:], target[:, 1:], reduction='none').sum(dim=-1)
-        return torch.mean(loss)
-
-
-#########################################################################################################
-from torch.autograd import Function
-import scipy
-import numpy as np
-from model.utils.utils import sample_color
-
-
-class MatrixSquareRoot(Function):
-    """Square root of a positive definite matrix.
-    NOTE: matrix square root is not differentiable for matrices with
-          zero eigenvalues.
-    """
-
-    @staticmethod
-    def forward(ctx, input):
-        m = input.detach().cpu().numpy().astype(np.float_)
-        sqrtm = torch.from_numpy(scipy.linalg.sqrtm(m).real).to(input)
-        ctx.save_for_backward(sqrtm)
-        return sqrtm
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        grad_input = None
-        if ctx.needs_input_grad[0]:
-            sqrtm, = ctx.saved_tensors
-            sqrtm = sqrtm.data.cpu().numpy().astype(np.float_)
-            gm = grad_output.data.cpu().numpy().astype(np.float_)
-
-            # Given a positive semi-definite matrix X,
-            # since X = X^{1/2}X^{1/2}, we can compute the gradient of the
-            # matrix square root dX^{1/2} by solving the Sylvester equation:
-            # dX = (d(X^{1/2})X^{1/2} + X^{1/2}(dX^{1/2}).
-            grad_sqrtm = scipy.linalg.solve_sylvester(sqrtm, sqrtm, gm)
-
-            grad_input = torch.from_numpy(grad_sqrtm).to(grad_output)
-        return grad_input
-
-
-sqrtm = MatrixSquareRoot.apply
-
-
-class FIDLoss(nn.Module):
-    def __init__(self, config):
-        super(FIDLoss, self).__init__()
-        tmp_config = config["train"]["losses"]["fid"]
+        super(DistributionRegularization, self).__init__()
+        tmp_config = config["train"]["losses"]["regularization_dist"]
 
         self.active = tmp_config["weight"] > 0
         self.K = tmp_config["K"]  # Number of neighbors to compute similarity
@@ -517,38 +268,15 @@ class FIDLoss(nn.Module):
 
         self.mode = tmp_config["mode"]
 
-        if tmp_config["use_context"]:
-            self.L = config["dataset"]["context_length"] + config["dataset"]["sequence_length"]
-        else:
-            self.L = config["dataset"]["sequence_length"]
-
+        self.L = config["dataset"]["context_length"] + config["dataset"]["sequence_length"]
         self.get_index(L=self.L, K=self.K)
-
-        if tmp_config["use_color"]:
-            self.use_color_img = True
-            self.param_per_stroke += 3
-        else:
-            self.use_color_img = False
 
         self.reweight_kl = tmp_config["reweight_kl"]
         if self.reweight_kl:
+            # Remove (h,w,theta) from parameters before computing the features
             self.param_per_stroke -= 3
 
         self.dim_features = self.n * self.param_per_stroke
-
-        # Load precomputed features, if exists
-        self.precomputed_dataset_statistics = False
-        if os.path.exists(tmp_config['mu_dataset']) and os.path.exists(tmp_config['sigma_dataset']):
-            self.mu_dataset = torch.load(config["train"]["losses"]["fid"]['mu_dataset'])
-            self.sigma_dataset = torch.load(config["train"]["losses"]["fid"]['sigma_dataset'])
-
-            print(self.mu_dataset.shape)
-            print(self.sigma_dataset.shape)
-
-            # assert self.mu_dataset.shape[0] == self.dim_features
-            # assert self.sigma_dataset.shape == [self.dim_features, self.dim_features]
-
-            self.precomputed_dataset_statistics = True
 
     def get_index(self, L, K=10):
         ids = []
@@ -567,6 +295,7 @@ class FIDLoss(nn.Module):
         bs = x.shape[0]
         feat = torch.empty((bs, self.dim_features))
         if self.reweight_kl:
+            # TODO: fix here, we remove (w,h, theta)
             param_list = [0, 1, 5, 6, 7]
         else:
             param_list = [0, 1, 2, 3, 4, 5, 6, 7]
@@ -574,45 +303,6 @@ class FIDLoss(nn.Module):
         for j in range(len(param_list)):
             feat[:, j * self.n: (j + 1) * self.n] = x[:, self.id0, param_list[j]] - x[:, self.id1, param_list[j]]
         return feat.t().contiguous()
-
-    def fid_score_torch(self,
-                        mu1: torch.Tensor,
-                        mu2: torch.Tensor,
-                        sigma1: torch.Tensor,
-                        sigma2: torch.Tensor,
-                        eps: float = 1e-6) -> float:
-        try:
-            import numpy as np
-        except ImportError:
-            raise RuntimeError("fid_score requires numpy to be installed.")
-
-        try:
-            import scipy.linalg
-        except ImportError:
-            raise RuntimeError("fid_score requires scipy to be installed.")
-
-        # mu1, mu2 = mu1.cpu(), mu2.cpu()
-        # sigma1, sigma2 = sigma1.cpu(), sigma2.cpu()
-
-        diff = mu1 - mu2
-
-        # Product might be almost singular
-        offset = torch.eye(sigma1.shape[0]) * eps
-        covmean = sqrtm((sigma1 + offset).mm(sigma2 + offset))
-        # Numerical error might give slight imaginary component
-
-        if torch.is_complex(covmean):
-            if not torch.allclose(torch.diagonal(covmean), torch.tensor([0.0], dtype=torch.double), atol=1e-3):
-                m = torch.max(torch.abs(covmean.imag))
-                raise ValueError("Imaginary component {}".format(m))
-            covmean = covmean.real
-
-        tr_covmean = torch.trace(covmean)
-
-        if not torch.isfinite(covmean).all():
-            tr_covmean = torch.sum(torch.sqrt(((torch.diag(sigma1) * eps) * (torch.diag(sigma2) * eps)) / (eps * eps)))
-
-        return diff.dot(diff) + torch.trace(sigma1) + torch.trace(sigma2) - 2 * tr_covmean
 
     def fast_fid(self, x, y, eps: float = 1e-6) -> float:
         # https://arxiv.org/pdf/2009.14075.pdf
@@ -646,11 +336,7 @@ class FIDLoss(nn.Module):
         variance, mean = torch.var_mean(params, dim=-1)
         log_variance = torch.log(variance)
 
-        if self.precomputed_dataset_statistics:
-            reference_variance = self.sigma_dataset.to(params.device)
-            reference_mean = self.mu_dataset.to(params.device)
-        else:
-            reference_variance, reference_mean = torch.var_mean(reference_params, dim=-1)
+        reference_variance, reference_mean = torch.var_mean(reference_params, dim=-1)
         reference_log_variance = torch.log(reference_variance)
 
         variance = torch.clamp(variance, min=eps)
@@ -668,29 +354,13 @@ class FIDLoss(nn.Module):
 
         if not self.active:
             return torch.tensor([0], device=preds.device)
-        if preds.shape[0] < 8:
-            return torch.tensor([0], device=preds.device)
 
-        # REAL
-        if self.precomputed_dataset_statistics:
-            f_real = None  # Use the one stored
-        else:
-            x_real = torch.cat((batch['strokes_ctx'], batch['strokes_seq']), dim=1)  # cat on length dim
-            if self.use_color_img:
-                c_real = sample_color(pos=x_real[:, :, :2],
-                                      ref_imgs=batch['img'])
+        # Original
+        x_real = torch.cat((batch['strokes_ctx'], batch['strokes_seq']), dim=1)  # cat on length dim
+        f_real = self.compute_features(x_real)
 
-                x_real = torch.cat((x_real, c_real), dim=-1)  # cat on the channel dim
-
-            # Compute the features
-            f_real = self.compute_features(x_real)
-
-        # PREDS
+        # Predictions
         x_pred = torch.cat((batch['strokes_ctx'], preds), dim=1)
-        if self.use_color_img:
-            c_pred = sample_color(pos=x_pred[:, :, :2],
-                                  ref_imgs=batch['img'])
-            x_pred = torch.cat((x_pred, c_pred), dim=-1)
         # Compute features
         f_pred = self.compute_features(x_pred)
 
@@ -701,18 +371,3 @@ class FIDLoss(nn.Module):
             loss = self.kl(params=f_pred, reference_params=f_real)
 
         return loss
-
-        # Real sequence
-        # real_seq = torch.cat((ctx, seq), dim=1)
-        # real_seq = self.compute_features(seq)
-
-        # real_cov = torch.cov(real_seq)
-        # real_mean = torch.mean(real_seq, dim=-1)
-
-        # Generated seq
-        # gen_seq = torch.cat((ctx, preds), dim=1)
-        # gen_seq = self.compute_features(preds)
-        # gen_cov = torch.cov(gen_seq)
-        # gen_mean = torch.mean(gen_seq, dim=-1)
-
-        # return self.fid_score_torch(mu1=real_mean, mu2=gen_mean, sigma1=real_cov, sigma2=gen_cov)

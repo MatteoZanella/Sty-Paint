@@ -3,8 +3,8 @@ import time
 import logging
 
 import torch
-from model.utils.utils import AverageMetersDict, dict_to_device, cosine_scheduler
-from evaluation.metrics import FDMetricIncremental
+from model.utils.utils import AverageMetersDict, dict_to_device
+from evaluation.metrics import FSD
 import wandb
 
 
@@ -62,8 +62,8 @@ class Trainer:
 
         model.eval()
 
-        fd_z_random = FDMetricIncremental()
-        fd_z_encoded = FDMetricIncremental()
+        fsdMetric = FSD()
+        original, ctx, predictions_z_random, predictions_z_enc = [], [], [], []
 
         avg_meters = AverageMetersDict(names=model.eval_metrics_names)
         log_meters = AverageMetersDict(names=model.eval_info)
@@ -73,10 +73,8 @@ class Trainer:
             data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])
             targets = data['strokes_seq']
             bs = targets.size(0)
-            metrics, info, visual = model.test_one_step(data,
-                                                        fd_z_random=fd_z_random,
-                                                        fd_z_encoded=fd_z_encoded,
-                                                        get_visual=idx == 0)
+            predictions, metrics, info, visual = model.test_one_step(data,
+                                                                     get_visual=idx == 0)
 
             avg_meters.update(metrics, bs)
             log_meters.update(info, bs)
@@ -86,6 +84,12 @@ class Trainer:
                     'generation_w_z': wandb.Image(visual['plot_w_z']),
                     'generation_wo_z': wandb.Image(visual['plot_wo_z'])
                 })
+
+            # FSD
+            original.append(batch['strokes_seq'].cpu().numpy())
+            ctx.append(batch['strokes_ctx'].cpu().numpy())
+            predictions_z_random.append(predictions["fake_data_random"].cpu().numpy())
+            predictions_z_enc.append(predictions["fake_data_encoded"].cpu().numpy())
 
         # logging
         msg = ''
@@ -97,10 +101,9 @@ class Trainer:
         stats.update(log_meters.get_avg(header='test/'))
 
         # Compute FD from stored features
-        fd_z_random = fd_z_random.compute_fd()
-        stats.update({f'test/random_fd_{k}': v for k, v in fd_z_random.items()})
-        if fd_z_encoded.original_features:
-            fd_z_encoded = fd_z_encoded.compute_fd()
-            stats.update({f'test/enc_fd_{k}': v for k, v in fd_z_encoded.items()})
+        fsd_z_random = fsdMetric(original=original, generated=predictions_z_random, ctx=ctx)
+        stats.update({f'test/random_fd_{k}': v for k, v in fsd_z_random.items()})
+        fsd_z_enc = fsdMetric(original=original, generated=predictions_z_enc, ctx=ctx)
+        stats.update({f'test/random_fd_{k}': v for k, v in fsd_z_enc.items()})
 
         return stats

@@ -1,12 +1,13 @@
-from torch.utils.data import Dataset
-import torch
-import torchvision.transforms as transforms
+import os
+import pickle
 import PIL.Image as Image
 import numpy as np
 import random
-import os
-import pickle
 import pandas as pd
+
+from torch.utils.data import Dataset
+import torch
+import torchvision.transforms as transforms
 
 """
 Dataset structure:
@@ -37,10 +38,6 @@ class StrokesDataset(Dataset):
         # Load csv file
         partition = self.config["dataset"]["partition"]
 
-        self.active_sampling = config["dataset"]["sampling"]["active"]
-        self.sampling_threshold = config["dataset"]["sampling"]["threshold"]
-        self.sampling_p = config["dataset"]["sampling"]["prob"]
-
         self.df = pd.read_csv(self.config["dataset"]["csv_file"])
         self.root_dir = os.path.join(self.config["dataset"]["root"],
                                      partition + f'_{self.config["dataset"]["version"]}',
@@ -54,7 +51,6 @@ class StrokesDataset(Dataset):
         self.sequence_length = config["dataset"]["sequence_length"]
         self.heuristic = config["dataset"]["heuristic"]
         self.img_size = config["dataset"]["resize"]
-        self.use_images = config["dataset"]["use_images"]
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
@@ -66,7 +62,7 @@ class StrokesDataset(Dataset):
 
     def load_strokes(self, name):
         '''
-        Format is 1 x T x 12   (x,y,h,w,theta,r1,g1,b1,r2,g2,b2)
+        Format is 1 x T x 11   (x,y,h,w,theta,r1,g1,b1,r2,g2,b2)
         Exclude the alpha parameter: 1 x T x 11
         '''
 
@@ -78,9 +74,6 @@ class StrokesDataset(Dataset):
         return strokes
 
     def sample_strokes(self, n):
-        if self.active_sampling:
-            if random.random() < self.sampling_p:
-                n = self.sampling_threshold
         t = random.randint(self.context_length, n - self.sequence_length)
         t_C = t - self.context_length
         t_T = t + self.sequence_length
@@ -113,17 +106,16 @@ class StrokesDataset(Dataset):
             'strokes_ctx': strokes[:self.context_length, :],
             'strokes_seq': strokes[self.context_length:, :]}
         # ---------
-        if self.use_images:
-            # Load rendered image up to s
-            canvas = self.load_canvas_states(name, t - 1)
-            # ---------
-            # Load Image
-            img = Image.open(os.path.join(self.root_dir, name, name + '.jpg')).convert('RGB')
-            img = self.img_transform(img)
+        # Load rendered image up to s
+        canvas = self.load_canvas_states(name, t - 1)
+        # ---------
+        # Load Image
+        img = Image.open(os.path.join(self.root_dir, name, name + '.jpg')).convert('RGB')
+        img = self.img_transform(img)
 
-            data.update({
-                'canvas': canvas,
-                'img': img})
+        data.update({
+            'canvas': canvas,
+            'img': img})
 
         if not self.isTrain:
             data.update({'time_steps': [t_C, t, t_T]})
@@ -132,7 +124,7 @@ class StrokesDataset(Dataset):
         return data
 
 
-########################################################################################################################
+# ======================================================================================================================
 class EvalDataset(Dataset):
 
     def __init__(self,
@@ -144,10 +136,6 @@ class EvalDataset(Dataset):
 
         # Load csv file
         partition = self.config["dataset"]["partition"]
-
-        self.active_sampling = config["dataset"]["sampling"]["active"]
-        self.sampling_threshold = config["dataset"]["sampling"]["threshold"]
-        self.sampling_p = config["dataset"]["sampling"]["prob"]
 
         self.df = pd.read_csv(self.config["dataset"]["csv_file"])
         self.root_dir = os.path.join(self.config["dataset"]["root"],
@@ -162,7 +150,6 @@ class EvalDataset(Dataset):
         self.sequence_length = config["dataset"]["sequence_length"]
         self.heuristic = config["dataset"]["heuristic"]
         self.img_size = config["dataset"]["resize"]
-        self.use_images = config["dataset"]["use_images"]
 
         self.img_transform = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
@@ -224,19 +211,18 @@ class EvalDataset(Dataset):
             'strokes_ctx': strokes[:self.context_length, :],  # context strokes
             'strokes_seq': strokes[self.context_length:, :]}  # ground truth strokes
         # ---------
-        if self.use_images:
-            # Load rendered image up to s
-            canvas = self.load_canvas_states(name, t - 1)
-            final_canvas = self.load_canvas_states(name, t_T)
-            # ---------
-            # Load Image
-            img = Image.open(os.path.join(self.root_dir, name, name + '.jpg')).convert('RGB')
-            img = self.img_transform(img)
+        # Load rendered image up to s
+        canvas = self.load_canvas_states(name, t - 1)
+        final_canvas = self.load_canvas_states(name, t_T)
+        # ---------
+        # Load Image
+        img = Image.open(os.path.join(self.root_dir, name, name + '.jpg')).convert('RGB')
+        img = self.img_transform(img)
 
-            data.update({
-                'canvas': canvas,
-                'final_canvas': final_canvas,
-                'img': img})
+        data.update({
+            'canvas': canvas,
+            'final_canvas': final_canvas,
+            'img': img})
 
         if not self.isTrain:
             data.update({'time_steps': [t_C, t, t_T]})
@@ -260,16 +246,15 @@ class EvalDataset(Dataset):
             'strokes_ctx': strokes[:self.context_length, :][None],
             'strokes_seq': strokes[self.context_length:, :][None]}
         # ---------
-        if self.use_images:
-            # Load rendered image up to s
-            canvas = self.load_canvas_states(filename, t - 1)
-            # ---------
-            # Load Image
-            img = Image.open(os.path.join(self.root_dir, filename, filename + '.jpg')).convert('RGB')
-            img = self.img_transform(img)
+        # Load rendered image up to s
+        canvas = self.load_canvas_states(filename, t - 1)
+        # ---------
+        # Load Image
+        img = Image.open(os.path.join(self.root_dir, filename, filename + '.jpg')).convert('RGB')
+        img = self.img_transform(img)
 
-            data.update({
-                'canvas': canvas[None],
-                'img': img[None]})
+        data.update({
+            'canvas': canvas[None],
+            'img': img[None]})
 
         return data, initial_context, original_sequence[None]

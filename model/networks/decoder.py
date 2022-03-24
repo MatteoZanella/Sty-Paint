@@ -85,11 +85,8 @@ class Decoder2Step(nn.Module):
         else:
             self.residual_position = False
 
-        if config["model"]["encoder_pe"] == "new":
-            print('Using new encodings')
-            self.PE = PositionalEncoding(config)
-        else:
-            self.PE = PEWrapper(config)
+        self.PE = PositionalEncoding(config)
+
 
         self.ctx_z = config["model"]["ctx_z"]  # how to merge context and z
         if self.ctx_z == 'proj':

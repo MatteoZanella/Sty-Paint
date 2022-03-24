@@ -24,46 +24,47 @@ from evaluation.paint_transformer.model import PaintTransformer as PaddlePT
 import evaluation.tools as etools
 
 
-def np_and_save(x, path, name):
-    if not x:
-        return
-    x = np.concatenate(x)
-    np.save(os.path.join(path, name), x)
+class EvalModel:
+    def __init__(self, renderer):
+        super(EvalModel, self).__init__()
+        self.renderer = renderer
 
+        self.scl2Metric = StrokeColorL2()
+        self.wdMetric = WassersteinDistance()
+        self.dtwMetric = DTW()
 
-def eval_model(data, net, metric_logger, renderer):
-    wdMetric = WassersteinDistance()
-    scl2Metric = StrokeColorL2()
-    dtwMetric = DTW()
+    def __call__(self, data, net, metric_logger, is_our=False):
 
-    targets = data['strokes_seq'].cpu()
-    bs = targets.size(0)
+        targets = data['strokes_seq'].cpu()
+        bs = targets.size(0)
 
-    predictions = net.generate(data)
-    predictions = etools.check_strokes(predictions)  # clamp in range [0,1]
+        if is_our:
+            predictions = net.generate(data)["fake_data_random"]
+        else:
+            predictions = net.generate(data)
+        predictions = etools.check_strokes(predictions)  # clamp in range [0,1]
 
-    if torch.is_tensor(predictions):
-        predictions = predictions.cpu().numpy()
+        if torch.is_tensor(predictions):
+            predictions = predictions.cpu().numpy()
 
-    visuals = etools.render_frames(predictions, data, renderer)
+        visuals = etools.render_frames(predictions, data, self.renderer)
 
-    # color difference
-    color_diff_l1, color_diff_l2 = compute_color_difference(predictions)
-    scl2 = scl2Metric(data['img'], visuals['frames'], visuals['alphas'])
-    wd = wdMetric(targets[:, :, :5], torch.tensor(predictions[:, :, :5]))
-    dtw = dtwMetric(targets, predictions)
+        # compute metrics
+        color_diff_l1, color_diff_l2 = compute_color_difference(predictions)
+        scl2 = self.scl2Metric(data['img'], visuals['frames'], visuals['alphas'])
+        wd = self.wdMetric(targets[:, :, :5], torch.tensor(predictions[:, :, :5]))
+        dtw = self.dtwMetric(targets, predictions)
 
-    # record metrics
-    metric_logger.update(
-        dict(
-            scl2=scl2.item(),
-            wd=wd.item(),
-            color_diff_l1=color_diff_l1.item(),
-            color_diff_l2=color_diff_l2.item(),
-            dtw=dtw.item()), bs)
+        # record metrics
+        metric_logger.update(
+            dict(
+                scl2=scl2.item(),
+                wd=wd.item(),
+                color_diff_l1=color_diff_l1.item(),
+                color_diff_l2=color_diff_l2.item(),
+                dtw=dtw.item()), bs)
 
-    return predictions, visuals['frames']
-
+        return predictions, visuals['frames']
 
 def main(args):
     # Seed
@@ -115,6 +116,7 @@ def main(args):
     baseline = PaddlePT(model_path=args.pt_checkpoint, config=render_config)
     # ======= Metrics ========================
     fsdMetric = FSD()
+    eval_model = EvalModel(renderer=renderer)
     original, ctx, our, pt, snp, snp2 = [], [], [], [], [], []
     visual_original, visual_ctx, visual_our, visual_pt, visual_snp, visual_snp2 = [], [], [], [], [], []
 
@@ -132,22 +134,21 @@ def main(args):
         for idx, batch in enumerate(test_loader):
             print(f'{idx} / {len(test_loader)}')
             data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])
-            # ======= Baseline Metrics ====
+            # ======= Dataset Metrics ====
             ref_l1, ref_l2 = compute_color_difference(data['strokes_seq'])
             dataset_metrics.update(dict(color_diff_l1=ref_l1.item(), color_diff_l2=ref_l2.item()),
                                    data['strokes_seq'].shape[0])
             # ======= Predict   ===========
+            # Our
+
             our_predictions, our_vis = eval_model(data=data, net=model, metric_logger=our_metrics,
-                                                  renderer=renderer)
+                                                  is_our=True)
             if args.use_pt:
-                pt_predictions, pt_vis = eval_model(data=data, net=baseline, metric_logger=baseline_metrics,
-                                                    renderer=renderer)
+                pt_predictions, pt_vis = eval_model(data=data, net=baseline, metric_logger=baseline_metrics)
             if args.use_snp:
-                snp_predictions, snp_vis = eval_model(data=data, net=renderer, metric_logger=snp_metrics,
-                                                      renderer=renderer)
+                snp_predictions, snp_vis = eval_model(data=data, net=renderer, metric_logger=snp_metrics)
             if args.use_snp2:
-                snp2_predictions, snp2_vis = eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics,
-                                                        renderer=renderer)
+                snp2_predictions, snp2_vis = eval_model(data=data, net=snp_plus, metric_logger=snp_plus_metrics)
 
             # Add to the list
             our.append(our_predictions)
@@ -198,7 +199,7 @@ def main(args):
         visual_snp2 = np.concatenate(visual_snp2)
         results.update({f'snp++_{k}': v for k, v in snp2_fid.items()})
 
-    # FVD
+    # Frechet Video Distance
     if args.fvd:
         fvd = FVD()
         fvd_our = fvd(reference_observations=np.concatenate((visual_ctx, visual_original), axis=1),
@@ -223,17 +224,6 @@ def main(args):
         pkl.dump(results, f)
     results_df = pd.DataFrame.from_dict(results, orient='index')
     results_df.to_csv(os.path.join(output_path, 'metrics.csv'))
-
-    '''
-    # Save to output
-    np_and_save(original, path=output_path, name='original')
-    np_and_save(ctx, path=output_path, name='ctx')
-    np_and_save(our, path=output_path, name='our')
-    np_and_save(pt, path=output_path, name='pt')
-    np_and_save(snp, path=output_path, name='snp')
-    np_and_save(snp2, path=output_path, name='snp2')
-    '''
-
 
 if __name__ == '__main__':
     # Extra parameters

@@ -7,7 +7,8 @@ from timm.scheduler.cosine_lr import CosineLRScheduler
 from model.training.losses import KLDivergence, ReconstructionLoss, ColorImageLoss, RenderImageLoss
 from model.training.losses import GANLoss, cal_gradient_penalty
 from evaluation.metrics import compute_color_difference
-from model.utils.utils import cosine_scheduler, produce_visuals
+from evaluation.tools import produce_visuals
+from model.utils.utils import cosine_scheduler
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 

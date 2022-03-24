@@ -7,19 +7,11 @@ dataset :
   resize : 256
   context_length : 10
   sequence_length : 8
-  use_images : True
-  sampling:
-    active : False
-    threshold: 0
-    prob: 0
 model:
-  model_type : vae
   d_model : 256
   n_strokes_params : 8
   ctx_z : cat
   activation_last_layer : sigmoid
-  encoder_pe: new
-  decoder_pe : sine
   dropout : 0.0
   img_encoder:
     type : convenc
@@ -28,9 +20,6 @@ model:
     hres_feat_hw : 64
     hres_feat_dim : 64
   context_encoder:
-    use_context: True
-    use_transformer: True
-    canvas_strokes : add
     act : gelu
     n_heads : 4
     n_layers : 8
@@ -54,7 +43,7 @@ model:
     encoder_only : False
     scale_lr : 0.0
 train:
-  n_epochs : 5000
+  n_epochs : 1000
   gpu_id : 0
   batch_size : 32
   num_workers : 4
@@ -70,15 +59,9 @@ train:
     beta_2 : 0.999
     clip_grad : 10
   losses:
-    gan:
-      mode: None
-      weight:
-        G : 0.0
-        D : 0.0
     kl:
       weight: 2.5e-4
       warmup_epochs : 100
-      patience_epochs : 0
     reconstruction:
       mode: l2
       weight:
@@ -87,47 +70,33 @@ train:
         theta : 1.0
         color : 0.25
     reference_img:
-      render :
-        mode : l2
-        weight : 0.0
-        type : full
       color :
         mode : l2
         weight : 0.25
         detach : False
       color_wo_z:
         mode: l2
-        weight: 0.025
+        weight: 1.0
         detach: False
-      pos_color:
-        mode : l2
-        find_target : knn
-        weight : 0.0
-        K : 0
-        p : 0
-        tau : 0
-    fid:
+    regularization_dist:
       mode: kl
-      weight : 5.0e-6
+      weight : 1.0
       K : 10
-      use_context : True
+      use_context : False
       use_color : False
-      reweight_kl : True
-      mu_dataset :
-      sigma_dataset :
+      reweight_kl : False
+      mu_dataset : ''
+      sigma_dataset : ''
   logging:
-    project_name :
-    exp_name :
+    project_name : IBG_dataset_v2
+    exp_name : ''
     checkpoint_path :
     save_freq : 100
     print_freq : 10
-    eval_every : 5
+    eval_every : 1
   auto_resume:
-    active : False
-    resume_path :
+    active: False
+    resume_path: ''
 renderer:
-  brushes_path:
-    large_vertical:
-    large_horizontal:
-  painter_config :
+  painter_config : ''
   freq : 1
