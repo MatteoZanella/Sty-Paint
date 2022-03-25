@@ -6,17 +6,15 @@ import cv2
 import numpy as np
 import copy
 import math
+import argparse
 
 import torch
+import sys
+sys.path.insert(1, '../')
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 from evaluation.tools import check_strokes
 from model import build_model
-
-
-# BG_COLOR = '#24272b'
-BG_COLOR = '#c8c7c9'
-SIZE = [514, 750]
 
 # Main Parent window class
 def load_button_iamges(path, size):
@@ -92,35 +90,21 @@ class Pointer:
         return (xc, yc)
 
     def compute_angle(self):
+
         if not self.check():
             return
         else:
-            xp, yp = self.start
-            xq, yq = self.end
-            xc, yc = (xp + xq) / 2, (yp + yq) / 2
-            if yp < yq:
-                y1 = yp
-                x1 = xp
-            else:
-                y1 = yq
-                x1 = xq
-            # yp, yc = -1 * yp, -1 * yc
-            delta_x = np.array(x1 - xc)
-            delta_y = np.array(-1 * (y1 - yc))  # y-axis increasing top-bottom
+            delta_x = np.array(self.end[0] - self.start[0])
+            delta_y = np.array(- (self.end[1] - self.start[1]))
 
-            theta = np.arctan2(delta_y, delta_x)
-            theta = theta % (np.pi)
-            theta = theta / np.pi
-            if theta <= 0.5:
-                theta = 0.5 - theta
-            else:
-                theta = 1.5 - theta
+            theta = (np.arctan2(delta_x, delta_y) % np.pi) / np.pi
+
             return theta
 
 
 class WindowApp(MovableWindow):
 
-    def __init__(self, master):
+    def __init__(self, master, args):
         self.master = master
         self.master.geometry(f"{SIZE[0]}x{SIZE[1]}")
         self.master.config(bg=BG_COLOR)
@@ -139,7 +123,7 @@ class WindowApp(MovableWindow):
         # Canvas
         self.DrawCanvas = Canvas(self.master, width=SIZE[0], height=self.img_size, bg='#333')
         self.DrawCanvas.grid(row=0)
-        self.path = '/Users/eliap/Desktop/INP - ECCV 2022/test_images/bird.jpg'
+        self.path = args.img_path
         self.img = cv2.cvtColor(cv2.imread(self.path), cv2.COLOR_BGR2RGB)
         self.img = cv2.resize(self.img, (self.img_size, self.img_size))
         self.workspace = cv2.addWeighted(self.img, 0.2, np.zeros_like(self.img), 0.8, 0) / 255.
@@ -150,13 +134,10 @@ class WindowApp(MovableWindow):
         self.DrawCanvasContainer = self.DrawCanvas.create_image(self.c1, self.c2, image=self.img_tk)
 
         # Model and Renderer
-        self.renderer = Painter(args=load_painter_config(
-            '/Users/eliap/Projects/brushstrokes-generation/configs/decomposition/config_local.yaml'))
+        self.renderer = Painter(args=load_painter_config(args.painter_config))
         self.S = torch.empty(1, 1, 8)
         self.ctx = 10
-        ckpt = torch.load(
-            '/Users/eliap/Downloads/checkpoints/ade_final_model-vae-pos2.0-gt_col0.25-ref_col0.25-kl0.00025/latest.pth.tar',
-            map_location="cpu")
+        ckpt = torch.load(args.checkpoint, map_location="cpu")
         self.model = build_model(ckpt["config"])
         self.model.load_state_dict(ckpt["model"])
         self.model.eval()
@@ -374,14 +355,32 @@ class WindowApp(MovableWindow):
     def model_prediction(self):
         batch = self.preprocess()
         with torch.no_grad():
-            self.params = self.model.generate(batch)
+            self.params = self.model.generate(batch)["fake_data_random"]
         self.show(highlight_border=True, color=(1, 0, 0))
 
 
-def run():
+def run(args):
     root = Tk()
-    win = WindowApp(root)
+    win = WindowApp(root, args)
     root.mainloop()
 
 
-run()
+if __name__ == '__main__':
+    # Extra parameters
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--img_path", default='/Users/eliap/Desktop/INP - ECCV 2022/test_images/bird.jpg', type=str)
+    parser.add_argument("--painter_config",
+                        type=str,
+                        default='/Users/eliap/Projects/brushstrokes-generation/configs/decomposition/config_local.yaml')
+    parser.add_argument("--checkpoint",
+                        type=str,
+                        default='/Users/eliap/Downloads/checkpoints/ade_final_model-vae-pos2.0-gt_col0.25-ref_col0.25'
+                                '-kl0.00025/latest.pth.tar')
+    args = parser.parse_args()
+
+    # config of the window
+    BG_COLOR = '#c8c7c9' # '24272b'
+    SIZE = [514, 750]
+
+    # gui
+    run(args)
