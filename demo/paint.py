@@ -9,8 +9,6 @@ import math
 import argparse
 
 import torch
-import sys
-sys.path.insert(1, '../')
 from dataset_acquisition.decomposition.painter import Painter
 from dataset_acquisition.decomposition.utils import load_painter_config
 from evaluation.tools import check_strokes
@@ -368,14 +366,9 @@ def run(args):
 if __name__ == '__main__':
     # Extra parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument("--img_path", default='/Users/eliap/Desktop/INP - ECCV 2022/test_images/bird.jpg', type=str)
-    parser.add_argument("--painter_config",
-                        type=str,
-                        default='/Users/eliap/Projects/brushstrokes-generation/configs/decomposition/config_local.yaml')
-    parser.add_argument("--checkpoint",
-                        type=str,
-                        default='/Users/eliap/Downloads/checkpoints/ade_final_model-vae-pos2.0-gt_col0.25-ref_col0.25'
-                                '-kl0.00025/latest.pth.tar')
+    parser.add_argument("--img_path", type=str, help='path containing the reference image to be painted')
+    parser.add_argument("--painter_config", type=str, help='configuration file of the renderer')
+    parser.add_argument("--checkpoint", type=str, help='path the pth.tar model')
     args = parser.parse_args()
 
     # config of the window

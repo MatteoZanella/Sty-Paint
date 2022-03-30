@@ -7,9 +7,10 @@ Set up environment and logging before training.
 #### Environment
 
 The environment can be created with conda, run:  
-
-`conda env create -f env.yml`  
-`conda activate inp`
+```bash
+conda env create -f env.yml  
+conda activate inp
+```
 
 #### Neural Renderer
 
@@ -30,10 +31,7 @@ Modify the path of configuration files:
 
 #### Logging
 
-Logging is performed on Weight and Biases, login with:  
-
-`wandb login`
-
+Logging is performed on Weight and Biases, login with `wandb login`.
 
 ## Dataset
 To obtain the Oxford-IIIT Pet INP and ADE 20K Outdoor INP 
@@ -41,13 +39,17 @@ To obtain the Oxford-IIIT Pet INP and ADE 20K Outdoor INP
 1. Download original images from [Oxford Pet Dataset](https://www.robots.ox.ac.uk/~vgg/data/pets/) and [ADE20K Outdoor](https://www.kaggle.com/residentmario/ade20k-outdoors).
 2. Download parameters files form [here](add_link). For each image in the dataset, it contains the associated brushstrokes decomposition and the re-ordering of the strokes.
 3. Render the strokes and create the dataset, run:  
-`python dataset_acquisition/main_render.py --dataset_path --strokes_path --images_path --index_path`
+```bash
+python -m dataset_acquisition.main_render --dataset_path --strokes_path --images_path --index_path
+```
 
 ## Training
 
 To train the model run
 
-`python train.py --config ./configs/train/train_options.yaml`
+```bash
+python train.py --config ./configs/train/train_options.yaml
+```
 
 change the configuration file to try different versions.
 
@@ -55,7 +57,9 @@ change the configuration file to try different versions.
 
 To evaluate the model, run:
 
-`python evaluate_metrics.py --config ./configs/eval/<config_file.yaml> --checkpoint`
+```bash
+python evaluate_metrics.py --config ./configs/eval/<config_file.yaml> --checkpoint
+```
 
 specify the path of the trained model.  
 To evaluate baseline models, add the following flags `--use-pt --use-snp --use-snp2`.
@@ -64,6 +68,7 @@ To evaluate baseline models, add the following flags `--use-pt --use-snp --use-s
 
 To try the interactive demo, run:
 
-`python demo/paint.py --img_path --checkpoint`
-
+```bash
+python -m demo.paint --img_path --checkpoint
+```
 specify the image to be painted and the checkpoint path.
