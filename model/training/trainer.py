@@ -3,7 +3,7 @@ import time
 import logging
 
 import torch
-from model.utils.utils import AverageMetersDict, dict_to_device
+from model.utils.utils import AverageMetersDict
 from evaluation.metrics import FSD
 import wandb
 
@@ -34,10 +34,10 @@ class Trainer:
 
         start = time.time()
         for idx, batch in enumerate(self.train_dataloader):
-            batch = dict_to_device(batch)
+            # batch = dict_to_device(batch)  # Already done in DataLoaderWrapper
             bs = batch['strokes_seq'].size(0)
             losses, loss_info = model.train_one_step(batch, epoch - 1, idx)
-
+            del batch
             # update average meters
             loss_avg_meters.update(losses, bs)
             info_avg_meters.update(loss_info, bs)
@@ -70,11 +70,18 @@ class Trainer:
 
         stats = {}
         for idx, batch in enumerate(self.test_dataloader):
-            data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])
-            targets = data['strokes_seq']
+            # data = dict_to_device(batch, to_skip=['strokes', 'time_steps'])  # Already done in DataLoaderWrapper
+            targets = batch['strokes_seq']
             bs = targets.size(0)
-            predictions, metrics, info, visual = model.test_one_step(data,
-                                                                     get_visual=idx == 0)
+            predictions, metrics, info, visual = model.test_one_step(batch, get_visual=idx == 0)
+
+            # FSD
+            original.append(batch['strokes_seq'].cpu().numpy())
+            ctx.append(batch['strokes_ctx'].cpu().numpy())
+            predictions_z_random.append(predictions["fake_data_random"].cpu().numpy())
+            predictions_z_enc.append(predictions["fake_data_encoded"].cpu().numpy())
+
+            del batch, predictions
 
             avg_meters.update(metrics, bs)
             log_meters.update(info, bs)
@@ -84,12 +91,6 @@ class Trainer:
                     'generation_w_z': wandb.Image(visual['plot_w_z']),
                     'generation_wo_z': wandb.Image(visual['plot_wo_z'])
                 })
-
-            # FSD
-            original.append(batch['strokes_seq'].cpu().numpy())
-            ctx.append(batch['strokes_ctx'].cpu().numpy())
-            predictions_z_random.append(predictions["fake_data_random"].cpu().numpy())
-            predictions_z_enc.append(predictions["fake_data_encoded"].cpu().numpy())
 
         # logging
         msg = ''

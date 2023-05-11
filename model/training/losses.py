@@ -6,8 +6,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import repeat, rearrange
+import geomloss
 import torchvision
-from model.networks.light_renderer import LightRenderer
+from torchvision import models
+import dataset_acquisition.decomposition.pytorch_batch_sinkhorn as spc
+from model.networks.light_renderer_old import LightRenderer
+from model.networks.vgg_norm import VGG19Norm
+from model.utils.utils import gram_matrix
 
 # ======================================================================================================================
 # KL Divergence
@@ -268,6 +273,9 @@ class DistributionRegularization(nn.Module):
 
         self.mode = tmp_config["mode"]
 
+        if self.mode == "sinkhorn":
+            self.sinkhorn = geomloss.SamplesLoss()
+
         self.L = config["dataset"]["context_length"] + config["dataset"]["sequence_length"]
         self.get_index(L=self.L, K=self.K)
 
@@ -369,5 +377,137 @@ class DistributionRegularization(nn.Module):
             loss = self.fast_fid(f_pred, f_real)
         elif self.mode == 'kl':
             loss = self.kl(params=f_pred, reference_params=f_real)
+        elif self.mode == 'sinkhorn':
+            loss = self.sinkhorn(f_pred.unsqueeze(-1), f_real.unsqueeze(-1)).mean()
 
         return loss
+
+# ======================================================================================================================
+# Style Transfer Reconstruction Loss (https://www.cv-foundation.org/openaccess/content_cvpr_2016/papers/Gatys_Image_Style_Transfer_CVPR_2016_paper.pdf
+
+class VGG19StyleLossOriginal(nn.Module):
+    def __init__(self,  content_layers = {'4_2'},
+                        style_layers = {'1_1', '2_1', '3_1', '4_1', '5_1'},
+                        content_weight=1,
+                        style_weight=1e2,
+                        vgg_weights=None):
+        super().__init__()
+        self.content_layers = content_layers
+        self.style_layers = style_layers
+        self.content_weight = content_weight if len(content_layers) > 0 else 0
+        self.style_weight = style_weight if len(style_layers) > 0 else 0
+        normalized = vgg_weights is not None
+        features = models.vgg19(pretrained=not normalized).features
+        if normalized:
+            features.load_state_dict(torch.load(vgg_weights))
+        
+        self.transform = torch.nn.functional.interpolate
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        
+        self.layers = nn.ModuleDict({
+            '1_1': features[0:2], 
+            '1_2': features[2:4],
+            '2_1': features[4:7],
+            '2_2': features[7:9],
+            '3_1': features[9:12],
+            '3_2': features[12:14],
+            '3_4': features[14:18],
+            '4_1': features[18:21],
+            '4_2': features[21:23],
+            '4_4': features[23:27],
+            '5_1': features[27:30],
+            '5_2': features[30:32],
+            '5_4': features[32:36],
+        })
+
+    def __call__(self, o, c, s):
+        c_losses = []
+        s_losses = []
+        o = (o - self.mean) / self.std
+        o = self.transform(o, mode='bilinear', size=(224, 224), align_corners=False)
+        if self.content_weight > 0:
+            c = (c - self.mean) / self.std
+            c = self.transform(c, mode='bilinear', size=(224, 224), align_corners=False)
+        if self.style_weight > 0:
+            s = (s - self.mean) / self.std
+            s = self.transform(s, mode='bilinear', size=(224, 224), align_corners=False)
+        for name, layer in self.layers.items():
+            o = layer(o)
+            if self.content_weight > 0:
+                c = layer(c)
+                if name in self.content_layers:
+                    c_losses.append(self.content_loss(o, c))
+            if self.style_weight > 0:
+                s = layer(s)
+                if name in self.style_layers:
+                    s_losses.append(self.style_loss(o, s))
+        c_losses = torch.stack(c_losses).mean(0) if len(c_losses) > 0 else 0
+        s_losses = torch.stack(s_losses).mean(0) if len(s_losses) > 0 else 0
+        return self.content_weight * c_losses + self.style_weight * s_losses
+    
+    @staticmethod
+    def content_loss(x, c):
+        return ((x - c)**2).flatten(1).mean(1)
+    
+    @staticmethod
+    def style_loss(x, s):
+        G_x = gram_matrix(x)
+        G_s = gram_matrix(s)
+        return ((G_x - G_s)**2).flatten(1).mean(1)
+
+
+class VGG19StyleLoss(nn.Module):
+    def __init__(self, vgg_path, resize=True, norm=False, aggr='mean'):
+        super().__init__()
+        vgg = nn.Sequential(*VGG19Norm.net(vgg_path))
+        for i, layer in enumerate(vgg):
+            if isinstance(layer, nn.MaxPool2d):
+                vgg[i] = nn.AvgPool2d(kernel_size=2, stride=2, padding=0)
+        
+        blocks = []
+        blocks.append(vgg[:4].eval())  #conv1_1
+        blocks.append(vgg[4:11].eval())  #conv2_1
+        blocks.append(vgg[11:18].eval())  #conv3_1
+        blocks.append(vgg[18:31].eval())  #conv4_1
+
+        self.blocks = nn.ModuleList(blocks)
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1,3,1,1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1,3,1,1))
+        
+        self.transform = nn.functional.interpolate
+        self.resize = resize
+        self.norm = norm
+        self.aggr = aggr
+    
+    def forward(self, input, target):
+        if input.shape[1] != 3:
+            input = input.repeat(1, 3, 1, 1)
+            target = target.repeat(1, 3, 1, 1)
+        input = (input - self.mean) / self.std
+        target = (target - self.mean) / self.std
+        if self.resize:
+            input = self.transform(input, mode='bilinear', size=(224, 224), align_corners=False)
+            target = self.transform(target, mode='bilinear', size=(224, 224), align_corners=False)
+        x = input
+        y = target
+        bs = input.shape[0]
+        loss = torch.zeros(bs, device=input.device)
+        for block in self.blocks:
+            x = block(x)
+            y = block(y)
+            gm_x = gram_matrix(x)
+            gm_y = gram_matrix(y)
+            # (bs,)
+            block_loss = ((gm_x - gm_y)**2).mean((1,2))
+            if self.norm:
+                block_loss = block_loss / (gm_x**2 + gm_y**2).mean((1,2))
+            loss = loss + block_loss
+        # Optional aggregation
+        if self.aggr == 'mean':
+            loss = loss.mean()
+        elif self.aggr == 'sum':
+            loss = loss.sum()
+        
+        return loss
+        

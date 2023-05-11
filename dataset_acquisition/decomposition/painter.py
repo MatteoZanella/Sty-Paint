@@ -326,7 +326,7 @@ class Painter(PainterBase) :
 
         self._load_checkpoint()
         self.net_G.eval()
-        print(f'Painter created, weights form: {args.renderer_checkpoint_dir}, eval mode: True')
+        print(f'Painter created, weights from: {args.renderer_checkpoint_dir}, eval mode: True')
 
     def manual_set_number_strokes_per_block(self, id) :
         self.m_strokes_per_block = self.manual_strokes_per_block[id]
@@ -477,7 +477,7 @@ class Painter(PainterBase) :
         theta = torch.clamp(self.x_ctt.data[:, :, 4], 0.1, 1 - 0.1)
         size = torch.empty_like(self.x_ctt.data[:, :, 2 :4])
         for i in range(pos.shape[0]) :
-            size[i] = torch.clamp(self.x_ctt.data[i, :, 2 :4], min=0.1, max=val)
+            size[i] = torch.clamp(self.x_ctt.data[i, :, 2 :4], min=0.1, max=val[i])
 
         # Put all back together
         self.x_ctt.data = torch.cat([pos, size, theta.unsqueeze(-1)], dim=-1)
@@ -729,3 +729,55 @@ class Painter(PainterBase) :
         # Predict strokes
         snp_preds = self.predict(curr_imgs, curr_canvas)
         return snp_preds.numpy().astype('float32')
+
+    def render_canvas(self, params, canvas_start):
+        # params (bs, L, 12) -> (bs*L, 12, 1, 1)
+        bs, L = params.shape[:2]
+        v = params.flatten(0, 1)[:, :, None, None]
+        foregrounds, alphas = self.net_G(v)
+        foregrounds = foregrounds.unflatten(0, (bs, L))
+        alphas = alphas.unflatten(0, (bs, L))
+        return foregrounds[:, 0] * alphas[:, 0] + (1 - alphas[:, 0])
+        mask = (alphas - alphas.flip([1]).cumsum(dim=1).flip([1])).clamp(0, 1)
+        canvas = (foregrounds * mask).sum(dim=1).half()
+        canvas_alpha = alphas.sum(1).clamp(0, 1).half()
+        return canvas
+
+
+    
+    def neural_inference(self, params, start_canvas=None) :
+        # params (bs, L, 12) -> (bs*L, 12, 1, 1)
+        bs, L = params.shape[:2]
+        v = params.flatten(0, 1)[:, :, None, None]
+        foregrounds, alphas = self.net_G(v)
+        
+        # foregrounds = morphology.Dilation2d(m=1)(foregrounds)
+        # alphas = morphology.Erosion2d(m=1)(alphas)
+        
+        foregrounds = foregrounds.unflatten(0, (bs, L))
+        alphas = alphas.unflatten(0, (bs, L))
+        
+        negatives = (1 - alphas).flip([1]).cumprod(1).flip([1])
+        # Add the intermediate strokes
+        canvases = (foregrounds[:, :-1] * alphas[:, :-1] * negatives[:, 1:]).sum(1)
+        # Add the final (uncovered) stroke
+        canvases =  canvases + foregrounds[:, -1] * alphas[:, -1]
+        # Add the start canvas
+        if start_canvas is not None :
+            canvases = canvases + start_canvas * negatives[:, 0]
+        
+        # for i in range(bs) :
+        #     alpha = alphas[i]
+        #     foreground = foregrounds[i]
+        #     negative = (1 - alpha).flip([0]).cumprod(0).flip([0])
+        #     # Add the intermediate strokes
+        #     canvas = (foreground[:-1] * alpha[:-1] * negative[1:]).sum(0)
+        #     # Add the final (uncovered) stroke
+        #     canvas =  canvas + foreground[-1] * alpha[-1]
+        #     # Add the start canvas
+        #     if start_canvas is not None :
+        #         canvas = canvas + start_canvas[i] * negative[0]
+        #     canvases.append(canvas)
+        # canvases = torch.stack(canvases)
+
+        return canvases

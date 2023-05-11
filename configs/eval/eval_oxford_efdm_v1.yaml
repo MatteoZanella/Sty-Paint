@@ -1,0 +1,29 @@
+dataset :
+  root : /data1/eperuzzo/INP_dataset/
+  csv_file : /data1/eperuzzo/INP_dataset/dataset_config.csv
+  partition : oxford_pet_dataset
+  version : v2
+  heuristic : lkh_col1_area1_pos0.5_cl2_sal0
+  resize : 256
+  context_length : 10
+  sequence_length : 8
+  styles :
+    root : /data1/mzanella/wikiart/
+    csv_file : /data1/mzanella/wikiart/wclasses_split.csv
+stylization :
+  apply : True
+  augment : True
+  stylize_img : True
+  renderer_batch_size : 4096
+  vgg_weights : /data1/mzanella/pretrained/vgg19_norm.pth
+  decoder_weights : /data1/mzanella/pretrained/efdm_decoder_iter_160000.pth
+  resize : 512
+  brush_paths:
+    small_vertical : dataset_acquisition/decomposition/brushes/brush_fromweb2_small_vertical.png
+    small_horizontal : dataset_acquisition/decomposition/brushes/brush_fromweb2_small_horizontal.png
+    large_vertical : dataset_acquisition/decomposition/brushes/brush_fromweb2_large_vertical.png
+    large_horizontal : dataset_acquisition/decomposition/brushes/brush_fromweb2_large_horizontal.png
+renderer:
+  painter_config : configs/decomposition/painter_config.yaml
+  freq : 1
+gpu_id : -1

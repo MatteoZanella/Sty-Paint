@@ -66,7 +66,7 @@ class VGGPerceptualLoss(torch.nn.Module):
 
 
 class VGGStyleLoss(torch.nn.Module):
-    def __init__(self, transfer_mode, resize=True):
+    def __init__(self, transfer_mode, resize=True, norm=False):
         super(VGGStyleLoss, self).__init__()
         vgg = torchvision.models.vgg16(pretrained=True).to(device)
         for i, layer in enumerate(vgg.features):
@@ -89,9 +89,10 @@ class VGGStyleLoss(torch.nn.Module):
         self.blocks = torch.nn.ModuleList(blocks)
 
         self.transform = torch.nn.functional.interpolate
-        self.mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(device)
-        self.std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(device)
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], device=device).view(1,3,1,1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], device=device).view(1,3,1,1))
         self.resize = resize
+        self.norm = norm
 
     def gram_matrix(self, y):
         (b, ch, h, w) = y.size()
@@ -117,7 +118,11 @@ class VGGStyleLoss(torch.nn.Module):
             y = block(y)
             gm_x = self.gram_matrix(x)
             gm_y = self.gram_matrix(y)
-            loss += torch.sum((gm_x-gm_y)**2)
+            l = ((gm_x-gm_y)**2).sum()
+            if self.norm:
+                norm = (gm_x**2 + gm_y**2).sum()
+                l = l / norm
+            loss += l
         return loss
 
 

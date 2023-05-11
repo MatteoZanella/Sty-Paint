@@ -1,0 +1,88 @@
+traditional: Standard, Oxford dataset
+stylization_v0: EFDM preprocess v1, Oxford dataset
+stylization_v1: EFDM preprocess v1, VGGStyle loss enc+random (0.000005), Selected dataset
+stylization_v2 : EFDM preprocess v1, VGGStyle loss enc only (100x smaller), Selected dataset
+stylization_v3 : EFDM preprocess v1, VGGStyle loss enc only (10^4x smaller), Selected dataset
+stylization_v4: EFDM preprocess v1, Selected dataset
+stylization_v5: EFDM preprocess v1, Selected dataset [basic version]
+stylization_v6: EFDM preprocess v1, Selected dataset [few version]
+
+# Dataset: Oxford + Wikiart
+# VGGStyleLoss: enc + random
+- v1 (implicit): VGG16
+- N: VGG16 with normalized gram features
+- v2: VGG19-normalized (normalized activations)
+# EFDM preprocess:
+- v1: STYLIZED(strokes, canvas, image) {stylize_img : True}
+- v2: STYLIZED(strokes, canvas, image_target) + STANDARD(image) {stylize_img : False}
+   |_ This permits to always compute meaningful target-related losses if desired (set to zero to remove them!)
+- v3: STYLIZED(strokes_seq, canvas, image_target) + STANDARD(strokes_ctx, image) {stylize_img : False, stylize_strokes_ctx : False}
+   |_ Only for stylization testing
+# Style-Transformer:
+- ~~: {use_style: False}
+- v1: style encoding + feature distribution matching {use_style: True, use_style_efdm: True, use_style_tokens: False}
+- v1(2): Per un errore di esecuzione, pensavo fossero v2 e invece erano v1
+- v2: style encoding + feature distribution matching, additional style tokens {use_style: True, use_style_efdm: True, use_style_tokens: True}
+- v3: style encoding + additional style tokens {use_style: True, use_style_efdm: False, use_style_tokens: True}
+
+# Removed-Loss:
+- v1: random_loss_reference_img_color, enc_loss_reference_img_color
+- v2: random_loss_reference_img_color, enc_loss_reference_img_color, reconstruction|weight|color
+# Edit-Loss:
+- v1: {random_loss_reference_img_color, enc_loss_reference_img_color} / 100
+- v2: {random_loss_reference_img_color, enc_loss_reference_img_color} / 10000
+
+stylization_A (v0): EFDM preprocess v1
+stylization_B:      EFDM preprocess v1, VGGStyleLoss(10:1)
+stylization_B2:     EFDM preprocess v1, VGGStyleLoss(100:1)
+stylization_C:      EFDM preprocess v1, VGGStyleLoss(100:1), Style-Transformer v1
+stylization_C2*:    EFDM preprocess v1, VGGStyleLoss(50:1),  Style-Transformer v1
+stylization_C3:     EFDM preprocess v1, VGGStyleLoss(50:1)N,  Style-Transformer v1
+stylization_C4:     EFDM preprocess v1, VGGStyleLoss(100:1)N, Style-Transformer v1
+stylization_C5:     EFDM preprocess v1, VGGStyleLoss(20:1),  Style-Transformer v1
+stylization_C6:     EFDM preprocess v1, VGGStyleLoss(13:1),  Style-Transformer v1
+stylization_C+:     EFDM preprocess v1, VGGStyleLoss(10:1),  Style-Transformer v1
+#stylization_D:      EFDM preprocess v2, VGGStyleLoss(100:1), Style-Transformer v1
+#stylization_E:     EFDM preprocess v2, VGGStyleLoss(100:1), Style-Transformer v2
+#stylization_E+:    EFDM preprocess v2, VGGStyleLoss(10:1),  Style-Transformer v2
+stylization_E2:     EFDM preprocess v2, VGGStyleLoss(50:1), Style-Transformer v1(2), Removed-Loss v1
+stylization_E3*:    EFDM preprocess v2, VGGStyleLoss(25:1)v2, Style-Transformer v1(2), Removed-Loss v1
+stylization_E4:     EFDM preprocess v2, VGGStyleLoss(50:1)v2, Style-Transformer v1(2), Removed-Loss v1
+stylization_F:      EFDM preprocess v3, VGGStyleLoss(25:1)v2, Style-Transformer v1(2), Removed-Loss v1
+   |_Only for testing the stylization capabilities of the Transformer
+stylization_G:      EFDM preprocess v2, VGGStyleLoss(25:1)v2, Style-Transformer v1(2)
+   |_Does leaving the Iref loss up improves the performances? No, the stylized image do not match the original strokes with different color
+stylization_G2:     EFDM preprocess v2, VGGStyleLoss(25:1)v2, Style-Transformer v1(2), Edit-Loss v1
+   |_Continua a fare schifo
+stylization_G3:     EFDM preprocess v2, VGGStyleLoss(25:1)v2, Style-Transformer v1(2), Edit-Loss v2
+
+stylization_H:    EFDM preprocess v2, VGGStyleLoss(25:1)v2, Style-Transformer v2, Removed-Loss v1
+stylization_I:    EFDM preprocess v2, VGGStyleLoss(25:1)v2, Style-Transformer v3, Removed-Loss v1
+
+stylization_L:    EFDM preprocess v2, VGGStyleLoss(25:1)v2, Style-Transformer v1, Removed-Loss v1, Edit-Loss(sinkhorn-loss dist-reg)
+|_Test if using the sinkhorn as regularization_dist instead of KL improves the performances.
+   Increase the weight to 1, the loss is much smaller because it is a mean instead of a sum
+
+WARNING: sistemare il file di evaluation a seconda dello style transformer!!!
+
+-> Forse non ha molto senso non stilizzare le strokes di contesto: l'utente comunque le mette a disposizione (?)
+   Potrebbe essere una versione che serve solo a fare vedere che l'iniezione dello stile avviene correttamente
+-> new version: have the unstylized image/strokes for the net and the stylized versions for the loss
+
+
+
+KL:     0.000005*30/0.02=0.0075 ~100:1
+Style:  0.0001*12/0.02=0.06 ~10:1
+        0.00001*12/0.02=0.006 ~100:1
+        0.000001*12/0.02=0.0006 ~1000:1
+
+        0.224 * 0.002 = 0,000448
+        12 * 0.00002 = 0,00024
+
+image L2 loss: 0.00325
+style loss: 0,000448
+
+PS-Paint 1,2,3
+Queue: 
+
+scrivibili: C4, F, C2, C3, E2, B2, E3

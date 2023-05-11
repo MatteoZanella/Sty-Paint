@@ -5,6 +5,10 @@ from einops import repeat
 from tslearn.metrics import dtw
 import lpips
 import itertools
+
+from dataset_acquisition.decomposition.loss import VGGStyleLoss
+from model.training.losses import VGG19StyleLoss
+from model.utils.utils import gram_matrix
 from . import tools
 
 
@@ -229,3 +233,58 @@ class DTW:
         for b in range(bs):
             output[b] = dtw(x[b], y[b])
         return output.mean()
+
+# ======================================================================================================================
+# Style Loss: the stylistic distance between an image and a style image
+class StyleLoss:
+    def __init__(self, vgg_weights, device='cpu'):
+        super().__init__()
+        self.device = device
+        self.loss = VGG19StyleLoss(vgg_weights, aggr=None).to(device)
+
+    def __call__(self, canvas, style):
+        with torch.no_grad():
+            loss = self.loss(canvas.to(self.device), style.to(self.device))
+        return loss.cpu()
+    
+    def style_contrib(self, st_context, st_pred):
+        return ((st_context - st_pred) / st_context).mean()
+    
+    def style_accuracy(self, st_target, st_pred):
+        return ((st_target - st_pred) / st_target).mean()
+
+# ======================================================================================================================
+# Strokes Style Distance: stylisitc distance between generated and original strokes
+class StrokesStyleDistance():
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, generated, original, ctx=None, norm=True):
+
+        original = tools.compute_features(original, ctx=ctx)
+        generated = tools.compute_features(generated, ctx=ctx)
+        
+        assert(original["feat"].shape == generated["feat"].shape)
+        bs, n = original["feat"].shape[0], original["n"]
+        # remove position features and reshape
+        f_ori = original["feat"][:, 2 * n:].reshape(bs, -1, n).swapaxes(1, 2)
+        f_gen = generated["feat"][:, 2 * n:].reshape(bs, -1, n).swapaxes(1, 2)
+        G_ori = gram_matrix(torch.from_numpy(f_ori))
+        G_gen = gram_matrix(torch.from_numpy(f_gen))
+        distance = ((G_ori - G_gen) ** 2).mean((1,2))
+        if norm:
+            distance = distance / (G_ori**2 + G_gen**2).mean((1,2))
+        return distance.mean()
+
+        # distances = {}
+        # for key in ["feat", "feat_pos", "feat_color"]:
+        #     f_ori = original[key].reshape(bs, -1, n).swapaxes(1, 2)
+        #     f_gen = generated[key].reshape(bs, -1, n).swapaxes(1, 2)
+        #     G_ori = gram_matrix(torch.from_numpy(f_ori))
+        #     G_gen = gram_matrix(torch.from_numpy(f_gen))
+        #     distance = ((G_ori - G_gen) ** 2).mean()
+        #     if norm:
+        #         distance = distance / (G_ori**2 + G_gen**2).mean()
+        #     distances[key.replace("feat", "ssd")] = distance.numpy()
+        
+        # return distances

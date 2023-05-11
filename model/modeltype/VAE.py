@@ -1,9 +1,12 @@
 import os
 import torch
 import torch.nn as nn
+from dataset_acquisition.decomposition.loss import VGGStyleLoss
+from model.training.losses import VGG19StyleLoss
 from model.networks import context_encoder, encoder, decoder
 from torch.optim import AdamW
 from timm.scheduler.cosine_lr import CosineLRScheduler
+from model.networks.light_renderer import LightRenderer
 from model.training.losses import KLDivergence, ReconstructionLoss, ColorImageLoss, \
     DistributionRegularization
 from evaluation.metrics import compute_color_difference
@@ -22,9 +25,15 @@ class VAEModel(nn.Module):
         self.context_encoder = context_encoder.ContextEncoder(config)
         self.vae_encoder = encoder.Encoder(config)
         self.vae_decoder = decoder.Decoder(config)
+        self.use_style_loss = "train" in config and config["train"]["losses"]["vgg_style"]["weight"] > 0.0
+        self.stylize_img = "stylize_img" not in config["stylization"] or config["stylization"]["stylize_img"]
 
     def train_setup(self, n_iters_per_epoch):
         self.renderer = Painter(args=load_painter_config(self.config["renderer"]["painter_config"]))
+        if self.use_style_loss:
+            brush_paths = self.config["stylization"]["brush_paths"]
+            batch_size = self.config["stylization"]["renderer_batch_size"]
+            self.light_renderer = LightRenderer(brush_paths, 224, batch_size).cuda()
         self.checkpoint_path = self.config["train"]["logging"]["checkpoint_path"]
         self.n_iters_per_epoch = n_iters_per_epoch
 
@@ -49,6 +58,7 @@ class VAEModel(nn.Module):
 
         # Set weights
         self.weights = dict(
+            vgg_style=self.config["train"]["losses"]["vgg_style"]["weight"],
             position=self.config["train"]["losses"]["reconstruction"]["weight"]["position"],
             size=self.config["train"]["losses"]["reconstruction"]["weight"]["size"],
             theta=self.config["train"]["losses"]["reconstruction"]["weight"]["theta"],
@@ -71,6 +81,9 @@ class VAEModel(nn.Module):
         self.criterionColorImg = ColorImageLoss(config=self.config)
         self.regularizationDist = DistributionRegularization(config=self.config)
         self.regularizationColorImg = ColorImageLoss(config=self.config)
+        if self.use_style_loss:
+            self.criterionVggStyle = VGG19StyleLoss(self.config['stylization']["vgg_weights"]).to(self.config['device'])
+            # self.criterionVggStyle = VGGStyleLoss(transfer_mode=1)
 
         self.sample_z = self.weights['random_reference_img_color'] > 0 or self.weights['regularization_dist'][-1] > 0
         # Additional info
@@ -78,12 +91,17 @@ class VAEModel(nn.Module):
                            "enc_loss_reference_img_color",
                            "random_loss_reference_img_color", "regularization_dist",
                            "kl_div", "tot"]
+        if self.use_style_loss:
+            self.loss_names.extend(["enc_loss_vgg_style", "random_loss_vgg_style"])
         self.logs_names = ["mu", "sigma", "kl_weight", "lrG", "grad_normG", "fid_weight"]
 
         self.eval_metrics_names = ['random_loss_position', 'random_loss_size', 'random_loss_theta', 'random_loss_color',
                                    'random_loss_reference_img', 'random_color_l2', 'random_color_l1',
                                    'enc_loss_position', 'enc_loss_size', 'enc_loss_theta', 'enc_loss_color',
-                                   'enc_loss_reference_img', 'enc_color_l2', 'enc_color_l1']
+                                   'enc_loss_reference_img', 'enc_color_l2', 'enc_color_l1',
+                                    ]
+        if self.use_style_loss:
+            self.eval_metrics_names.extend(["enc_loss_vgg_style", "random_loss_vgg_style"])
         self.eval_info = ['ref_color_l1', 'ref_color_l2']
 
     def save_checkpoint(self, epoch, filename=None):
@@ -107,7 +125,6 @@ class VAEModel(nn.Module):
         return ckpt["epoch"]
 
     def train_one_step(self, batch, epoch, idx):
-
         self.optimizerG.zero_grad()
         # Forward Pass with z
         _, seq_length, _ = batch['strokes_seq'].shape
@@ -126,8 +143,12 @@ class VAEModel(nn.Module):
         loss_position, loss_size, loss_theta, loss_color = self.criterionRec(predictions=fake_data_encoded,
                                                                              targets=batch["strokes_seq"])
         # 3 - reference image loss
-        loss_reference_img_color = self.criterionColorImg(predictions=fake_data_encoded,
-                                                          ref_imgs=batch['img'])
+        img_target = batch['img'] if self.stylize_img else batch['img_target']
+        loss_reference_img_color = self.criterionColorImg(predictions=fake_data_encoded, ref_imgs=img_target)
+        # 4 - VGG style loss
+        if self.use_style_loss:
+            fake_image_encoded = self.light_renderer(fake_data_encoded.flatten(0, 1), seq_length, batch['canvas'])
+            enc_loss_vgg_style = self.criterionVggStyle(fake_image_encoded, batch['style'])
 
         # sum all the losses
         total_loss_G = loss_position * self.weights['position'] + \
@@ -136,6 +157,8 @@ class VAEModel(nn.Module):
                        loss_color * self.weights["color"] + \
                        loss_reference_img_color * self.weights["reference_img_color"] + \
                        kl_div * self.weights['kl_div'][epoch]
+        if self.use_style_loss:
+            total_loss_G = total_loss_G + enc_loss_vgg_style * self.weights['vgg_style']
 
         total_loss_G.backward(retain_graph=self.sample_z)
         # Forward without z
@@ -145,14 +168,17 @@ class VAEModel(nn.Module):
                                                 context=context,
                                                 visual_features=visual_features,
                                                 seq_length=seq_length)
-
-            random_loss_reference_img_color = self.regularizationColorImg(predictions=fake_data_random,
-                                                                          ref_imgs=batch['img'])
+            random_loss_reference_img_color = self.regularizationColorImg(predictions=fake_data_random, ref_imgs=img_target)
             random_loss_distribution = self.regularizationDist(preds=fake_data_random,
                                                                batch=batch)
+            if self.use_style_loss:
+                fake_image_random = self.light_renderer(fake_data_random.flatten(0, 1), seq_length, batch['canvas'])
+                random_loss_vgg_style = self.criterionVggStyle(fake_image_random, batch['style'])
 
             total_loss_G_random_z = random_loss_reference_img_color * self.weights['random_reference_img_color'] + \
                                     random_loss_distribution * self.weights['regularization_dist'][epoch]
+            if self.use_style_loss:
+                total_loss_G_random_z = total_loss_G_random_z + random_loss_vgg_style * self.weights['vgg_style']
 
             total_loss_G_random_z.backward()
 
@@ -170,11 +196,15 @@ class VAEModel(nn.Module):
             enc_loss_reference_img_color=loss_reference_img_color.item(),
             kl_div=kl_div.item(),
             tot=total_loss_G.item())
+        if self.use_style_loss:
+            log_losses["enc_loss_vgg_style"] = enc_loss_vgg_style.item()
         if self.sample_z:
             log_losses.update(
                 random_loss_reference_img_color=random_loss_reference_img_color.item(),
                 regularization_dist=random_loss_distribution.item(),
             )
+            if self.use_style_loss:
+                log_losses["random_loss_vgg_style"] = random_loss_vgg_style.item()
 
         # additional info
         log_info = dict(
@@ -196,23 +226,33 @@ class VAEModel(nn.Module):
         # Forward
         predictions = self.generate(batch)
 
+        _, seq_length, _ = batch['strokes_seq'].shape
+        if self.use_style_loss:
+            fake_image_encoded = self.light_renderer(predictions["fake_data_encoded"].flatten(0, 1), seq_length, batch['canvas'])
+            fake_image_random = self.light_renderer(predictions["fake_data_random"].flatten(0, 1), seq_length, batch['canvas'])
+
         # Random z
         random_loss_position, \
         random_loss_size, \
         random_loss_theta, \
         random_loss_color = self.criterionRec(predictions["fake_data_random"], batch['strokes_seq'])
+        img_target = batch['img'] if self.stylize_img else batch['img_target']
         random_loss_reference_img = self.criterionColorImg(predictions=predictions["fake_data_random"],
-                                                           ref_imgs=batch['img'])
+                                                           ref_imgs=img_target)
         random_color_diff_l1, random_color_diff_l2 = compute_color_difference(predictions["fake_data_random"])
-
+        if self.use_style_loss:
+            random_loss_vgg_style = self.criterionVggStyle(fake_image_random, batch['style'])
+        
         # Encoded z
         enc_loss_position, \
         enc_loss_size, \
         enc_loss_theta, \
         enc_loss_color = self.criterionRec(predictions["fake_data_encoded"], batch['strokes_seq'])
         enc_loss_reference_img = self.criterionColorImg(predictions=predictions["fake_data_encoded"],
-                                                        ref_imgs=batch['img'])
+                                                        ref_imgs=img_target)
         enc_color_diff_l1, enc_color_diff_l2 = compute_color_difference(predictions["fake_data_encoded"])
+        if self.use_style_loss:
+            enc_loss_vgg_style = self.criterionVggStyle(fake_image_encoded, batch['style'])
 
         # Reference dataset
         ref_color_l1, ref_color_l2 = compute_color_difference(batch['strokes_seq'])
@@ -252,8 +292,11 @@ class VAEModel(nn.Module):
             enc_loss_color=enc_loss_color.item(),
             enc_loss_reference_img=enc_loss_reference_img.item(),
             enc_color_l2=enc_color_diff_l2.item(),
-            enc_color_l1=enc_color_diff_l1.item()
+            enc_color_l1=enc_color_diff_l1.item(),
         )
+        if self.use_style_loss:
+            eval_metrics["random_loss_vgg_style"] = random_loss_vgg_style.item()
+            eval_metrics["enc_loss_vgg_style"] = enc_loss_vgg_style.item()
 
         logs_info = dict(
             ref_color_l1=ref_color_l1.item(),

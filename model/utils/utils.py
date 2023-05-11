@@ -1,7 +1,12 @@
 import numpy as np
+import torch
 
-def dict_to_device(inp, to_skip=[]) :
-    return {k : t.cuda(non_blocking=True) for k, t in inp.items() if k not in to_skip}
+from evaluation.tools import check_strokes
+
+def dict_to_device(inp, to_skip=[], device=None) :
+    if device is None:
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    return {k : t.to(device, non_blocking=True) if (torch.is_tensor(t) and k not in to_skip) else t for k, t in inp.items()}
 
 class AverageMeter(object) :
     """Computes and stores the average and current value"""
@@ -58,3 +63,35 @@ def cosine_scheduler(base_value, final_value, epochs, warmup_epochs=0, start_war
     schedule = np.concatenate((patience_schedule, warmup_schedule, schedule))
     assert len(schedule) == epochs
     return schedule
+
+
+def gram_matrix(x, normalize=True):
+    """
+    Compute the Gram matrix of x
+    Args:
+        x: (batch, C, ...)
+    """
+    features = x.flatten(2)
+    (b, ch, n) = features.size()
+    features_t = features.transpose(1, 2)
+    gram = features.bmm(features_t)
+    return gram / (ch * n) if normalize else gram
+
+
+def render_canvas(params, start_canvas, renderer):
+    """
+    Render the parameters on the starting canvases
+    Args:
+        params: (batch, L, 8)
+        start_canvas: (batch, 3, H, W)
+        renderer: Painter instance
+    """
+    # params = check_strokes(params)
+    bs, L, n = params.shape
+    if n == 8:
+        # Add the second color and the alpha parameter
+        params = torch.cat([params, params[:, :, -3:], torch.ones(bs, L, 1, device=params.device)], dim=2)
+
+    images = renderer.neural_inference(params, start_canvas=start_canvas)
+
+    return images

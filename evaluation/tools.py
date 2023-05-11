@@ -7,7 +7,8 @@ import cv2
 def check_strokes(params, clamp_wh=1):
     if torch.is_tensor(params):
         params = torch.clamp(params, min=0, max=1)
-        params[:, :, 2:4] = torch.clamp(params[:, :, 2:4], min=0.025, max=clamp_wh)
+        wh_params = params[:, :, 2:4].clamp(min=0.025, max=clamp_wh)
+        params = torch.cat((params[:, :, :2], wh_params, params[:, :, 4:]), dim=2)
     else:
         params = np.clip(params, a_min=0, a_max=1)
         params[:, :, 2:4] = np.clip(params[:, :, 2:4], a_min=0.025, a_max=clamp_wh)
@@ -25,8 +26,8 @@ def render_frames(params, batch, renderer):
     n_samples = int(p_bs / c_bs)
     canvas_start = repeat(batch['canvas'], 'bs ch h w -> (bs n_samples) ch h w', n_samples=n_samples)
 
-    frames = np.empty([p_bs, L, 256, 256, 3])
-    alphas = np.empty([p_bs, L, 256, 256, 1])
+    frames = np.empty([p_bs, L, 256, 256, 3], dtype=np.float16)
+    alphas = np.empty([p_bs, L, 256, 256, 1], dtype=np.float16)
     for i in range(p_bs):
         x = canvas_start[i].permute(1, 2, 0).cpu().numpy()
         for l in range(L):
@@ -80,11 +81,25 @@ def produce_visuals(params, renderer, starting_canvas, ctx=None, seq=None):
             pts = dashed_cnt_pts(cnt[0], freq=2)
             next = seq_alphas[j + 1:, :, :].sum(axis=0) > 0
             clean_pts = [pt for pt in pts if next[pt[1], pt[0]] == 0]
-            clean_pts = np.stack(clean_pts)
-
-            final_result[clean_pts[:, 1], clean_pts[:, 0]] = green
+            if len(clean_pts) > 0:
+                clean_pts = np.stack(clean_pts)
+                final_result[clean_pts[:, 1], clean_pts[:, 0]] = green
 
     return np.uint8(final_result * 255)
+
+def render_canvas_light(params, canvases, renderer):
+    params = check_strokes(params)
+    if not torch.is_tensor(params):
+        params = torch.from_numpy(params)
+    if not torch.is_tensor(canvases):
+        canvases = torch.from_numpy(canvases)
+    bs, L = params.shape[:2]
+    params = params.flatten(0, 1)
+    lengths = [L] * bs
+
+    rendering = renderer(params, lengths, start_canvas=canvases)
+
+    return rendering
 
 
 # ======================================================================================================================
@@ -127,4 +142,4 @@ def compute_features(x, ctx=None):
 
     feat_pos = feat[:, :2 * n]  # first two params are (x, y)
     feat_color = feat[:, 5 * n:]  # last 3 params are (r, g, b)
-    return {"feat": feat, "feat_pos": feat_pos, "feat_color": feat_color}
+    return {"feat": feat, "feat_pos": feat_pos, "feat_color": feat_color, "n": n}

@@ -17,7 +17,8 @@ class PaintTransformer:
         self.model_path = model_path
 
         # Create and load net
-        paddle.set_device('gpu')
+        device = 'cpu' if config.gpu_id < 0 else f'gpu:{config.gpu_id}'
+        paddle.set_device(device)
         self.net_g = network.Painter(5, self.stroke_num, 256, 8, 3, 3)
         self.net_g.set_state_dict(paddle.load(model_path))
         self.net_g.eval()

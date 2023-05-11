@@ -7,14 +7,14 @@ keep_aspect_ratio: False
 beta_L1: 1.0
 with_ot_loss: False
 beta_ot: 0.1
-dataset_feat_mean : '/data/eperuzzo/dataset_statistics/features_seq_ctx_mean.pth'
-dataset_feat_var : '/data/eperuzzo/dataset_statistics/features_seq_ctx_var.pth'
+dataset_feat_mean : /data1/eperuzzo/dataset_statistics/features_seq_ctx_mean.pth
+dataset_feat_var : /data1/eperuzzo/dataset_statistics/features_seq_ctx_var.pth
 with_kl_loss : False
 beta_kl : 2.5e-6
 kl_lr : 0.00005
 n_iters_per_strokes : 15
 net_G: 'zou-fusion-net'
-renderer_checkpoint_dir: '/data/eperuzzo/checkpoints_G_oilpaintbrush'
+renderer_checkpoint_dir: '/data1/mzanella/pretrained/checkpoints_G_oilpaintbrush'
 lr: 0.005
 disable_preview: True
 gpu_id: 0
@@ -29,7 +29,7 @@ manual_storkes_params:
   4 : 15
   5 : 10
 brush_paths:
-  small_vertical :  '/data/eperuzzo/brushstrokes-generation/dataset_acquisition/decomposition/brushes/brush_fromweb2_small_vertical.png'
-  small_horizontal : '/data/eperuzzo/brushstrokes-generation/dataset_acquisition/decomposition/brushes/brush_fromweb2_small_horizontal.png'
-  large_vertical : '/data/eperuzzo/brushstrokes-generation/dataset_acquisition/decomposition/brushes/brush_fromweb2_large_vertical.png'
-  large_horizontal : '/data/eperuzzo/brushstrokes-generation/dataset_acquisition/decomposition/brushes/brush_fromweb2_large_horizontal.png'
+  small_vertical :  dataset_acquisition/decomposition/brushes/brush_fromweb2_small_vertical.png
+  small_horizontal : dataset_acquisition/decomposition/brushes/brush_fromweb2_small_horizontal.png
+  large_vertical : dataset_acquisition/decomposition/brushes/brush_fromweb2_large_vertical.png
+  large_horizontal : dataset_acquisition/decomposition/brushes/brush_fromweb2_large_horizontal.png

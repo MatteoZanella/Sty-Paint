@@ -1,0 +1,124 @@
+dataset :
+  root : /data1/eperuzzo/INP_dataset/
+  csv_file : /data1/eperuzzo/INP_dataset/dataset_config.csv
+  partition : oxford_pet_dataset
+  version : v2
+  heuristic : lkh_col1_area1_pos0.5_cl2_sal0
+  resize : 256
+  context_length : 10
+  sequence_length : 8
+  styles :
+    root : /data1/mzanella/wikiart/
+    csv_file : /data1/mzanella/wikiart/wclasses_split.csv
+stylization :
+  apply : True
+  augment : True
+  stylize_img : False
+  renderer_batch_size : 4096
+  vgg_weights : /data1/mzanella/pretrained/vgg_normalised.pth
+  decoder_weights : /data1/mzanella/pretrained/efdm_decoder_iter_160000.pth
+  resize : 512
+  brush_paths:
+    small_vertical : dataset_acquisition/decomposition/brushes/brush_fromweb2_small_vertical.png
+    small_horizontal : dataset_acquisition/decomposition/brushes/brush_fromweb2_small_horizontal.png
+    large_vertical : dataset_acquisition/decomposition/brushes/brush_fromweb2_large_vertical.png
+    large_horizontal : dataset_acquisition/decomposition/brushes/brush_fromweb2_large_horizontal.png
+model:
+  d_model : 256
+  n_strokes_params : 8
+  ctx_z : cat
+  activation_last_layer : sigmoid
+  dropout : 0.0
+  img_encoder:
+    type : convenc
+    visual_feat_hw : 16
+    visual_feat_dim : 256
+    hres_feat_hw : 64 # 32
+    hres_feat_dim : 64 # 32
+  context_encoder:
+    act : gelu
+    n_heads : 4
+    n_layers : 8  # 5
+    ff_dim : 1024
+    use_style: True
+    use_style_tokens: True
+  encoder:
+    encoder_only : False
+    act : gelu
+    n_heads : 4
+    n_layers : 6  # 4
+    ff_dim : 1024
+  decoder:
+    type: 2_step
+    residual_pos : False
+    act : gelu
+    n_heads : 4
+    n_layers : 6 # 4
+    ff_dim : 1024
+  discriminator:
+    type : None
+    num_layers : 0
+    encoder_only : False
+    scale_lr : 0.0
+train:
+  n_epochs : 500
+  gpu_id : 0
+  batch_size : 16
+  test_batch_size : 16
+  num_workers : 5
+  seed : 1432
+  amp_enabled : False
+  optimizer:
+    max_lr : 1.0e-4
+    min_lr : 1.0e-6
+    warmup_lr : 1.0e-6
+    warmup_ep : 20
+    wd : 0.0
+    beta_1 : 0.99
+    beta_2 : 0.999
+    clip_grad : 10
+  losses:
+    kl:
+      weight: 2.5e-4
+      warmup_epochs : 100
+    reconstruction:
+      mode: l2
+      weight:
+        position : 2.0
+        size : 1.0
+        theta : 1.0
+        color : 0.25
+    reference_img:
+      color :
+        mode : l2
+        weight : 0.25
+        detach : False
+      color_wo_z:
+        mode: l2
+        weight: 0.025
+        detach: False
+    regularization_dist:
+      mode: kl
+      weight : 0.000005
+      K : 10
+      use_context : True
+      use_color : False
+      reweight_kl : True
+      mu_dataset : ''
+      sigma_dataset : ''
+    vgg_style:
+      weight: 0.00001
+      
+  logging:
+    project_name : INP_dataset_v2
+    exp_name : stylization_E
+    checkpoint_path : checkpoints
+    save_freq : 100
+    print_freq : 10
+    eval_every : 1
+  auto_resume:
+    active: False
+    resume_path: ''
+renderer:
+  painter_config : configs/decomposition/painter_config.yaml
+  freq : 1

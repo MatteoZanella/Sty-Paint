@@ -4,6 +4,7 @@ from einops import rearrange, repeat
 from timm.models.layers import trunc_normal_
 from .image_encoders import resnet18, ConvEncoder, PatchEmbed
 from .layers import PositionalEncoding
+from .efdm import exact_feature_distribution_matching
 
 
 class ContextEncoder(nn.Module):
@@ -19,6 +20,15 @@ class ContextEncoder(nn.Module):
             self.use_context = config["model"]["context_encoder"]["use_context"]
         else:
             self.use_context = True
+        # Stylization config
+        self.use_style = "use_style" in config["model"]["context_encoder"] and config["model"]["context_encoder"]["use_style"]
+
+        if self.use_style:
+            self.use_style_efdm = config["model"]["context_encoder"]["use_style_efdm"]
+            self.use_style_tokens = config["model"]["context_encoder"]["use_style_tokens"]
+        else:
+            self.use_style_tokens = False
+            self.use_style_efdm = False
 
         self.PE = PositionalEncoding(config)
 
@@ -27,6 +37,9 @@ class ContextEncoder(nn.Module):
         if self.use_context:
             self.stroke_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
             trunc_normal_(self.stroke_token, std=0.02)
+        if self.use_style_tokens:
+            self.style_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
+            trunc_normal_(self.style_token, std=0.02)
 
         if config["model"]["img_encoder"]["type"] == 'resnet18':
             self.img_encoder = resnet18(pretrained=True,
@@ -34,12 +47,19 @@ class ContextEncoder(nn.Module):
             if self.use_context:
                 self.canvas_encoder = resnet18(pretrained=True,
                                                layers_to_remove=['layer4', 'fc'])
+            if self.use_style:
+                self.style_encoder = resnet18(pretrained=True,
+                                              layers_to_remove=['layer4', 'fc'])
+
         elif config["model"]["img_encoder"]["type"] == 'convenc':
             self.img_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
                                            features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
             if self.use_context:
                 self.canvas_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
                                                   features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
+            if self.use_style:
+                self.style_encoder = ConvEncoder(spatial_output_dim=config["model"]["img_encoder"]["visual_feat_hw"],
+                                                 features_dim=config["model"]["img_encoder"]["visual_feat_dim"])
 
         elif config["model"]["img_encoder"]["type"] == 'patchembed':
             self.img_encoder = PatchEmbed(img_size=config["dataset"]["resize"], patch_size=16,
@@ -50,6 +70,11 @@ class ContextEncoder(nn.Module):
                                                  in_chans=3,
                                                  embed_dim=config["model"]["img_encoder"]["visual_feat_dim"],
                                                  norm_layer=None, flatten=False)
+            if self.use_style:
+                self.style_encoder = PatchEmbed(img_size=config["dataset"]["resize"], patch_size=16,
+                                                in_chans=3,
+                                                embed_dim=config["model"]["img_encoder"]["visual_feat_dim"],
+                                                norm_layer=None, flatten=False)
         else:
             raise NotImplementedError("Encoder not available")
 
@@ -76,49 +101,43 @@ class ContextEncoder(nn.Module):
                 num_layers=config["model"]["context_encoder"]["n_layers"])
 
     def forward(self, data):
+        ctx_sequence = []
+        ## Visual context
+        img, hres_img = self.img_encoder(data['img'])
+        ## Style context
+        if self.use_style:
+            style, hres_style = self.style_encoder(data['style'])
+            if self.use_style_tokens:
+                style_feat = rearrange(style, 'bs ch h w -> (h w) bs ch')
+                style_feat = style_feat + self.style_token
+                ctx_sequence.append(style_feat)
+            if self.use_style_efdm:
+                img = exact_feature_distribution_matching(img, style)
+                hres_img = exact_feature_distribution_matching(hres_img, hres_style)
         if self.use_context:
-
-            strokes_ctx = data['strokes_ctx']
-            img = data['img']
-            canvas = data['canvas']
-
-            # Encode Img/Canvas
-            img, img_feat = self.img_encoder(img)
-            canvas, canvas_feat = self.canvas_encoder(canvas)
+            # Encode Canvas
+            canvas, hres_canvas = self.canvas_encoder(data['canvas'])
+            # Concatenate image and canvas channels, then project
             visual_feat = self.conv_proj(torch.cat((img, canvas), dim=1))
-            hres_visual_feat = torch.cat((img_feat, canvas_feat), dim=1)
-
-            # Everything as length first
-            visual_feat = rearrange(visual_feat, 'bs ch h w -> (h w) bs ch')
-            strokes_ctx = rearrange(strokes_ctx, 'bs L dim -> L bs dim')
-
-            # Strokes
-            ctx_sequence = self.proj_features(strokes_ctx)
-
-            # Add PE
-            visual_feat = visual_feat + self.PE.pe_visual_tokens(device=visual_feat.device) + self.visual_token
-            ctx_sequence = ctx_sequence + self.PE.pe_strokes_tokens(pos=strokes_ctx,
-                                                                    device=ctx_sequence.device) + self.stroke_token
-
-            # Merge Context
-            ctx_sequence = torch.cat((visual_feat, ctx_sequence), dim=0)
-
-            # Transformer Encoder
-            if self.use_transformer:
-                ctx_sequence = self.transformer_encoder(ctx_sequence)
-
-            return ctx_sequence, hres_visual_feat
+            hres_visual_feat = torch.cat((hres_img, hres_canvas), dim=1)
         else:
-            img = data['img']
+            visual_feat = img
+            hres_visual_feat = hres_img
+        visual_feat = rearrange(visual_feat, 'bs ch h w -> (h w) bs ch')
+        visual_feat = visual_feat + self.PE.pe_visual_tokens(device=visual_feat.device) + self.visual_token
+        ctx_sequence.append(visual_feat)        
+        ## Strokes context
+        if self.use_context:
+            strokes_ctx = rearrange(data['strokes_ctx'], 'bs L dim -> L bs dim')
+            strokes_feat = self.proj_features(strokes_ctx)
+            strokes_feat = strokes_feat + self.PE.pe_strokes_tokens(pos=strokes_ctx,
+                                                                    device=strokes_feat.device) + self.stroke_token
+            ctx_sequence.append(strokes_feat)
 
-            # Encode Img/Canvas
-            visual_feat, hres_visual_feat = self.img_encoder(img)
+        # Merge Context
+        ctx_sequence = torch.cat(ctx_sequence, dim=0)
+        # Add PE
+        if self.use_transformer:
+            ctx_sequence = self.transformer_encoder(ctx_sequence)
 
-            # Everything as length first
-            visual_feat = rearrange(visual_feat, 'bs ch h w -> (h w) bs ch')
-
-            # Add PE
-            visual_feat = visual_feat + self.PE.pe_visual_tokens(device=visual_feat.device) + self.visual_token
-            ctx_sequence = self.transformer_encoder(visual_feat)
-
-            return ctx_sequence, hres_visual_feat
+        return ctx_sequence, hres_visual_feat

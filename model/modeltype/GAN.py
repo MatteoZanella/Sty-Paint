@@ -6,7 +6,7 @@ from torch.optim import AdamW
 from timm.scheduler.cosine_lr import CosineLRScheduler
 from model.training.losses import RenderImageLoss, ColorImageLoss
 from model.training.losses import GANLoss, cal_gradient_penalty
-from model.networks.light_renderer import LightRenderer
+from model.networks.light_renderer_old import LightRenderer
 from evaluation.metrics import compute_color_difference
 
 def set_requires_grad(nets, requires_grad=False) :
