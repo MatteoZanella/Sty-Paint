@@ -1,4 +1,17 @@
-# Interactive Neural Painting
+# Stylized Interactive Neural Painting
+
+Artificial Intelligence advancements have significantly improved performance in Computer Vision tasks, especially in Neural Painting and Style Transfer. The **Interactive Neural Painting (INP)** task has emerged as a powerful model for human-machine collaboration, where artists can use AI to enhance their creative process by generating realistic artwork from brushstrokes. However, the integration of style transfer into this process opens up new possibilities for AI-assisted painting. This work introduces the **Stylized Interactive Neural Painting (Stylized INP)** task, where the model not only assists in completing a painting but also applies the style of a reference artwork, creating a unique blend of content and style. The **Sty-Paint** model, based on the **I-Paint** framework, is proposed to solve the Stylized INP task, achieving interesting stylization capabilities.
+
+## Contributions and Highlights
+
+The Sty-Paint model, the key development in this work, builds upon the I-Paint model framework (Interactive Neural Painting), integrating Style Transfer methods to produce more artistic and personalized stroke suggestions. Key innovations include:
+
+1. Stylized Transformer: The Context Encoder has been modified to accept also a style reference image as input.
+2. EFDM+CT Method: Since the process of fully generataing the target stylized stokes was infeasible with the available hardware, I proposed a faster, approximate alternative to generate stylized strokes sequences for training.
+3. Fast Stroke Renderer: The large size of styles × images pairs prompted me to develop an optimized neural renderer with reducd GPU memory usage and higher rendering speed for online sample generation during the training.
+4. VGG-based Style Loss: A new training objective that enhances stylization contributions, improving stroke suggestions.
+
+This work also introduces new quantitative evaluation metrics for style transfer performance, including Style Contribution, Style Accuracy, and Style Stroke Distance, providing valuable insights into the model's effectiveness in stylized neural painting tasks.
 
 ## Setup
 
