@@ -1,6 +1,8 @@
-# Stylized Interactive Neural Painting
+# Stylized Interactive Neural Painting  [![Read the Thesis](https://img.shields.io/badge/Read%20the%20Thesis-PDF-blue)](https://github.com/MatteoZanella/Sty-Paint/blob/main/Master%20Thesis%20-%20Stylized%20Interactive%20Neural%20Painting.pdf)
 
 Artificial Intelligence advancements have significantly improved performance in Computer Vision tasks, especially in Neural Painting and Style Transfer. The **Interactive Neural Painting (INP)** task has emerged as a powerful model for human-machine collaboration, where artists can use AI to enhance their creative process by generating realistic artwork from brushstrokes. However, the integration of style transfer into this process opens up new possibilities for AI-assisted painting. This work introduces the **Stylized Interactive Neural Painting (Stylized INP)** task, where the model not only assists in completing a painting but also applies the style of a reference artwork, creating a unique blend of content and style. The **Sty-Paint** model, based on the **I-Paint** framework, is proposed to solve the Stylized INP task, achieving interesting stylization capabilities.
+
+
 
 ## Contributions and Highlights
 
